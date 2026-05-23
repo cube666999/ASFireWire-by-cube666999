@@ -15,6 +15,7 @@ AudioCoordinator::AudioCoordinator(IOService* driver,
     : publisher_(driver)
     , dice_(publisher_, registry, isoch, hardware)
     , avc_(publisher_, registry, isoch, hardware)
+    , motuV3_(publisher_, registry, isoch, hardware)
     , deviceManager_(deviceManager)
     , registry_(registry) {
     lock_ = IOLockAlloc();
@@ -41,6 +42,11 @@ void AudioCoordinator::SetCMPClient(ASFW::CMP::CMPClient* client) noexcept {
 
 void AudioCoordinator::SetIRMClient(ASFW::IRM::IRMClient* client) noexcept {
     avc_.SetIRMClient(client);
+    motuV3_.SetIRMClient(client);
+}
+
+void AudioCoordinator::SetBusOps(Async::IFireWireBusOps* busOps) noexcept {
+    motuV3_.SetBusOps(busOps);
 }
 
 void AudioCoordinator::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device) {
@@ -112,6 +118,7 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
     // Ensure isoch transport is stopped (best-effort) and nubs are terminated.
     dice_.OnDeviceRemoved(guid);
     avc_.OnDeviceRemoved(guid);
+    motuV3_.OnDeviceRemoved(guid);
 
     if (lock_) {
         IOLockLock(lock_);
@@ -124,6 +131,16 @@ void AudioCoordinator::OnDeviceRemoved(Discovery::Guid64 guid) {
 
 void AudioCoordinator::OnAVCAudioConfigurationReady(uint64_t guid,
                                                    const Model::ASFWAudioDevice& config) noexcept {
+    // Route to correct backend based on device vendor/model.
+    const auto* record = registry_.FindByGuid(guid);
+    if (record) {
+        const auto integration = DeviceProtocolFactory::LookupIntegrationMode(
+            record->vendorId, record->modelId);
+        if (integration == DeviceIntegrationMode::kMOTUV3) {
+            motuV3_.OnAudioConfigurationReady(guid, config);
+            return;
+        }
+    }
     avc_.OnAudioConfigurationReady(guid, config);
 }
 
@@ -138,6 +155,9 @@ IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
     const auto integration = DeviceProtocolFactory::LookupIntegrationMode(record->vendorId, record->modelId);
     if (integration == DeviceIntegrationMode::kHardcodedNub) {
         return &dice_;
+    }
+    if (integration == DeviceIntegrationMode::kMOTUV3) {
+        return &motuV3_;
     }
 
     return &avc_;

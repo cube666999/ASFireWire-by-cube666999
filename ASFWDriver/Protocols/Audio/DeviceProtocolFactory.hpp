@@ -17,6 +17,7 @@ enum class DeviceIntegrationMode : uint8_t {
     kNone = 0,
     kHardcodedNub,  // Legacy path using hardcoded ASFWAudioDevice profile.
     kAVCDriven,     // AV/C discovery path with vendor extension controls.
+    kMOTUV3,        // MOTU proprietary register protocol (V3, no AV/C).
 };
 
 /// Factory for creating device-specific protocol handlers
@@ -25,10 +26,19 @@ enum class DeviceIntegrationMode : uint8_t {
 /// protocol handler for known devices. Returns nullptr for unknown devices.
 class DeviceProtocolFactory {
 public:
-    static constexpr uint32_t kFocusriteVendorId = 0x00130e;
-    static constexpr uint32_t kSPro24DspModelId = 0x000008;
-    static constexpr uint32_t kApogeeVendorId = 0x0003db;
-    static constexpr uint32_t kApogeeDuetModelId = 0x01dddd;
+    static constexpr uint32_t kFocusriteVendorId  = 0x00130e;
+    static constexpr uint32_t kSPro24DspModelId   = 0x000008;
+    static constexpr uint32_t kApogeeVendorId     = 0x0003db;
+    static constexpr uint32_t kApogeeDuetModelId  = 0x01dddd;
+
+    // MOTU vendor ID (IEEE OUI) and V3 model IDs.
+    // Source: Linux sound/firewire/motu/motu.c device table.
+    static constexpr uint32_t kMOTUVendorId       = 0x0001f2;
+    static constexpr uint32_t kMOTU828MK3FWModel  = 0x000015; // 828mk3 FireWire-only
+    static constexpr uint32_t kMOTU828MK3HybModel = 0x000035; // 828mk3 Hybrid (FW+USB)
+    static constexpr uint32_t kMOTU896MK3Model    = 0x000016;
+    static constexpr uint32_t kMOTUTravelerMK3Model= 0x000017;
+    static constexpr uint32_t kMOTUUltraLiteMK3Model=0x000019;
 
     /// Resolve integration mode for a known vendor/model pair.
     static constexpr DeviceIntegrationMode LookupIntegrationMode(
@@ -40,6 +50,14 @@ public:
         }
         if (vendorId == kApogeeVendorId && modelId == kApogeeDuetModelId) {
             return DeviceIntegrationMode::kAVCDriven;
+        }
+        if (vendorId == kMOTUVendorId &&
+            (modelId == kMOTU828MK3FWModel    ||
+             modelId == kMOTU828MK3HybModel   ||
+             modelId == kMOTU896MK3Model      ||
+             modelId == kMOTUTravelerMK3Model ||
+             modelId == kMOTUUltraLiteMK3Model)) {
+            return DeviceIntegrationMode::kMOTUV3;
         }
         return DeviceIntegrationMode::kNone;
     }

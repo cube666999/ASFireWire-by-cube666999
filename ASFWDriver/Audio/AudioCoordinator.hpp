@@ -9,9 +9,11 @@
 
 #include "IAVCAudioConfigListener.hpp"
 #include "../IRM/IRMClient.hpp"
+#include "../Async/Interfaces/IFireWireBusOps.hpp"
 #include "AudioNubPublisher.hpp"
 #include "Backends/AVCAudioBackend.hpp"
 #include "Backends/DiceAudioBackend.hpp"
+#include "Backends/MOTUAudioBackend.hpp"
 
 #include "../Logging/Logging.hpp"
 #include "../Protocols/Audio/DeviceProtocolFactory.hpp"
@@ -42,6 +44,7 @@ public:
 
     void SetCMPClient(ASFW::CMP::CMPClient* client) noexcept;
     void SetIRMClient(ASFW::IRM::IRMClient* client) noexcept;
+    void SetBusOps(Async::IFireWireBusOps* busOps) noexcept;
 
     // IDeviceObserver
     void OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device) override;
@@ -65,8 +68,9 @@ private:
     [[nodiscard]] IAudioBackend* BackendForGuid(uint64_t guid) noexcept;
 
     AudioNubPublisher publisher_;
-    DiceAudioBackend dice_;
-    AVCAudioBackend avc_;
+    DiceAudioBackend  dice_;
+    AVCAudioBackend   avc_;
+    MOTUAudioBackend  motuV3_;
 
     Discovery::IDeviceManager& deviceManager_;
     Discovery::DeviceRegistry& registry_;
