@@ -2,6 +2,10 @@
 
 Cel końcowy: MOTU 828 MK3 działający na macOS Tahoe przez sterownik DriverKit.
 
+Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
+
+---
+
 ## Stan implementacji (maj 2026)
 
 | Subsystem | Status | Uwagi |
@@ -9,347 +13,202 @@ Cel końcowy: MOTU 828 MK3 działający na macOS Tahoe przez sterownik DriverKit
 | OHCI init & bus reset | ✅ Działa | Self-ID, topology, gap count |
 | Async TX/RX (quadlet read) | ✅ Działa | Block read/write, lock, PHY — częściowo |
 | Config ROM reading | ✅ Działa | Pełny scanner z FSM multi-node |
-| AV/C / FCP | ✅ Działa | Music Subunit, PCR space, `SendSampleRateCommand` (0x19) |
-| IRM | ✅ Działa | Elekcja, alokacja kanału + bandwidth (Etap 5) |
-| Isoch Transmit (IT) | ✅ Działa | AM824 + SYT + cadence, testowane na hardware |
+| AV/C / FCP | ✅ Działa (kod) | Nie używane dla MOTU V3 — patrz Etap 10 |
+| IRM | ✅ Działa | Alokacja kanału + bandwidth |
+| Isoch Transmit (IT) | ✅ Działa | AM824 + SYT + cadence |
 | Isoch Receive (IR) | 🚧 WIP | Pipeline istnieje, wymaga walidacji na hardware |
-| AudioDriverKit | 🚧 W toku | `ASFWAudioDriver` + `ASFWAudioNub` podłączone; `HandleChangeSampleRate` + AV/C 0x19 zaimplementowane |
+| AudioDriverKit | 🚧 W toku | ASFWAudioDriver + ASFWAudioNub podłączone |
+| **MOTU V3 Backend** | ✅ Zaimplementowany | `MOTUAudioBackend` — czeka na test hardware |
 
 ---
 
-## Etap 1 — Testy IR Receive ✏️
-
-**Pliki:** `tests/IsochReceiveContextTests.cpp`, `tests/IsochRxDmaRingTests.cpp`
-
-Aktualny stan testów jest szczątkowy (`IsochReceiveContextTests` ma tylko 4 testy, w tym jeden z `// TODO: Advanced test`). Napisać testy weryfikujące:
-
-- `Poll()` przetwarza pakiety gdy deskryptory mają `xferStatus != 0`
-- `Poll()` zwraca 0 na pustym ringu (już jest)
-- `Stop()` poprawnie wyłącza kontekst i zeruje stan
-- `Configure()` → `Start()` → `Stop()` → `Configure()` (re-use bez OOM)
-- `DrainCompleted` prawidłowo re-arms deskryptory po przetworzeniu
-
-Wszystkie bez hardware — symulacja przez bezpośredni zapis do deskryptorów w pamięci.
-
----
-
-## Etap 2 — Brakujące komendy Async ✏️
-
-**Pliki:** `ASFWDriver/Async/Commands/`, `tests/`
-
-Block read/write i lock commands są "partially done". Sprawdzić co dokładnie brakuje, doimplementować i pokryć testami. Wzorzec: porównać z istniejącymi quadlet read/write.
-
----
-
-## Etap 3 — Testy StreamProcessor / AM824 ✏️
-
-**Pliki:** `ASFWDriver/Isoch/Receive/StreamProcessor.hpp`, `ASFWDriver/Isoch/Audio/AM824Decoder.hpp`
-
-StreamProcessor parsuje CIP header i dekoduje AM824. Napisać testy z realnymi danymi:
-- syntetyczne pakiety IEC 61883-6 (stereo 48kHz)
-- walidacja DBC continuity (wykrywanie dropped packets)
-- dekodowanie AM824 → PCM S32
-
-Dane referencyjne dostępne w `tools/parse_amdtp.py` i plikach `.bin` w `tools/`.
-
----
-
-## Etap 4 — Analiza ścieżki MOTU 828 MK3 ✏️
-
-**Cel:** Ustalić dokładnie co musi się wydarzyć żeby MOTU zaczął streamować audio.
-
-Analiza zakończona — szczegóły w `MOTU_828_MK3_BringUp.md`.
-
-### Zidentyfikowane gapy (2 krytyczne)
-
-**GAP 1 — `CMPClient::ConnectOPCR` nie wpisuje kanału do oPCR** (krytyczny)
-- Plik: `ASFWDriver/Protocols/AVC/CMP/CMPClient.cpp`
-- `ConnectOPCR(plug, callback)` wywołuje `PerformConnect(..., setChannel=nullopt, ...)` — inkrementuje p2p ale nie ustawia pola `channel` w oPCR
-- Per IEC 61883-1 §10.4.2: kontroler MUSI wpisać kanał do oPCR przy p2p connect (tak jak robi `ConnectIPCR`)
-- **Fix:** dodać parametr `uint8_t channel` do `ConnectOPCR`, przekazać jako `setChannel`
-
-**GAP 2 — IRM nie jest wywoływany z `AVCAudioBackend::StartStreaming`** (krytyczny)
-- Plik: `ASFWDriver/Audio/Backends/AVCAudioBackend.cpp/.hpp`
-- Kanały hardcoded: `kDefaultIrChannel=0`, `kDefaultItChannel=1` — bez `IRMClient::AllocateResources`
-- `AVCAudioBackend` nie ma pola `IRMClient*` — brak ścieżki injection
-- Bandwidth dla MOTU 48kHz 18ch ≈ 146 units (S400) nigdy nie rezerwowany
-- **Fix:** dodać `SetIRMClient(IRMClient*)`, wywołać `AllocateResources(ch, bw, cb)` przed `StartReceive`, przekazać dynamiczny kanał
-
-### Sekwencja po naprawie
-```
-AllocateResources(ch, bw) → StartReceive(ch) → ConnectOPCR(0, ch) → StartTransmit(ch+1) → ConnectIPCR(0, ch+1)
-```
-
----
-
-## Etap 5 — Implementacja gapów IRM + CMP ✏️
-
-**Pliki:** `ASFWDriver/Protocols/AVC/CMP/CMPClient.hpp/.cpp`, `ASFWDriver/Audio/Backends/AVCAudioBackend.hpp/.cpp`
-
-### GAP 1 — `ConnectOPCR` z kanałem
-- Dodać `uint8_t channel` do `ConnectOPCR(plug, channel, callback)`
-- Zaktualizować `PerformConnect(…, setChannel=channel, …)`
-- Zaktualizować wszystkich callerów (AVCAudioBackend, IsochHandler test)
-- Testy jednostkowe
-
-### GAP 2 — IRM w AVCAudioBackend
-- Dodać `IRMClient* irmClient_` + `SetIRMClient(IRMClient*)`
-- W `StartStreaming`: `AllocateResources(ch, bw, cb)` async przed `StartReceive`
-- W `StopStreaming`: `ReleaseResources(ch, bw)` po `StopReceive`
-- Bandwidth: 146 units dla 48kHz S400 (parametryzować przez kanałów)
-- Testy jednostkowe
-
----
-
----
-
-## Etap 6 — Bring-up hardening ✏️
-
-Seria ulepszeń stabilności wymaganych przed testami hardware.
-
-### 6a — GAP 3: oPCR read-back po ConnectOPCR ✅
-- Plik: `ASFWDriver/Audio/Backends/AVCAudioBackend.cpp`
-- Po CAS `ConnectOPCR` odczytuje oPCR[0] i sprawdza, czy kanał faktycznie został wpisany
-- 3 nowe testy w `CMPClientTests` — ReadOPCR OK/fail/invalid-plug
-
-### 6b — Bus reset recovery w AudioCoordinator ✅
-- Plik: `ASFWDriver/Audio/AudioCoordinator.cpp/.hpp`
-- `OnDeviceSuspended`: zatrzymuje backend + dodaje GUID do `suspendedGuids_`
-- `OnDeviceResumed`: gdy GUID był w `suspendedGuids_`, wywołuje ponownie `StartStreaming(guid)`
-- IEEE 1394 §8.3: bus reset kończy wszystkie połączenia isoch — wymagana pełna sekwencja restart
-
-### 6c — Naprawa akumulacji rescanAttempts_ ✅
-- Plik: `ASFWDriver/Protocols/AVC/AVCDiscovery.cpp`
-- `OnUnitResumed` resetuje licznik `rescanAttempts_[guid]`
-- Bez tej poprawki po N bus resetach urządzenie traciłoby discovery na stałe
-
-### 6d — IOPCIClassMatch zamiast IOPCIMatch ✅
-- Plik: `ASFWDriver/Info.plist`
-- `IOPCIMatch: 0x590111c1` (tylko Agere) → `IOPCIClassMatch: 0x0c001000&0xffffff00` (każdy OHCI FireWire)
-- Teraz pasuje do Apple TB adapter (TI XIO2213B) i innych chipów OHCI
-
----
-
----
-
-## Etap 7 — RX queue wiring fix ✏️
-
-**Plik:** `ASFWDriver/Isoch/Audio/ASFWAudioDriver.cpp`
-
-### Problem
-`CreateRxQueue` w `ASFWAudioNub` jest wywoływany leniwie — dopiero przy pierwszym `StartAudioStreaming`.
-`MapRxQueueFromNub` w `ASFWAudioDriver::Start` zawodzi bo kolejka jeszcze nie istnieje → `rxQueueValid = false`.
-W `ZtsTimerOccurred` ścieżka RX jest pomijana — brak audio z FireWire IR do HAL.
-
-### Fix ✅
-W `StartDevice`, po `nub->StartAudioStreaming()`:
-- Jeśli `!rxQueueValid` — wywołuje `MapRxQueueFromNub` ponownie → `HandleBeginRead` dostarcza audio z IR do HAL
-- Jeśli `!txQueueValid` — wywołuje `MapTxQueueFromNub` ponownie → `HandleWriteEnd` pisze audio z CoreAudio do shared TX queue (nie do local ring buffer)
-- Oba aktualizują `inputChannelCount`/`outputChannelCount` z nagłówków kolejek
-
----
-
-## Etap 9 — HandleChangeSampleRate (runtime sample rate switching) ✏️
-
-**Pliki:** `ASFWDriver/Isoch/Audio/ASFWIOUserAudioDevice.iig/.cpp`, `ASFWDriver/Protocols/AVC/IAVCDiscovery.hpp`, `ASFWDriver/Protocols/AVC/AVCDiscovery.hpp/.cpp`
-
-### Problem
-`IOUserAudioDevice` był tworzony jako `IOUserAudioDevice::Create(...)` — nie ma możliwości overrida `HandleChangeSampleRate`. Zmiana sample rate przez HAL (Audio MIDI Setup) była ignorowana: rate zablokowany na 48kHz ustawionym podczas discovery.
-
-### Fix ✅
-- **`ASFWIOUserAudioDevice`** — nowa podklasa `IOUserAudioDevice` (`.iig` + `.cpp`):
-  - Override `HandleChangeSampleRate(double)`:
-    1. `AudioCoordinator::StopStreaming(guid)`
-    2. `IAVCDiscovery::SendSampleRateCommand(guid, rateHz, cb)` — AV/C opcode 0x19, poll ≤500ms
-    3. `super::HandleChangeSampleRate(rate)` — aktualizuje CoreAudio device rate
-    4. `AudioCoordinator::StartStreaming(guid)` — restart IR+IT przy nowym rate
-  - `SetStreamingContext(ASFWAudioNub*, uint64_t guid)` LOCALONLY — wiring po `Create()`
-- **`IAVCDiscovery::SendSampleRateCommand`** — nowa wirtualna metoda interfejsu
-- **`AVCDiscovery::SendSampleRateCommand`** — implementacja: szuka AVCUnit po GUID, buduje `AVCCommand` z SFC (IEC 61883-6 Table 5), wysyła przez FCP, callback z wynikiem
-- **`ASFWAudioDriver`** — tworzy `ASFWIOUserAudioDevice` zamiast `IOUserAudioDevice`, wywołuje `SetStreamingContext`
-- **`MockAVCDiscovery`** w testach — dodana nowa metoda do mocka
-
-### SFC mapping (IEC 61883-6 Table 5)
-32kHz=0x00 · 44.1kHz=0x01 · 48kHz=0x02 · 88.2kHz=0x03 · 96kHz=0x04 · 176.4kHz=0x05 · 192kHz=0x06
-
----
-
-## Status
+## Status etapów
 
 | Etap | Status | Testy |
 |------|--------|-------|
-| 1 — Testy IR Receive | ✅ Zrobione | +12 testów (IsochRxDmaRing + IsochReceiveContext) |
-| 2 — Async Block/Lock | ✅ Zrobione | +11 testów (AsyncCommandBuilder) + PayloadContextStub |
-| 3 — StreamProcessor testy | ✅ Zrobione | +17 testów (StreamProcessor + AM824Decoder) |
-| 4 — Analiza MOTU path | ✅ Zrobione | `MOTU_828_MK3_BringUp.md` — 2 krytyczne gapy |
-| 5 — IRM + ConnectOPCR fix | ✅ Zrobione | +16 testów (CMPClientTests + IRMClientTests) |
-| 6 — Bring-up hardening | ✅ Zrobione | +3 testy (ReadOPCR), bus reset recovery, rescan fix, IOPCIClassMatch |
-| 7 — RX queue wiring fix | ✅ Zrobione | rxQueueValid=false bug — re-map po StartAudioStreaming |
-| 8 — TX queue wiring fix | ✅ Zrobione | txQueueValid=false bug — HandleWriteEnd pisał do ring buffer zamiast shared queue |
-| 9 — HandleChangeSampleRate | ✅ Zrobione | ASFWIOUserAudioDevice + SendSampleRateCommand — runtime rate switching |
+| 1–9 — Szczegóły w DevLog.md | ✅ Zrobione | 488/488 ✅ |
+| 10 — MOTU V3 Protocol Backend | ✅ Zaimplementowany | 488/488 ✅ (brak hardware testów) |
 
 ---
 
-## Stan ścieżki bring-up MOTU 828 MK3 (po Etapie 9)
+## Etap 10 — MOTU V3 Protocol Backend ✅ (2026-05-24)
 
-### Zamknięte krytyczne gapy
-| Krok | Status | Naprawione w |
-|------|--------|-------------|
-| OHCI init, bus reset, topology | ✅ | bazowy |
-| Config ROM scan | ✅ | bazowy |
-| AV/C discovery, Music Subunit | ✅ | bazowy |
-| Sample rate → 48kHz via AV/C 0x19 | ✅ | Etap 5 |
-| IRM: AllocateResources przed CMP | ✅ | Etap 5 |
-| CMP ConnectOPCR z kanałem | ✅ | Etap 5 |
-| oPCR read-back po connect | ✅ | Etap 6a |
-| Bus reset recovery (suspend/resume) | ✅ | Etap 6b |
-| rescanAttempts_ reset na resume | ✅ | Etap 6c |
-| IOPCIClassMatch (TB adapter) | ✅ | Etap 6d |
-| RX queue wiring w StartDevice | ✅ | Etap 7 |
-| TX queue wiring w StartDevice | ✅ | Etap 8 |
-| IR Poll ← przerwania OHCI | ✅ | bazowy |
-| SYT clock gate (500ms) | ✅ | bazowy |
+### Odkrycie
 
-### Pozostałe (nie blokują initial test)
-- `AVCUnitPlugSignalFormatCommand` / `MusicSubunit::SetSampleRate` — dead code (rate zmieniane przez `AVCDiscovery::SendSampleRateCommand`)
-- Hardware test na Tahoe + TB adapter + MOTU 828 MK3
+MOTU 828 MK3 używa **własnego protokołu rejestrowego V3** — bez AV/C, bez FCP, bez CMP.
+Potwierdzone przez analizę Linux kernel driver `sound/firewire/motu/motu-protocol-v3.c`.
 
-**Łącznie testów w projekcie: 488/488 ✅**
+Dotychczasowa sekwencja (AV/C → FCP block write) NIGDY nie mogła działać:
+MOTU nie implementuje FCP mimo deklarowania AV/C units w Config ROM.
 
-**Git:** 16 commitów wypchnięte do `github.com/cube666999/ASFireWire-by-cube666999`
+### Co zostało zaimplementowane
 
----
+**Nowe pliki:**
+- `ASFWDriver/Audio/Backends/MOTUAudioBackend.hpp`
+- `ASFWDriver/Audio/Backends/MOTUAudioBackend.cpp`
 
-## Instrukcja testowania na Mac Studio (Tahoe, Apple Silicon)
+**Zmodyfikowane pliki:**
+- `ASFWDriver/Protocols/Audio/DeviceProtocolFactory.hpp` — dodano `kMOTUV3`, vendor 0x0001F2, model IDs
+- `ASFWDriver/Audio/AudioCoordinator.hpp/.cpp` — dodano `motuV3_`, `SetBusOps`, routing
+- `ASFWDriver/ASFWDriver.cpp` — `audioCoordinator->SetBusOps(&ctx.controller->Bus())`
 
-### Wymagania sprzętowe
-- Mac Studio (Apple Silicon) z macOS Tahoe
-- Adapter Thunderbolt → FireWire 800 (Apple oryginalny lub OWC)
-- MOTU 828 MK3 podłączony kablem FireWire 800
+### Sekwencja StartStreaming (MOTUAudioBackend)
 
-### Wymagania software
-- Xcode zainstalowany na Mac Studio
-- Projekt dostępny lokalnie (np. przez iCloud Drive)
-
----
-
-### Krok 1 — Jednorazowe przygotowanie systemu (Recovery Mode)
-
-Wyłącz Mac Studio. Przytrzymaj przycisk zasilania aż pojawi się "Loading startup options".
-
-**Options → Terminal:**
-```bash
-csrutil disable
+```
+1. ReadRegister(0x0b14)         → odczyt CLOCK_STATUS (log sample rate)
+2. IRM AllocateResources        → kanały irCh + itCh + bandwidth
+3. WriteRegister(0x0b10, fmt)   → PACKET_FORMAT: speed S400 + exclude differed
+4. isoch_.StartReceive(irCh)    → start IR OHCI DMA
+5. isoch_.StartTransmit(itCh)   → start IT OHCI DMA
+6. ReadModifyWrite(0x0b00)      → ISOC_COMM_CONTROL: aktywuj oba kanały
+7. ReadModifyWrite(0x0b14)      → CLOCK_STATUS: ustaw FETCH_PCM_FRAMES
 ```
 
-**Options → Startup Security Utility:**
-- Wybierz "Reduced Security"
-- Zaznacz: "Allow user management of kernel extensions from identified developers"
+**Kluczowe:** Wszystkie operacje to **quadlet write (tCode=0x0)** — inny code path niż zepsuty FCP block write (tCode=0x1). `WriteQuad(length=4)` → `WriteCommand` automatycznie wybiera tCode=0x0.
 
-Uruchom ponownie normalnie.
+### Routing urządzeń (DeviceProtocolFactory)
+
+| Urządzenie | Vendor | Model | Backend |
+|------------|--------|-------|---------|
+| MOTU 828 MK3 FW | 0x0001F2 | 0x000015 | `motuV3_` |
+| MOTU 828 MK3 Hybrid | 0x0001F2 | 0x000035 | `motuV3_` |
+| MOTU 896 MK3 | 0x0001F2 | 0x000016 | `motuV3_` |
+| MOTU Traveler MK3 | 0x0001F2 | 0x000017 | `motuV3_` |
+| MOTU UltraLite MK3 | 0x0001F2 | 0x000019 | `motuV3_` |
 
 ---
 
-### Krok 2 — Boot args i developer mode (jednorazowo po Recovery)
+## ✅ ROZWIĄZANE — Model ID MOTU w Config ROM (2026-05-24)
+
+**Potwierdzono na Sequoia z System Information:**
+- Root directory `Model = 0x106800` (nie `0x000015` — i nie `0x000000`)
+- Unit directory `Unit_SW_Vers = 0x15` = `0x000015` ← właściwe pole!
+- GUID = `0x1F20000087236` ✅
+
+**Przyczyna bugu:** `BackendForGuid` używał `record->modelId` (root dir = `0x106800`) zamiast `record->unitSwVersion` (unit dir = `0x000015`). MOTU nie wstawia modelu do root directory.
+
+**Fix:** `DeviceProtocolFactory::EffectiveModelId()` — dla vendor `0x0001F2` zwraca `unitSwVersion` zamiast `rootModelId`. Commit `abc75ea`. 488/488 testów ✅.
+
+Routing będzie teraz poprawny: `LookupIntegrationMode(0x0001F2, 0x000015)` → `kMOTUV3`.
+
+---
+
+## Następna sesja — Test hardware na Mac Studio (Tahoe)
+
+### Krok 1 — Zbuduj i zainstaluj
 
 ```bash
-sudo nvram boot-args="amfi_get_out_of_my_way=1"
-sudo systemextensionsctl developer on
+# Na Mac Studio — pobierz projekt z iCloud (jeśli ikona chmurki: Download Now w Finderze)
+# Otwórz ASFireWire.xcodeproj → Build (⌘B)
+# Uruchom ASFW.app → zainstaluje dext
 ```
 
-Uruchom ponownie (boot args wymagają restartu).
-
----
-
-### Krok 3 — Pobranie projektu z iCloud
-
-```bash
-# Upewnij się że projekt jest pobrany lokalnie (nie tylko w chmurze)
-# W Finderze: kliknij prawym na folder → "Download Now" jeśli widać ikonę chmurki
-cd ~/Library/Mobile\ Documents/com~apple~CloudDocs/ASFireWire
-# lub gdziekolwiek jest w iCloud
-```
-
----
-
-### Krok 4 — Budowanie w Xcode
-
-1. Otwórz `ASFireWire.xcodeproj` w Xcode
-2. W nawigatorze wybierz projekt → **Signing & Capabilities**
-3. Ustaw **Team** na swoje Apple ID (darmowe wystarczy z wyłączonym SIP)
-4. Wybierz schemat **ASFWDriver** → **My Mac**
-5. **Product → Build** (`⌘B`)
-
-Zbudowane pliki będą w:
-```
-~/Library/Developer/Xcode/DerivedData/ASFireWire-.../Build/Products/Debug/
-```
-
----
-
-### Krok 5 — Instalacja sterownika
-
-Uruchom aplikację **ASFW** (Swift companion app) z Xcode — ona zainstaluje dext automatycznie przez `systemextensionsctl`.
-
-Alternatywnie ręcznie:
-```bash
-systemextensionsctl install \
-  ~/Library/Developer/Xcode/DerivedData/ASFireWire-.../ASFWDriver.dext
-```
-
----
-
-### Krok 6 — Podłączenie sprzętu i monitoring logów
-
-**Najpierw uruchom logi w osobnym oknie Terminala** (przed podłączeniem MOTU):
+### Krok 2 — Uruchom logi
 
 ```bash
 log stream --predicate 'subsystem == "net.mrmidi.ASFW"' --level debug
 ```
 
-Następnie podłącz TB adapter → MOTU 828 MK3.
+Podłącz TB adapter → MOTU 828 MK3.
 
-Oczekiwana sekwencja sukcesu w logach:
+### Krok 3 — Co obserwować w logach
+
+**Sukces — nowa sekwencja (MOTU V3):**
 ```
 OHCI init ✓
 Bus reset + Self-ID ✓
 Config ROM scan → MOTU 828 MK3 ✓
-AVCDiscovery → Music Subunit ✓
-Sample rate → 48kHz via AV/C 0x19 ✓
-IRM AllocateResources ✓
-CMP ConnectOPCR + ConnectIPCR ✓
-ASFWAudioNub published ✓
-ASFWAudioDriver matched ✓
-clockEstablished = true ✓
+AudioCoordinator: StartStreaming backend=MOTU-V3  ← KLUCZOWE
+MOTUAudioBackend: CLOCK_STATUS=0x... rateCode=0x02
+MOTUAudioBackend: IRM allocated IR ch=0 IT ch=1
+MOTUAudioBackend: PACKET_FORMAT=0x000000c2 written
+MOTUAudioBackend: ISOC_COMM_CONTROL=0x... (irCh=0 itCh=1)
+MOTUAudioBackend: FETCH_PCM_FRAMES set
+MOTUAudioBackend: Streaming started GUID=0x...
 ```
 
-MOTU powinien pojawić się w **Audio MIDI Setup** jako urządzenie audio.
+**Jeśli widzisz `backend=AV/C` zamiast `MOTU-V3`** → sprawdź logi czy `unitSwVersion=0x000015` jest parsowany z unit directory. Model ID mismatch powinien być już naprawiony (commit `abc75ea`).
 
-**Jeśli coś nie działa** — skopiuj logi i wklej do nowej sesji Claude Code lub na claude.ai.
-Napisz: *"Kontynuujemy projekt ASFireWire — oto logi z Mac Studio:"*
+**Jeśli widzisz `CLOCK_STATUS read failed`** → quadlet write też prawdopodobnie nie działa → bug w AT DMA szerszy niż block write.
+
+**Jeśli widzisz `ISOC_COMM_CONTROL write failed`** → quadlet write zawodzi → AT DMA bug.
+
+**Jeśli streaming started ale brak audio** → sprawdź czy ASFWAudioNub jest w IORegistry:
+```bash
+ioreg -l -r -c ASFWAudioNub
+```
+
+### Krok 4 — Jeśli coś nie działa
+
+Skopiuj logi i wklej do nowej sesji Claude Code.
+Napisz: **"Kontynuujemy ASFireWire — oto logi z Mac Studio:"**
 
 ---
 
-### Krok 7 — Odinstalowanie (jeśli potrzebne)
+## ✅ ZWERYFIKOWANE — Analiza kexta MOTUFireWireAudio (2026-05-24)
+
+Zdisassemblowano kext `/Library/Extensions/MOTUFireWireAudio.kext` na Sequoia (slice x86_64).
+
+**Potwierdzone wartości vs nasza implementacja:**
+
+| Stała | Wartość kext | Nasza wartość | Status |
+|-------|-------------|---------------|--------|
+| CLOCK_STATUS addr | `0xf0000b14` (w tablicy data, LE: `14 0b 00 f0`) | `kClockStatusOff = 0x0b14` | ✅ |
+| V3_FETCH_PCM_FRAMES | `0x02000000` (data table word[1]) | `kFetchPCMFrames = 0x02000000` | ✅ |
+| Rate code mask | `andl $0x700` → bits[10:8] | `kClockRateMask = 0x00000700` (poprawiono) | ✅ |
+| PACKET_FORMAT addr | `0xf0000b10` (explicit imm) | `kPacketFmtOff = 0x0b10` | ✅ |
+| PACKET_FORMAT value | bit7=TX_excl, bit6=RX_excl, bits[1:0]=speed | `0xC2` = `0x80\|0x40\|0x02` | ✅ |
+| ISOC_COMM_CONTROL addr | `0xf0000b00` (explicit imm) | `kIsocCtrlOff = 0x0b00` | ✅ |
+
+**Ważne obserwacje:**
+- Kext przechowuje adres CLOCK_STATUS w tablicy danych (nie jako immediate w kodzie) — dlatego `grep "0xf0000b14"` nie dał wyników; potwierdzono przez zrzut sekcji `__DATA __const` pod adresem `0x7d4b8`.
+- `kClockRateMask` poprawiony z `0x0000ff00` na `0x00000700` — kext używa `andl $0x700`, co odpowiada 3 bitom [10:8].
+- Kolejność inicjalizacji MK3: Read CLOCK_STATUS → SetupStreams (alloc kanałów) → WritePacketFormat → WriteIsocCtrl → SetFetchPCMFrames — zgodna z naszą sekwencją.
+
+---
+
+## Znane nierozwiązane problemy
+
+| Problem | Priorytet | Opis |
+|---------|-----------|------|
+| AT DMA block write (tCode=0x1) | Średni | OHCI nie dostaje ack — descriptor chain bug w `ATContextBase.hpp` offset ~870. Nie blokuje MOTU V3 (używa quadlet write), ale dotyczy innych urządzeń AV/C. |
+| ~~Model ID 0x000000 w Discovery~~ | ✅ NAPRAWIONE | Root dir model=0x106800, unit SW vers=0x000015. Fix: `EffectiveModelId()` commit `abc75ea` |
+| IR Receive walidacja na hardware | Wysoki | Kod istnieje, nieprzetestowany na żywym sprzęcie |
+
+---
+
+## Instrukcja testowania na Mac Studio (Tahoe, Apple Silicon)
+
+### Wymagania
+- Mac Studio (Apple Silicon) z macOS Tahoe, SIP disabled, `amfi_get_out_of_my_way=1`
+- Adapter Thunderbolt → FireWire 800
+- MOTU 828 MK3
+
+### Jednorazowe przygotowanie (Recovery Mode)
+
+```bash
+# Recovery → Terminal
+csrutil disable
+# Recovery → Startup Security Utility → Reduced Security → Allow kernel extensions
+```
+
+```bash
+# Po normalnym restarcie
+sudo nvram boot-args="amfi_get_out_of_my_way=1"
+sudo systemextensionsctl developer on
+# restart
+```
+
+### Odinstalowanie sterownika
 
 ```bash
 systemextensionsctl uninstall net.mrmidi.ASFW net.mrmidi.ASFW.ASFWDriver
 ```
 
----
+### Przywrócenie SIP
 
-### Przywrócenie pełnego SIP po testach
-
-**W normalnym systemie (przed Recovery):**
 ```bash
 sudo systemextensionsctl developer off
 sudo nvram -d boot-args
-sudo reboot
+# restart → Recovery → csrutil enable → restart
 ```
-
-**Po restarcie — boot do Recovery → Terminal:**
-```bash
-csrutil enable
-```
-
-Restart. Gotowe — SIP włączony, AMFI aktywny, developer mode wyłączony.

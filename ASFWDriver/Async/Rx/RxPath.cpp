@@ -144,8 +144,11 @@ void RxPath::ProcessARInterrupts(std::atomic<uint32_t>& is_bus_reset_in_progress
             // recycle(info.descriptorIndex);  // remains disabled
         }
 
-        ASFW_LOG_V2(Async, "RxPath: Processed %u buffers from %{public}s",
-                 buffersProcessed, ctxLabel);
+        // V1: always log AR Request activity so we can see if packets arrive
+        if (buffersProcessed > 0) {
+            ASFW_LOG(Async, "RxPath: AR Request processed %u buffers (packets routed to PacketRouter)",
+                     buffersProcessed);
+        }
     }
 
     // Process AR Response context (skip during reset)

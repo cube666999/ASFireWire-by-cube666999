@@ -6,6 +6,24 @@
       parallelizeBuildables = "YES"
       buildImplicitDependencies = "YES"
       buildArchitectures = "Automatic">
+      <PostActions>
+         <ExecutionAction
+            ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
+            <ActionContent
+               title = "Re-sign dext with Apple Development cert"
+               scriptText = "# Re-sign dext with real Apple Development cert so DriverKit exec path accepts it&#10;# (amfi_get_out_of_my_way=1 bypasses entitlement checks at runtime)&#10;DEXT=&quot;${TARGET_BUILD_DIR}/${FULL_PRODUCT_NAME}&quot;&#10;ENTITLEMENTS=&quot;${SRCROOT}/ASFWDriver/ASFWDriver.entitlements&quot;&#10;IDENTITY=&quot;Apple Development: j.slipiec@gmail.com (239NB3LFDQ)&quot;&#10;&#10;if [ -d &quot;${DEXT}&quot; ]; then&#10;    codesign --force --sign &quot;${IDENTITY}&quot; \&#10;        --entitlements &quot;${ENTITLEMENTS}&quot; \&#10;        --timestamp=none \&#10;        &quot;${DEXT}&quot;&#10;    echo &quot;Re-signed: ${DEXT}&quot;&#10;else&#10;    echo &quot;dext not found at: ${DEXT}&quot;&#10;    exit 1&#10;fi&#10;">
+               <EnvironmentBuildable>
+                  <BuildableReference
+                     BuildableIdentifier = "primary"
+                     BlueprintIdentifier = "3A1693EC2E808765000BD368"
+                     BuildableName = "net.mrmidi.ASFW.ASFWDriver.dext"
+                     BlueprintName = "ASFWDriver"
+                     ReferencedContainer = "container:ASFW.xcodeproj">
+                  </BuildableReference>
+               </EnvironmentBuildable>
+            </ActionContent>
+         </ExecutionAction>
+      </PostActions>
       <BuildActionEntries>
          <BuildActionEntry
             buildForTesting = "YES"

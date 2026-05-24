@@ -250,6 +250,98 @@ Dotykaj tylko tego, co musisz: - Nie „poprawiaj" sąsiedniego kodu bez pytania
 Gdy Twoje zmiany tworzą „osierocone" elementy: - Usuń importy/zmienne/funkcje, które stały się nieużywane przez Twoje zmiany - Nie usuwaj sam wcześniej istniejącego martwego kodu (Poinformuj o nim wyraźnie), usuń wtedy gdy zostaniesz o to poproszony
 
 
+## ✅ DEXT DZIAŁA — Status po sesjach debugowania (2026-05-18)
+
+### Co zostało naprawione (w kolejności)
+
+1. **ENOEXEC przy exec dextu** — Apple Silicon wymaga **Apple Developer cert** (nie ad-hoc) do uruchomienia DriverKit dextu. `amfi_get_out_of_my_way=1` NIE pomaga przy arm64e exec.
+
+2. **Brak arm64e slice** — `ONLY_ACTIVE_ARCH = YES` na poziomie projektu + Apple Silicon = Xcode budował tylko `arm64`. DriverKit dexty na Apple Silicon **wymagają `arm64e`**. Fix: dodano do `project.pbxproj` dla ASFWDriver (Debug i Release):
+   ```
+   ARCHS = "arm64e x86_64";
+   ONLY_ACTIVE_ARCH = NO;
+   ```
+
+3. **teamID mismatch** — app musiała być podpisana tym samym teamID (4MJNRC8SW5) co dext.
+
+4. **Provisioning errors Xcode 26** — `com.apple.developer.driverkit.userclient-access` i `system-extension.install` wymagają provisioning profile nawet przy ad-hoc. Fix: `App_build.entitlements` (build-time, bez restricted entitlements), `App.entitlements` (post-build re-sign).
+
+### Aktualny stan budowania
+
+- **ASFWDriver**: `CODE_SIGN_IDENTITY = "-"` (ad-hoc), `AD_HOC_CODE_SIGNING_ALLOWED = YES`, `ARCHS = "arm64e x86_64"`, `ONLY_ACTIVE_ARCH = NO`
+- **ASFW app**: `CODE_SIGN_ENTITLEMENTS = ASFW/App_build.entitlements` (bez userclient-access), ad-hoc
+- **Post-build scheme action**: re-signs: (1) app z `App.entitlements`, (2) dext z `ASFWDriver.entitlements` — oba z `"Apple Development: j.slipiec@gmail.com (239NB3LFDQ)"`
+- **Uwaga**: post-action czasem nie podpisuje app. Fallback — ręczny codesign z Terminala po każdym buildzie:
+  ```bash
+  codesign --force --options runtime --sign "Apple Development: j.slipiec@gmail.com (239NB3LFDQ)" \
+    --entitlements "/Users/kuba/Library/Mobile Documents/com~apple~CloudDocs/FireWire/ASFireWire/ASFW/App.entitlements" \
+    --timestamp=none \
+    /Users/kuba/Library/Developer/Xcode/DerivedData/ASFW-*/Build/Products/Debug/ASFW.app
+  ```
+
+### Aktualny stan dextu (potwierdzony 2026-05-18 ~13:00)
+
+```
+systemextensionsctl list:
+  net.mrmidi.ASFW.ASFWDriver  [activated enabled]  teamID=4MJNRC8SW5
+
+IORegistry:
+  ASFWDriver <class IOUserService, registered, matched, active, CurrentPowerState=3>
+  IOUserServer(net.mrmidi.ASFW.ASFWDriver) <registered, matched, active>
+  ASFWDriverUserClient <IOUserUserClient> — tworzone przy połączeniu apki
+
+ps aux:
+  _driverkit  3458  /Library/SystemExtensions/F5E94065-.../net.mrmidi.ASFW.ASFWDriver.dext/...
+```
+
+Dext przeżywa reboot. Instalacja w `/Library/SystemExtensions/`.
+
+### ✅ Potwierdzony stan (2026-05-18 ~14:12)
+
+**Podłączone urządzenie: MOTU 828 MK3** (Vendor ID: 0x0001F2, GUID: 0x0001F20000087236)
+
+Device Discovery pokazuje:
+- Node 0 • Generation 3 • **Ready**
+- Unit: Spec ID: 0x0001F2, SW Version: 0x000015, ROM Offset: 5 quadlets
+- Model ID: 0x000000 (do zbadania — powinien wskazywać model)
+
+### Następne kroki
+
+1. **AV/C Units** — sprawdzić wykrywanie Music Subunit (828 MK3 ma AV/C)
+2. **Core Audio** — czy pojawia się urządzenie audio w systemie
+3. **ASFWAudioNub** — czy jest publikowany w IORegistry (uruchamia ASFWAudioDriver → CoreAudio HAL)
+4. `HALC_ShellObject: Error: "nope"` (kAudioHardwareUnsupportedOperationError) — błąd przy rejestracji AudioDriverKit, do debugowania
+5. Model ID 0x000000 dla 828 MK3 — prawdopodobnie trzeba odczytać więcej quadletów z Config ROM
+
+### Znany problem: OSSystemExtensionErrorDomain error 4 przy re-launch
+
+Przy ponownym uruchomieniu apki (gdy dext już jest [activated enabled]), `activate()` zwraca error 4 (ExtensionNotFound/version match). **Fix zastosowany** w `DriverInstallManager.swift`: error 4 przy aktywacji traktowany jako sukces ("Extension already active"). Rebuild wymagany żeby fix zadziałał.
+
+### Pliki konfiguracyjne (signing)
+
+| Plik | Cel |
+|------|-----|
+| `ASFW/App_build.entitlements` | Build-time app entitlements (bez restricted) |
+| `ASFW/App.entitlements` | Post-build re-sign entitlements (pełne) |
+| `ASFWDriver/ASFWDriver.entitlements` | Dext entitlements (pełne, używane przy buildzie i post-sign) |
+| `ASFW.xcodeproj/xcshareddata/xcschemes/ASFW.xcscheme` | Post-action: re-sign app → dext |
+
+---
+
+## Related Documents
+
+| Plik | Zawartość |
+|------|-----------|
+| `Focus.md` | **Aktywny plan pracy** — bieżący stan, etap 10 (MOTU V3), instrukcja hardware testu |
+| `DevLog.md` | Archiwum ukończonych etapów 1–9, logi sesji debugowania, szczegóły signing/build |
+| `MOTU_828_MK3_BringUp.md` | Analiza pełnej ścieżki bring-up MOTU 828 MK3 |
+| `CHANGES.md` | Changelog forka cube666999, link do GitHub |
+| `AGENTS.md` | Dodatkowy przewodnik dla AI assistants (architektura, wzorce) |
+| `REFACTOR_THOUGHTS.md` | Propozycje refaktoringu (żaden niezaimplementowany) |
+| `README.md` | Ogólny opis projektu |
+
+---
+
 ## Test Stub Quirk — DMA Alignment
 
 `HardwareInterface::AllocateDMA` in `tests/HardwareInterfaceStub.cpp` allocates the virtual buffer with **at least 4096-byte (page) alignment** (`effectiveAlign = max(4096, requested)`). This is intentional: the mock IOVA counter starts at `0x20000000` (page-aligned), so `DMAMemoryManager::AlignCursorToIOVA(4096)` only produces correct virtual-address alignment if `slabVirt_` is also page-aligned. Without this, the IOVA cursor aligns but the VA does not, breaking `IsochDMAMemoryManagerTest.PayloadSlicingAndPageAlignment`.

@@ -31,14 +31,14 @@ public:
         OSString*  inManufacturerUID,
         uint32_t   inZeroTimestampPeriod) LOCALONLY;
 
-    // Custom initializer (LOCALONLY) — different overload from parent's init(), so no override.
+    // Custom initializer (LOCALONLY) — overrides IOUserAudioDevice::init() (same 6-param signature).
     bool init(
         IOUserAudioDriver* ownerDriver,
         bool       inPrewarm,
         OSString*  inDeviceUID,
         OSString*  inModelUID,
         OSString*  inManufacturerUID,
-        uint32_t   inZeroTimestampPeriod) LOCALONLY;
+        uint32_t   inZeroTimestampPeriod) override LOCALONLY;
 
     void free() override;
 

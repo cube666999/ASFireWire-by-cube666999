@@ -11,7 +11,6 @@
 		3A1693F92E808765000BD368 /* net.mrmidi.ASFW.ASFWDriver.dext in Embed System Extensions */ = {isa = PBXBuildFile; fileRef = 3A1693ED2E808765000BD368 /* net.mrmidi.ASFW.ASFWDriver.dext */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		3A1694002E8087BD000BD368 /* PCIDriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3A1693FF2E8087BD000BD368 /* PCIDriverKit.framework */; };
 		3A27C5302ECDE045009CA664 /* bump.sh in Resources */ = {isa = PBXBuildFile; fileRef = 3A27C52E2ECDE045009CA664 /* bump.sh */; };
-		3A27C5322ECDE045009CA664 /* bump.sh in Resources */ = {isa = PBXBuildFile; fileRef = 3A27C52E2ECDE045009CA664 /* bump.sh */; };
 		3ABA31132EF8564A0046405D /* AudioDriverKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3ABA31122EF8564A0046405D /* AudioDriverKit.framework */; };
 /* End PBXBuildFile section */
 
@@ -63,6 +62,9 @@
 		3A1693FA2E808765000BD368 /* Exceptions for "ASFWDriver" folder in "ASFWDriver" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				"Bus/IEEE1394-BusReset.md.bak",
+				"Bus/IEEE1394-BusReset.md.bak2",
+				fixlog.sh,
 				Info.plist,
 			);
 			target = 3A1693EC2E808765000BD368 /* ASFWDriver */;
@@ -291,7 +293,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3A27C5322ECDE045009CA664 /* bump.sh in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -416,7 +417,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = F6YA6B56LR;
+				DEVELOPMENT_TEAM = 4MJNRC8SW5;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -480,7 +481,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = F6YA6B56LR;
+				DEVELOPMENT_TEAM = 4MJNRC8SW5;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -507,11 +508,11 @@
 				AD_HOC_CODE_SIGNING_ALLOWED = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = fwicons;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = ASFW/App.entitlements;
+				CODE_SIGN_ENTITLEMENTS = ASFW/App_build.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = 4MJNRC8SW5;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -542,11 +543,11 @@
 				AD_HOC_CODE_SIGNING_ALLOWED = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = fwicons;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = ASFW/App.entitlements;
+				CODE_SIGN_ENTITLEMENTS = ASFW/App_build.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = 4MJNRC8SW5;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -575,14 +576,16 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				AD_HOC_CODE_SIGNING_ALLOWED = YES;
+				ARCHS = "arm64e x86_64";
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++23";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = 4MJNRC8SW5;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
+				ONLY_ACTIVE_ARCH = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				EXCLUDED_SOURCE_FILE_NAMES = "*.md";
 				FRAMEWORK_SEARCH_PATHS = (
@@ -609,14 +612,16 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				AD_HOC_CODE_SIGNING_ALLOWED = YES;
+				ARCHS = "arm64e x86_64";
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++23";
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = ASFWDriver/ASFWDriver.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = 4MJNRC8SW5;
 				DRIVERKIT_DEPLOYMENT_TARGET = 25.0;
+				ONLY_ACTIVE_ARCH = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				EXCLUDED_SOURCE_FILE_NAMES = "*.md";
 				FRAMEWORK_SEARCH_PATHS = (
@@ -643,7 +648,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = 4MJNRC8SW5;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -664,7 +669,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = 4MJNRC8SW5;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
