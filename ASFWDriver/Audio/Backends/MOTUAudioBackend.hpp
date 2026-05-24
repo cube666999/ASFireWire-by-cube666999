@@ -86,8 +86,10 @@ private:
     static constexpr uint32_t kTxSpeedMask       = 0x0000000fu;
 
     // CLOCK_STATUS bit layout (V3)
+    // kFetchPCMFrames confirmed by MOTU kext data table (Box828mk3 format word[1]).
+    // kClockRateMask: kext uses andl $0x700 — rate code is exactly bits[10:8].
     static constexpr uint32_t kFetchPCMFrames    = 0x02000000u;
-    static constexpr uint32_t kClockRateMask     = 0x0000ff00u;
+    static constexpr uint32_t kClockRateMask     = 0x00000700u;
     static constexpr uint8_t  kClockRateShift    = 8;
 
     // Speed codes used in PACKET_FORMAT (match IEEE 1394 / OHCI speed field)
