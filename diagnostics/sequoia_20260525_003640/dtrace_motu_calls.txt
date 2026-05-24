@@ -1,0 +1,4 @@
+dtrace: invalid probe specifier 
+        fbt:com.motu.driver.FireWireAudio::entry  { printf("%Y  ENTER  %s\n", walltimestamp, probefunc); }
+        fbt:com.motu.driver.FireWireAudio::return { printf("%Y  LEAVE  %s rv=0x%x\n", walltimestamp, probefunc, arg1); }
+    : probe description fbt:com.motu.driver.FireWireAudio::entry does not match any probes

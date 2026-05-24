@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>BuildMachineOSBuild</key>
+	<string>20F71</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>English</string>
+	<key>CFBundleExecutable</key>
+	<string>MOTUFireWireAudio</string>
+	<key>CFBundleGetInfoString</key>
+	<string>MOTUFireWireAudio.kext 1.6 89555, Copyright © 2019, Mark of the Unicorn, Inc. All rights reserved.</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.motu.driver.FireWireAudio</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundlePackageType</key>
+	<string>KEXT</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.6 89555</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>MacOSX</string>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>1.6 89555</string>
+	<key>DTCompiler</key>
+	<string>com.apple.compilers.llvm.clang.1_0</string>
+	<key>DTPlatformBuild</key>
+	<string>12D4e</string>
+	<key>DTPlatformName</key>
+	<string>macosx</string>
+	<key>DTPlatformVersion</key>
+	<string>11.1</string>
+	<key>DTSDKBuild</key>
+	<string>20C63</string>
+	<key>DTSDKName</key>
+	<string>macosx11.1</string>
+	<key>DTXcode</key>
+	<string>1240</string>
+	<key>DTXcodeBuild</key>
+	<string>12D4e</string>
+	<key>IOKitPersonalities</key>
+	<dict>
+		<key>MOTU FireWire Device</key>
+		<dict>
+			<key>CFBundleIdentifier</key>
+			<string>com.motu.driver.FireWireAudio</string>
+			<key>IOClass</key>
+			<string>com_motu_driver_FWA_Device</string>
+			<key>IOProbeScore</key>
+			<integer>4096</integer>
+			<key>IOProviderClass</key>
+			<string>IOFireWireUnit</string>
+			<key>MOTUForceFixedGUID</key>
+			<false/>
+			<key>Unit_Spec_ID</key>
+			<integer>498</integer>
+		</dict>
+		<key>MOTU Kext Loader</key>
+		<dict>
+			<key>CFBundleIdentifier</key>
+			<string>com.motu.driver.FireWireAudio</string>
+			<key>IOClass</key>
+			<string>com_motu_driver_FWA_KextLoader</string>
+			<key>IOMatchCategory</key>
+			<string>com_motu_driver_FWA_KextLoader</string>
+			<key>IOProbeScore</key>
+			<integer>4096</integer>
+			<key>IOProviderClass</key>
+			<string>IOResources</string>
+		</dict>
+		<key>MOTU Thunderbolt Device</key>
+		<dict>
+			<key>CFBundleIdentifier</key>
+			<string>com.motu.driver.FireWireAudio</string>
+			<key>IOClass</key>
+			<string>com_motu_driver_FWA_Device</string>
+			<key>IOPCIPauseCompatible</key>
+			<true/>
+			<key>IOPCIPrimaryMatch</key>
+			<string>0x0007137A</string>
+			<key>IOPCITunnelCompatible</key>
+			<true/>
+			<key>IOProbeScore</key>
+			<integer>4096</integer>
+			<key>IOProviderClass</key>
+			<string>IOPCIDevice</string>
+		</dict>
+		<key>MOTU USB Device</key>
+		<dict>
+			<key>CFBundleIdentifier</key>
+			<string>com.motu.driver.FireWireAudio</string>
+			<key>IOClass</key>
+			<string>com_motu_driver_FWA_Device</string>
+			<key>IOProbeScore</key>
+			<integer>4096</integer>
+			<key>IOProviderClass</key>
+			<string>IOUSBHostDevice</string>
+			<key>MOTUForceFixedGUID</key>
+			<false/>
+			<key>idProduct</key>
+			<integer>2</integer>
+			<key>idVendor</key>
+			<integer>2045</integer>
+		</dict>
+	</dict>
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+	<key>OSBundleLibraries</key>
+	<dict>
+		<key>com.apple.iokit.IOAudioFamily</key>
+		<string>1.5.5b2</string>
+		<key>com.apple.iokit.IOFireWireFamily</key>
+		<string>1.2.0</string>
+		<key>com.apple.iokit.IOHIDSystem</key>
+		<string>1.1.1</string>
+		<key>com.apple.iokit.IOPCIFamily</key>
+		<string>2.2</string>
+		<key>com.apple.iokit.IOUSBHostFamily</key>
+		<string>1.0.1</string>
+		<key>com.apple.kpi.iokit</key>
+		<string>10.8</string>
+		<key>com.apple.kpi.libkern</key>
+		<string>10.8</string>
+		<key>com.apple.kpi.mach</key>
+		<string>10.8</string>
+	</dict>
+</dict>
+</plist>

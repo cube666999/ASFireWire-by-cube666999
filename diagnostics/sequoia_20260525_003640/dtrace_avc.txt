@@ -1,0 +1,3 @@
+dtrace: invalid probe specifier 
+        fbt:com.apple.iokit.IOFireWireAVC::entry { printf("%Y  %s\n", walltimestamp, probefunc); }
+    : probe description fbt:com.apple.iokit.IOFireWireAVC::entry does not match any probes

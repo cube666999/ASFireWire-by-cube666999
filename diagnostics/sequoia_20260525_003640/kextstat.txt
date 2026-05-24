@@ -1,0 +1,3 @@
+  255    2 0xfffffe0007932670 0x3688     0x3688     com.apple.iokit.IOFireWireFamily (4.8.3) 6107C0A0-FE61-3467-B668-9AF3073EDCBE <5 4 3 1>
+  260    0 0                  0xdc1      0xdc1      com.motu.driver.MicroBookAudio (1.6. 89555) 0C5E72DD-85F3-386D-9253-C196E25D7EF9 <254 65 5 4 3>
+  261    0 0                  0xb98b     0xb98b     com.motu.driver.FireWireAudio (1.6 89555) 89BA22C2-4695-3DB3-937B-2264CCF99211 <255 254 66 65 37 24 7 6 5 4 3 1>

@@ -222,7 +222,7 @@ Jedyne dozwolone narzędzia do lokalizacji symboli i plików:
 projectPath: "/Users/kuba/Library/Mobile Documents/com~apple~CloudDocs/FireWire/ASFireWire"
 
 # Dev machine (cube666, development):
-projectPath: "/Users/cube666/Documents/FireWire/ASFireWire"
+projectPath: "/Users/cube666/Library/Mobile Documents/com~apple~CloudDocs/FireWire/ASFireWire"
 ```
 
 **Re-index after adding/moving files:**
@@ -318,15 +318,19 @@ Dext przeżywa reboot. Instalacja w `/Library/SystemExtensions/`.
 Device Discovery pokazuje:
 - Node 0 • Generation 3 • **Ready**
 - Unit: Spec ID: 0x0001F2, SW Version: 0x000015, ROM Offset: 5 quadlets
-- Model ID: 0x000000 (do zbadania — powinien wskazywać model)
+- Model ID: `EffectiveModelId()` zwraca `unitSwVersion=0x000015` → `kMOTUV3` ✅ (Fix 11)
+
+Sequoia diagnostic (2026-05-25) potwierdził:
+- `fNumFWOutputChannels 14` (IR, device→host) · `fNumFWInputChannels 18` (IT, host→device)
+- MOTU kext używa `FireWireBlockRWCommand` (potwierdza Fix 10)
+- Bus reset recovery działa tak samo jak nasz `AudioCoordinator`
 
 ### Następne kroki
 
-1. **AV/C Units** — sprawdzić wykrywanie Music Subunit (828 MK3 ma AV/C)
-2. **Core Audio** — czy pojawia się urządzenie audio w systemie
-3. **ASFWAudioNub** — czy jest publikowany w IORegistry (uruchamia ASFWAudioDriver → CoreAudio HAL)
-4. `HALC_ShellObject: Error: "nope"` (kAudioHardwareUnsupportedOperationError) — błąd przy rejestracji AudioDriverKit, do debugowania
-5. Model ID 0x000000 dla 828 MK3 — prawdopodobnie trzeba odczytać więcej quadletów z Config ROM
+1. **Hardware test na Tahoe** — podłączyć MOTU 828 MK3, sprawdzić `Streaming started` w logach
+2. **`HALC_ShellObject: "nope"`** — błąd rejestracji `IOUserAudioDevice` w AudioDriverKit HAL, przyczyna nieznana, debug na Tahoe
+3. **ASFWAudioNub w IORegistry** — czy pojawia się urządzenie audio w systemie po Fix 13
+4. **IR Receive** — kod istnieje, nigdy nie testowany na sprzęcie; MOTU V3 może nie używać standardowych nagłówków CIP
 
 ### Znany problem: OSSystemExtensionErrorDomain error 4 przy re-launch
 
@@ -356,6 +360,7 @@ Przy ponownym uruchomieniu apki (gdy dext już jest [activated enabled]), `activ
 | `README.md` | Ogólny opis projektu |
 | `AGENTS.md` | Przewodnik dla AI assistants — architektura, wzorce, zasady |
 | `REFACTOR_THOUGHTS.md` | Propozycje refaktoringu (żaden niezaimplementowany — tylko notatki) |
+| `diagnostics/README.md` | Indeks captured logów z hardware testów (Sequoia + MOTU kext) |
 
 ### Dokumentacja techniczna (`documentation/`)
 

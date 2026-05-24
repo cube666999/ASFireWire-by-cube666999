@@ -4,6 +4,7 @@
 #include "AudioCoordinator.hpp"
 
 #include "../Discovery/FWDevice.hpp"
+#include "Model/ASFWAudioDevice.hpp"
 
 namespace ASFW::Audio {
 
@@ -51,7 +52,53 @@ void AudioCoordinator::SetBusOps(Async::IFireWireBusOps* busOps) noexcept {
 
 void AudioCoordinator::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device) {
     if (!device) return;
-    dice_.OnDeviceRecordUpdated(device->GetGUID());
+
+    const uint64_t guid = device->GetGUID();
+
+    // DICE path — hardcoded nub, same as before.
+    dice_.OnDeviceRecordUpdated(guid);
+
+    // MOTU V3 path: AV/C FCP is not supported by MOTU hardware; the AVC discovery
+    // path will silently time out and never call OnAVCAudioConfigurationReady.
+    // Inject a hardcoded config directly so MOTUAudioBackend::StartStreaming can
+    // proceed once the UserClient requests streaming.
+    const auto* record = registry_.FindByGuid(guid);
+    if (!record) return;
+
+    const uint32_t effectiveModel = DeviceProtocolFactory::EffectiveModelId(
+        record->vendorId, record->modelId, record->unitSwVersion);
+    if (DeviceProtocolFactory::LookupIntegrationMode(record->vendorId, effectiveModel)
+            != DeviceIntegrationMode::kMOTUV3) {
+        return;
+    }
+
+    const auto layout = DeviceProtocolFactory::GetMOTUV3ChannelLayout(effectiveModel);
+
+    // Supported sample rates confirmed via ioreg on Sequoia with MOTU 828 MK3.
+    static constexpr uint32_t kMOTUSampleRates[] = {
+        44100u, 48000u, 88200u, 96000u, 176400u, 192000u
+    };
+
+    Model::ASFWAudioDevice config;
+    config.guid               = guid;
+    config.vendorId           = record->vendorId;
+    config.modelId            = effectiveModel;
+    config.deviceName         = DeviceProtocolFactory::GetMOTUV3DeviceName(effectiveModel);
+    config.inputChannelCount  = layout.inputChannels;
+    config.outputChannelCount = layout.outputChannels;
+    config.channelCount       = std::max(layout.inputChannels, layout.outputChannels);
+    config.currentSampleRate  = 48000u;
+    config.sampleRates.assign(std::begin(kMOTUSampleRates), std::end(kMOTUSampleRates));
+    // MOTU V3 uses blocking isochronous transfer (fixed 8-sample + NO-DATA cadence).
+    config.streamMode         = Model::StreamMode::kBlocking;
+
+    ASFW_LOG(Audio,
+             "AudioCoordinator: Injecting MOTU V3 config GUID=0x%016llx model=0x%06x "
+             "in=%u out=%u",
+             guid, effectiveModel,
+             config.inputChannelCount, config.outputChannelCount);
+
+    motuV3_.OnAudioConfigurationReady(guid, config);
 }
 
 void AudioCoordinator::OnDeviceResumed(std::shared_ptr<Discovery::FWDevice> device) {

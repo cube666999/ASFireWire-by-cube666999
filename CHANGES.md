@@ -14,15 +14,16 @@ Tests: 488/488 passing
 | OHCI init & bus reset | ✅ Working | Self-ID, topology, gap count |
 | Async TX/RX | ✅ Working | Block read/write, lock, PHY |
 | Config ROM reading | ✅ Working | Full FSM multi-node scanner |
-| AV/C / FCP | ✅ Working | Music Subunit, PCR space, `SendSampleRateCommand` (0x19) |
+| AV/C / FCP | ✅ Working | Music Subunit, PCR space, `SendSampleRateCommand` (0x19) — for non-MOTU devices |
 | IRM | ✅ Working | Election, channel + bandwidth allocation |
 | Isoch Transmit (IT) | ✅ Working | AM824 + SYT + cadence |
 | Isoch Receive (IR) | 🚧 WIP | Pipeline exists, needs hardware validation |
 | AudioDriverKit | 🚧 In progress | `ASFWAudioDriver` + `ASFWAudioNub` wired; `HandleChangeSampleRate` implemented |
+| **MOTU V3 Backend** | ✅ Implemented | `MOTUAudioBackend` — V3 register protocol, awaiting hardware test |
 
 ---
 
-## Fixes (27 commits)
+## Fixes (41 commits)
 
 ### Fix 1 — ConnectOPCR: channel not written to oPCR register (critical)
 **File:** `ASFWDriver/Protocols/AVC/CMP/CMPClient.cpp`
@@ -136,32 +137,132 @@ not be overridden. HAL rate changes were silently ignored; device was locked at 
   build AV/C CDB, submit via FCPTransport, callback with accept/reject result
 - **`ASFWAudioDriver`** — creates `ASFWIOUserAudioDevice` instead of `IOUserAudioDevice`
 
-SFC mapping (IEC 61883-6 Table 5):
+SFC mapping (IEC 61883-6 SFC field):
 `32k=0x00 · 44.1k=0x01 · 48k=0x02 · 88.2k=0x03 · 96k=0x04 · 176.4k=0x05 · 192k=0x06`
+
+---
+
+---
+
+### Fix 10 — AT DMA block write timeout (PATH1 no-branch completion)
+**File:** `ASFWDriver/Async/Contexts/ATContextBase.hpp` — `ScanCompletion()`  
+**Commit:** `eeb8787`
+
+After a PATH1 no-branch chain (e.g. FCP write) OHCI sets RUN=1, Active=0, CommandPtr=0.
+The old `isOrphaned` check had two clauses — both false in this state — so `ScanCompletion`
+returned `nullopt` as if hardware was still running → every block write timed out.
+
+**Fix:** added third clause `completedAndIdle = (isRunning && !isActive && commandPtrAddr == 0)`.
+For OUTPUT_MORE precursor: `continue` instead of `return nullopt` → OUTPUT_LAST processed
+in the same call, without waiting for a second interrupt.
+
+Unblocks AV/C for ~80% of FireWire audio interfaces.
+
+---
+
+### Fix 11 — MOTU model ID: use Unit_SW_Vers instead of root ModelId
+**File:** `ASFWDriver/Protocols/Audio/DeviceProtocolFactory.hpp` — `EffectiveModelId()`  
+**Commit:** `5925587`
+
+MOTU does not populate the root directory `Model` key with a useful model ID (value: `0x106800`).
+The correct field is `Unit_SW_Vers` in the unit directory (e.g. `0x000015` for 828 MK3).
+
+**Fix:** `EffectiveModelId()` — for vendor `0x0001F2` returns `unitSwVersion` instead of
+`rootModelId`. Routing to `kMOTUV3` backend now works correctly.
+
+---
+
+### Fix 12 — MOTU CLOCK_STATUS rate mask: bits[10:8] not bits[15:8]
+**File:** `ASFWDriver/Audio/Backends/MOTUAudioBackend.hpp`  
+**Commit:** `d975131`
+
+Linux kernel source had `V3_CLOCK_RATE_MASK = 0x0000ff00` (bits[15:8]).
+Disassembly of `MOTUFireWireAudio.kext` (Sequoia, x86_64) showed `andl $0x700` — only
+3 bits [10:8] are used for the rate code.
+
+**Fix:** `kClockRateMask = 0x00000700`. All rate codes confirmed vs kext data table.
+
+---
+
+### Fix 13 — MOTU V3 config never reached MOTUAudioBackend (critical)
+**Files:** `ASFWDriver/Audio/AudioCoordinator.cpp`,
+`ASFWDriver/Protocols/Audio/DeviceProtocolFactory.hpp`,
+`tests/DeviceProtocolFactoryTests.cpp`
+
+`MOTUAudioBackend::StartStreaming` reads channel counts from `configByGuid_[guid]`.
+This map was populated only by `OnAVCAudioConfigurationReady`, which is called exclusively
+by `AVCDiscovery` — after a successful AV/C FCP sequence. MOTU 828 MK3 never responds to
+FCP (confirmed on Sequoia), so `AVCDiscovery::avcUnit->Initialize()` times out, returns
+`success=false`, and never calls `HandleInitializedUnit`. Result: `configByGuid_` stays
+empty, `hasConfig=false`, `StartStreaming` returns `kIOReturnNotReady` immediately.
+
+**Root cause:** the MOTU V3 backend had no independent initialization trigger — it was
+entirely dependent on AV/C completing successfully.
+
+**Fix:** `AudioCoordinator::OnDeviceAdded` now detects `kMOTUV3` via `EffectiveModelId()` /
+`LookupIntegrationMode()` and injects a hardcoded `ASFWAudioDevice` config directly into
+`motuV3_.OnAudioConfigurationReady()`, bypassing AVC entirely. Channel counts (in=14, out=18
+for 828 MK3) confirmed from Sequoia diagnostic (`fNumFWOutputChannels 14 fNumFWInputChannels 18`
+in `MOTUFireWireAudio.kext` log). `DeviceProtocolFactory` gains `GetMOTUV3ChannelLayout()` and
+`GetMOTUV3DeviceName()` constexpr helpers for all known V3 models.
+
+**Tests:** +5 new tests in `DeviceProtocolFactoryTests` (493 total passing).
+
+---
+
+### Feature — MOTU V3 register protocol backend
+**Files:** `ASFWDriver/Audio/Backends/MOTUAudioBackend.hpp/.cpp`,
+`ASFWDriver/Protocols/Audio/DeviceProtocolFactory.hpp`,
+`ASFWDriver/Audio/AudioCoordinator.hpp/.cpp`  
+**Commit:** `f6fbe86`
+
+MOTU 828 MK3 declares AV/C units in Config ROM but **does not implement FCP**.
+The correct protocol is a proprietary V3 register sequence via async quadlet read/write
+(tCode=0x0) — confirmed by Linux `sound/firewire/motu/motu-protocol-v3.c` and
+`MOTUFireWireAudio.kext` disassembly.
+
+`MOTUAudioBackend::StartStreaming` sequence:
+1. Read `CLOCK_STATUS` (0x0b14) — log current sample rate
+2. `IRM::AllocateResources` — reserve IR + IT channels + bandwidth
+3. Write `PACKET_FORMAT` (0x0b10) = `0xC2` — S400 + exclude differed
+4. `isoch_.StartReceive(irCh)` — start OHCI IR DMA
+5. `isoch_.StartTransmit(itCh)` — start OHCI IT DMA
+6. Read-modify-write `ISOC_COMM_CONTROL` (0x0b00) — activate both channels
+7. Read-modify-write `CLOCK_STATUS` — set `FETCH_PCM_FRAMES` bit
+
+`DeviceProtocolFactory` routes vendor `0x0001F2` + `unitSwVersion` → `kMOTUV3`.
+`AudioCoordinator` routes `kMOTUV3` → `motuV3_` backend.
+
+All register constants verified against `MOTUFireWireAudio.kext` — see `MOTU_828_MK3_BringUp.md`.
 
 ---
 
 ## MOTU 828 MK3 Bring-Up Path (after all fixes)
 
-| Step | Status |
-|------|--------|
-| OHCI init, bus reset, topology | ✅ |
-| Config ROM scan | ✅ |
-| AV/C discovery, Music Subunit | ✅ |
-| IRM: AllocateResources | ✅ |
-| CMP ConnectOPCR with channel | ✅ |
-| oPCR read-back verification | ✅ |
-| Bus reset recovery | ✅ |
-| IOPCIClassMatch (TB adapter) | ✅ |
-| RX queue wiring | ✅ |
-| TX queue wiring | ✅ |
-| Runtime sample rate switching | ✅ |
-| **Hardware validation on Tahoe** | ⏳ pending |
+| Step | Status | Notes |
+|------|--------|-------|
+| OHCI init, bus reset, topology | ✅ | |
+| Config ROM scan → MOTU identified | ✅ | via `unitSwVersion=0x000015`, Fix 11 |
+| `DeviceProtocolFactory` → `kMOTUV3` | ✅ | |
+| `AudioCoordinator` → `MOTUAudioBackend` | ✅ | |
+| `MOTUAudioBackend` receives config (channels 14/18) | ✅ | Fix 13 |
+| IRM: AllocateResources | ✅ | Fix 2 |
+| `MOTUAudioBackend::StartStreaming` (V3 registers) | ✅ | Feature, Fix 12 |
+| AT DMA quadlet write (tCode=0x0) | ✅ | Fix 10 unblocked block write path |
+| Bus reset recovery | ✅ | Fix 4 |
+| IOPCIClassMatch (TB adapter) | ✅ | Fix 6 |
+| IR/TX queue wiring | ✅ | Fix 7 + Fix 8 |
+| `ASFWAudioNub` published → CoreAudio device | ⏳ | needs Tahoe hardware test |
+| `HALC_ShellObject: "nope"` AudioDriverKit error | 🐛 | to debug on Tahoe |
+| IR Receive hardware validation | 🚧 | code exists, untested |
+| **Hardware validation on Tahoe** | ⏳ | **next step** |
 
 ---
 
 ## Notes
 
-- All changes are backward-compatible with the Apogee Duet 2 path
-- No existing tests were broken; 59 new tests added across all fix areas
-- Hardware test planned: Mac Studio (Apple Silicon, macOS Tahoe) + TB→FW adapter + MOTU 828 MK3
+- All AV/C fixes (Fix 1–9) remain active for non-MOTU devices (e.g. Apogee Duet 2)
+- MOTU 828 MK3 routes exclusively to `MOTUAudioBackend` — AV/C/FCP/CMP never called
+- No existing tests were broken; 64 new tests added across all fix areas
+- Hardware test pending: Mac Studio (Apple Silicon, macOS Tahoe) + TB→FW adapter + MOTU 828 MK3
+- Full V3 protocol reference: `MOTU_828_MK3_BringUp.md`

@@ -1,0 +1,11 @@
+      "IOProviderClass" => "IOFireWireUnit"
+      "MOTUForceFixedGUID" => 0
+      "Unit_Spec_ID" => 498
+    }
+    "MOTU Kext Loader" => {
+      "CFBundleIdentifier" => "com.motu.driver.FireWireAudio"
+      "IOClass" => "com_motu_driver_FWA_KextLoader"
+      "IOMatchCategory" => "com_motu_driver_FWA_KextLoader"
+      "IOProbeScore" => 4096
+      "IOProviderClass" => "IOResources"
+    }

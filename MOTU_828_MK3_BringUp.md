@@ -119,6 +119,25 @@ Wszystkie stałe potwierdzone przez disassembly `MOTUFireWireAudio.kext`:
 
 ---
 
+## Isoch Receive — uwagi dla MOTU V3
+
+`IsochReceiveContext` → `StreamProcessor` → `AM824Decoder` istnieje w kodzie, ale **nigdy
+nie był przetestowany na żywym sprzęcie**. Dodatkowe ryzyko specyficzne dla MOTU:
+
+MOTU V3 może nie używać standardowych nagłówków CIP (IEC 61883-1). `StreamProcessor`
+i `AM824Decoder` są napisane dla zgodnych strumieni IEC 61883-6. Jeśli MOTU pomija
+nagłówki CIP lub używa własnego formatu, oba komponenty będą wymagały modyfikacji.
+
+**Co sprawdzić podczas hardware testu:**
+- Czy IR DMA ring odbiera jakiekolwiek pakiety (logi `IsochReceiveContext`)
+- Czy `StreamProcessor` nie odrzuca pakietów z błędem DBC/CIP
+- Czy zdekodowane próbki PCM mają właściwą wartość (nie szum)
+
+Jeśli IR nie działa od razu → zbadaj format pakietu przez Linux
+`sound/firewire/motu/motu-protocol-v3.c` (funkcja `motu_stream_get_pcm_channels`).
+
+---
+
 ## Czego NIE robić z MOTU
 
 - ❌ NIE wysyłaj FCP commands (MOTU ignoruje FCP mimo AV/C w Config ROM)

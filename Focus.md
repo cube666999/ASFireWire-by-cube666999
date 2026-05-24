@@ -6,6 +6,83 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ---
 
+## ⚡ SESJA NA MAC STUDIO — Przeczytaj to na starcie
+
+> Jesteś na Mac Studio (macOS Tahoe). Kod jest gotowy — MOTU V3 backend zaimplementowany.
+> Poniżej co musisz wiedzieć zanim podłączysz MOTU.
+>
+> **🆕 Naprawione po Sequoia-diagnostic (2026-05-25):**
+> `MOTUAudioBackend` nigdy nie dostawał konfiguracji kanałów — `OnAVCAudioConfigurationReady`
+> wywoływane tylko przez `AVCDiscovery`, który milcząco timeoutuje dla MOTU (FCP nie działa).
+> Fix: `AudioCoordinator::OnDeviceAdded` teraz bezpośrednio wstrzykuje config {in=14, out=18}
+> do `motuV3_` z pominięciem AV/C. Bez tego fixa `StartStreaming` zwracał `kIOReturnNotReady`
+> natychmiast. Wymaga rebuildu dextu.
+
+### Realistyczna ocena szans
+
+| Krok | Prawdopodobieństwo |
+|------|--------------------|
+| MOTU V3 StartStreaming w logach (register writes OK) | **85–90%** ↑ (config injection fix) |
+| Urządzenie pojawia się w CoreAudio | 40–50% |
+| Słyszysz dźwięk z Maca przez MOTU (TX) | 30–40% |
+| Pełny duplex (TX + RX) | 15–20% |
+
+**Nie zrażaj się jeśli nie zadziała od razu — dwie sesje to realistyczny cel.**
+
+### Dwa największe ryzyka
+
+1. **`HALC_ShellObject: Error: "nope"`** — błąd rejestracji `IOUserAudioDevice` w CoreAudio
+   HAL, widoczny w poprzedniej sesji. Jeśli nadal występuje, urządzenie nie pojawi się
+   w systemie niezależnie od protokołu MOTU. Przyczyna nieznana — nie debugowaliśmy tego.
+
+2. **Isoch IR** — kod istnieje, nigdy nie testowany na sprzęcie. MOTU V3 może nie używać
+   standardowych nagłówków CIP → `StreamProcessor`/`AM824Decoder` mogą wymagać zmian.
+   Do odtwarzania (Mac→MOTU) wystarczy sam TX. Pełny duplex wymaga działającego IR.
+
+### Uruchom to zanim podłączysz MOTU
+
+```bash
+# Terminal 1 — logi drivera
+log stream --predicate 'subsystem == "net.mrmidi.ASFW"' --level debug
+
+# Terminal 2 — po podłączeniu MOTU, sprawdź czy nub jest w IORegistry
+ioreg -l -r -c ASFWAudioNub
+```
+
+**`ioreg -l -r -c ASFWAudioNub`** powie od razu gdzie jest problem:
+- Brak wpisu → problem po stronie `AudioCoordinator`/`MOTUAudioBackend` (protokół)
+- Wpis jest, ale brak urządzenia audio → problem po stronie `ASFWAudioDriver`/HAL (HALC error)
+
+### Czego szukać w logach — sukces
+
+```
+AudioCoordinator: Injecting MOTU V3 config ... in=14 out=18  ← config wstrzyknięty
+AudioCoordinator: StartStreaming backend=MOTU-V3              ← routing działa
+MOTUAudioBackend: CLOCK_STATUS=0x... rateCode=0x02            ← quadlet read OK
+MOTUAudioBackend: IRM allocated IR ch=X IT ch=Y               ← IRM OK
+MOTUAudioBackend: PACKET_FORMAT=0x000000c2 written            ← quadlet write OK
+MOTUAudioBackend: Streaming started GUID=0x...                ← V3 sekwencja kompletna
+```
+
+Jeśli **brak "Injecting MOTU V3 config"** → `OnDeviceAdded` nie widzi rekordu
+w `DeviceRegistry` (race condition: Config ROM scan niegotowy). W logu szukaj:
+`AudioCoordinator: Registered device observer` — powinno być przed podłączeniem MOTU.
+
+Jeśli widzisz `backend=AV/C` zamiast `MOTU-V3` → `EffectiveModelId()` nie działa,
+sprawdź czy `unitSwVersion=0x000015` jest parsowany z unit directory.
+
+Jeśli widzisz `no config for GUID` w `MOTUAudioBackend` → config injection nie zadziałał.
+
+### Wklej logi tutaj jeśli coś nie działa
+
+Napisz na starcie sesji:
+**"Kontynuujemy ASFireWire — oto logi z Mac Studio:"**
+i wklej output z `log stream`. Reszta kontekstu jest w tym pliku i `MOTU_828_MK3_BringUp.md`.
+
+---
+
+---
+
 ## Stan implementacji (maj 2026)
 
 | Subsystem | Status | Uwagi |

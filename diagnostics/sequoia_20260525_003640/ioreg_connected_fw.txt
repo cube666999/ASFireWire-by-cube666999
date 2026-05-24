@@ -1,0 +1,674 @@
++-o IOFireWireUnit  <class IOFireWireUnit, id 0x1000022cf, registered, matched, active, busy 0 (46 ms), retain 8>
+  | {
+  |   "Unit_SW_Version" = 21
+  |   "IOMatchCategory" = "FireWire Unit"
+  |   "Vendor_ID" = 498
+  |   "IOCFPlugInTypes" = {"CDCFCA94-F197-11D4-87E6-000502072F80"="IOFireWireFamily.kext/Contents/PlugIns/IOFireWireLib.plugin"}
+  |   "Unit_Spec_ID" = 498
+  |   "IOUserClientClass" = "IOFireWireUserClient"
+  |   "GUID" = 547556791185974
+  |   "Model_ID" = 1075200
+  | }
+  | 
+  +-o com_motu_driver_FWA_Device  <class com_motu_driver_FWA_Device, id 0x1000022d1, registered, matched, active, busy 0 (10 ms), retain 9>
+  | | {
+  | |   "IOClass" = "com_motu_driver_FWA_Device"
+  | |   "CFBundleIdentifier" = "com.motu.driver.FireWireAudio"
+  | |   "IOProviderClass" = "IOFireWireUnit"
+  | |   "IOAudioEngineCoreAudioPlugIn" = "../../../Library/Extensions/MOTUFireWireAudio.kext/Contents/PlugIns/FWHALPlugin.bundle"
+  | |   "IOAudioDeviceName" = "MOTU 828mk3"
+  | |   "IOAudioDeviceConfigurationApplication" = "com.motu.launcher.FireWireAudio.console"
+  | |   "Unit_Spec_ID" = 498
+  | |   "IOProbeScore" = 1193046
+  | |   "IOAudioDeviceModelID" = "com_motu_driver_FWA_Device:MOTU 828mk3"
+  | |   "IOAudioDeviceShortName" = "MOTU 828mk3"
+  | |   "IOMatchCategory" = "IODefaultMatchCategory"
+  | |   "IOAudioDeviceManufacturerName" = "MOTU"
+  | |   "MOTUForceFixedGUID" = No
+  | |   "IOAudioDeviceCanBeDefaults" = 7
+  | |   "IOPowerManagement" = {"CurrentPowerState"=2,"CapabilityFlags"=32770,"MaxPowerState"=2,"DriverPowerState"=2}
+  | |   "IOPersonalityPublisher" = "com.motu.driver.FireWireAudio"
+  | |   "CFBundleIdentifierKernel" = "com.motu.driver.FireWireAudio"
+  | |   "IOAudioDeviceTransportType" = 825440564
+  | | }
+  | | 
+  | +-o com_motu_driver_FWA_Engine  <class com_motu_driver_FWA_Engine, id 0x1000022d3, registered, matched, active, busy 0 (10 ms), retain 47>
+  |   | {
+  |   |   "MainOutsAssignKey" = 0
+  |   |   "SerialNumberKey" = 553526
+  |   |   "Gestalt" = 15
+  |   |   "AudioBankControlKey" = 0
+  |   |   "InputNames" = (<fffe4d00690063002f0049006e0073007400720075006d0065006e00740020003100>,<>,<>,<>,<fffe4e004f0052004400>,<fffe4e004f0052004400>,<fffe41006e0061006c006f00670020003500>,<>,<fffe56004900520055005300200054004900>,<fffe56004900520055005300200054004900>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>)
+  |   |   "IOAudioEngineState" = 3
+  |   |   "StreamControlsEnableKey" = 1
+  |   |   "FirmwareVersion" = 17203200
+  |   |   "IOAudioEngineClockDomain" = 18446744072744006464
+  |   |   "IOAudioEngineOutputSampleLatency" = 16
+  |   |   "OutputNames" = (<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>,<>)
+  |   |   "ReturnAssignKey" = 256
+  |   |   "SMUXCurrentSetting" = 0
+  |   |   "MidiTimeCodeGenerated" = 1
+  |   |   "IOAudioEngineDescription" = "MOTU 828mk3"
+  |   |   "SMPTE" = {"Source"=0,"FrameFormat"=3,"OutputLevel"=16384,"Destination"=0,"FreewheelAddress"=0,"Last30fpsRate"=3,"FreewheelClock"=0,"LastDropFRameRate"=2,"SMPTEGenMode"=0,"FrameRate"=3,"Last24fpsRate"=0}
+  |   |   "AudioOnlyMode" = 1
+  |   |   "SMUXCapableKey" = 1
+  |   |   "MidiSupported" = 2
+  |   |   "kMotuAudioSyncRunning" = 0
+  |   |   "OpticalInput" = 255
+  |   |   "IOAudioEngineFlavor" = 1
+  |   |   "OptionMeterWord" = 8
+  |   |   "IOAudioEngineGlobalUniqueID" = "com_motu_driver_FWA_Engine:0000087236"
+  |   |   "HardwareVersion" = 16875520
+  |   |   "IOAudioEngineNumActiveUserClients" = 1
+  |   |   "IOAudioEngineSampleOffset" = 24
+  |   |   "IOAudioEngineInputSampleLatency" = 19
+  |   |   "PhonesAssign" = 0
+  |   |   "MidiModelName" = "828mk3"
+  |   |   "OpticalOutput" = 255
+  |   |   "IOUserClientCrossEndianCompatible" = Yes
+  |   |   "IOGeneralInterest" = "IOCommand is not serializable"
+  |   |   "IOAudioEngineClockIsStable" = 1
+  |   |   "IOAudioEngineNumSampleFramesPerBuffer" = 4096
+  |   |   "IOAudioSampleRate" = {"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0}
+  |   |   "OwnerUID" = 502
+  |   |   "AudioCapableKey" = 1
+  |   | }
+  |   | 
+  |   +-o com_motu_driver_FWA_ClkCtl  <class com_motu_driver_FWA_ClkCtl, id 0x1000022d4, !registered, !matched, active, busy 0, retain 9>
+  |   | | {
+  |   | |   "IOAudioControlType" = 1936483188
+  |   | |   "IOAudioSelectorControlAvailableSelections" = ({"IOAudioSelectorControlSelectionDescriptionKey"="Internal","IOAudioSelectorControlSelectionValue"=0},{"IOAudioSelectorControlSelectionDescriptionKey"="Word Clock In","IOAudioSelectorControlSelectionValue"=1},{"IOAudioSelectorControlSelectionDescriptionKey"="S/PDIF","IOAudioSelectorControlSelectionValue"=2},{"IOAudioSelectorControlSelectionDescriptionKey"="SMPTE","IOAudioSelectorControlSelectionValue"=5})
+  |   | |   "IOAudioControlChannelNumber" = 0
+  |   | |   "IOAudioControlChannelID" = 0
+  |   | |   "IOAudioControlUsage" = 1768845428
+  |   | |   "IOAudioControlValue" = 0
+  |   | |   "IOAudioControlID" = 0
+  |   | |   "IOAudioControlSubType" = 1668047723
+  |   | | }
+  |   | | 
+  |   | +-o IOAudioControlUserClient  <class IOAudioControlUserClient, id 0x1000022e7, !registered, !matched, active, busy 0, retain 6>
+  |   |     {
+  |   |       "IOUserClientCreator" = "pid 189, coreaudiod"
+  |   |       "IOUserClientDefaultLocking" = Yes
+  |   |     }
+  |   |     
+  |   +-o com_motu_driver_FWA_Stream  <class com_motu_driver_FWA_Stream, id 0x1000022d5, registered, matched, active, busy 0 (6 ms), retain 10>
+  |   |   {
+  |   |     "IOAudioStreamAvailableFormats" = ({"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0})
+  |   |     "IOAudioStreamDirection" = 0
+  |   |     "IOAudioStreamID" = 0
+  |   |     "IOAudioStreamStartingChannelID" = 1
+  |   |     "IOAudioStreamFormat" = {"IOAudioStreamAlignment"=1,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamIsMixable"=1,"IOAudioStreamFormatFlags"=0,"IOAudioStreamByteOrder"=0,"IOAudioStreamBitDepth"=24,"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamDriverTag"=0,"IOAudioStreamNumChannels"=2,"IOAudioStreamBytesPerPacket"=0,"IOAudioStreamBitWidth"=24,"IOAudioStreamFramesPerPacket"=0}
+  |   |     "IOAudioStreamDescription" = "Main Out"
+  |   |     "IOAudioStreamAvailable" = 1
+  |   |     "IOAudioStreamNumClients" = 0
+  |   |     "IOAudioStreamStartingChannelNumber" = 1
+  |   |   }
+  |   |   
+  |   +-o com_motu_driver_FWA_Stream  <class com_motu_driver_FWA_Stream, id 0x1000022d6, registered, matched, active, busy 0 (8 ms), retain 16>
+  |   |   {
+  |   |     "IOAudioStreamAvailableFormats" = ({"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=8,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=8,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=8,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=8,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=8,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=8,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0})
+  |   |     "IOAudioStreamDirection" = 0
+  |   |     "IOAudioStreamID" = 1
+  |   |     "IOAudioStreamStartingChannelID" = 3
+  |   |     "IOAudioStreamFormat" = {"IOAudioStreamAlignment"=1,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamIsMixable"=1,"IOAudioStreamFormatFlags"=0,"IOAudioStreamByteOrder"=0,"IOAudioStreamBitDepth"=24,"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamDriverTag"=0,"IOAudioStreamNumChannels"=8,"IOAudioStreamBytesPerPacket"=0,"IOAudioStreamBitWidth"=24,"IOAudioStreamFramesPerPacket"=0}
+  |   |     "IOAudioStreamDescription" = "Analog"
+  |   |     "IOAudioStreamAvailable" = 1
+  |   |     "IOAudioStreamNumClients" = 0
+  |   |     "IOAudioStreamStartingChannelNumber" = 3
+  |   |   }
+  |   |   
+  |   +-o com_motu_driver_FWA_Stream  <class com_motu_driver_FWA_Stream, id 0x1000022d7, registered, matched, active, busy 0 (9 ms), retain 10>
+  |   |   {
+  |   |     "IOAudioStreamAvailableFormats" = ({"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=0,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=0,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0})
+  |   |     "IOAudioStreamDirection" = 0
+  |   |     "IOAudioStreamID" = 2
+  |   |     "IOAudioStreamStartingChannelID" = 11
+  |   |     "IOAudioStreamFormat" = {"IOAudioStreamAlignment"=1,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamIsMixable"=1,"IOAudioStreamFormatFlags"=0,"IOAudioStreamByteOrder"=0,"IOAudioStreamBitDepth"=24,"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamDriverTag"=0,"IOAudioStreamNumChannels"=2,"IOAudioStreamBytesPerPacket"=0,"IOAudioStreamBitWidth"=24,"IOAudioStreamFramesPerPacket"=0}
+  |   |     "IOAudioStreamDescription" = "Phones"
+  |   |     "IOAudioStreamAvailable" = 1
+  |   |     "IOAudioStreamNumClients" = 0
+  |   |     "IOAudioStreamStartingChannelNumber" = 11
+  |   |   }
+  |   |   
+  |   +-o com_motu_driver_FWA_Stream  <class com_motu_driver_FWA_Stream, id 0x1000022d8, registered, matched, active, busy 0 (5 ms), retain 10>
+  |   |   {
+  |   |     "IOAudioStreamAvailableFormats" = ({"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0})
+  |   |     "IOAudioStreamDirection" = 0
+  |   |     "IOAudioStreamID" = 3
+  |   |     "IOAudioStreamStartingChannelID" = 13
+  |   |     "IOAudioStreamFormat" = {"IOAudioStreamAlignment"=1,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamIsMixable"=1,"IOAudioStreamFormatFlags"=0,"IOAudioStreamByteOrder"=0,"IOAudioStreamBitDepth"=24,"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamDriverTag"=0,"IOAudioStreamNumChannels"=2,"IOAudioStreamBytesPerPacket"=0,"IOAudioStreamBitWidth"=24,"IOAudioStreamFramesPerPacket"=0}
+  |   |     "IOAudioStreamDescription" = "S/PDIF"
+  |   |     "IOAudioStreamAvailable" = 1
+  |   |     "IOAudioStreamNumClients" = 0
+  |   |     "IOAudioStreamStartingChannelNumber" = 13
+  |   |   }
+  |   |   
+  |   +-o com_motu_driver_FWA_Stream  <class com_motu_driver_FWA_Stream, id 0x1000022d9, registered, matched, active, busy 0 (1 ms), retain 7>
+  |   |   {
+  |   |     "IOAudioStreamAvailableFormats" = ({"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=8,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=8,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=4,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=4,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=4,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=4,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0})
+  |   |     "IOAudioStreamDirection" = 0
+  |   |     "IOAudioStreamID" = 4
+  |   |     "IOAudioStreamStartingChannelID" = 15
+  |   |     "IOAudioStreamFormat" = {"IOAudioStreamAlignment"=1,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamIsMixable"=1,"IOAudioStreamFormatFlags"=0,"IOAudioStreamByteOrder"=0,"IOAudioStreamBitDepth"=24,"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamDriverTag"=0,"IOAudioStreamNumChannels"=8,"IOAudioStreamBytesPerPacket"=0,"IOAudioStreamBitWidth"=24,"IOAudioStreamFramesPerPacket"=0}
+  |   |     "IOAudioStreamDescription" = "ADAT Optical A"
+  |   |     "IOAudioStreamAvailable" = 0
+  |   |     "IOAudioStreamNumClients" = 0
+  |   |     "IOAudioStreamStartingChannelNumber" = 999
+  |   |   }
+  |   |   
+  |   +-o com_motu_driver_FWA_Stream  <class com_motu_driver_FWA_Stream, id 0x1000022da, registered, matched, active, busy 0 (6 ms), retain 7>
+  |   |   {
+  |   |     "IOAudioStreamAvailableFormats" = ({"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0})
+  |   |     "IOAudioStreamDirection" = 0
+  |   |     "IOAudioStreamID" = 5
+  |   |     "IOAudioStreamStartingChannelID" = 23
+  |   |     "IOAudioStreamFormat" = {"IOAudioStreamAlignment"=1,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamIsMixable"=1,"IOAudioStreamFormatFlags"=0,"IOAudioStreamByteOrder"=0,"IOAudioStreamBitDepth"=24,"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamDriverTag"=0,"IOAudioStreamNumChannels"=2,"IOAudioStreamBytesPerPacket"=0,"IOAudioStreamBitWidth"=24,"IOAudioStreamFramesPerPacket"=0}
+  |   |     "IOAudioStreamDescription" = "TOSLINK A"
+  |   |     "IOAudioStreamAvailable" = 0
+  |   |     "IOAudioStreamNumClients" = 0
+  |   |     "IOAudioStreamStartingChannelNumber" = 999
+  |   |   }
+  |   |   
+  |   +-o com_motu_driver_FWA_Stream  <class com_motu_driver_FWA_Stream, id 0x1000022db, registered, matched, active, busy 0 (1 ms), retain 7>
+  |   |   {
+  |   |     "IOAudioStreamAvailableFormats" = ({"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=8,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=8,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=4,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=4,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=4,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=4,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0})
+  |   |     "IOAudioStreamDirection" = 0
+  |   |     "IOAudioStreamID" = 6
+  |   |     "IOAudioStreamStartingChannelID" = 25
+  |   |     "IOAudioStreamFormat" = {"IOAudioStreamAlignment"=1,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamIsMixable"=1,"IOAudioStreamFormatFlags"=0,"IOAudioStreamByteOrder"=0,"IOAudioStreamBitDepth"=24,"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamDriverTag"=0,"IOAudioStreamNumChannels"=8,"IOAudioStreamBytesPerPacket"=0,"IOAudioStreamBitWidth"=24,"IOAudioStreamFramesPerPacket"=0}
+  |   |     "IOAudioStreamDescription" = "ADAT Optical B"
+  |   |     "IOAudioStreamAvailable" = 0
+  |   |     "IOAudioStreamNumClients" = 0
+  |   |     "IOAudioStreamStartingChannelNumber" = 999
+  |   |   }
+  |   |   
+  |   +-o com_motu_driver_FWA_Stream  <class com_motu_driver_FWA_Stream, id 0x1000022dc, registered, matched, active, busy 0 (2 ms), retain 7>
+  |   |   {
+  |   |     "IOAudioStreamAvailableFormats" = ({"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0})
+  |   |     "IOAudioStreamDirection" = 0
+  |   |     "IOAudioStreamID" = 7
+  |   |     "IOAudioStreamStartingChannelID" = 33
+  |   |     "IOAudioStreamFormat" = {"IOAudioStreamAlignment"=1,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamIsMixable"=1,"IOAudioStreamFormatFlags"=0,"IOAudioStreamByteOrder"=0,"IOAudioStreamBitDepth"=24,"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamDriverTag"=0,"IOAudioStreamNumChannels"=2,"IOAudioStreamBytesPerPacket"=0,"IOAudioStreamBitWidth"=24,"IOAudioStreamFramesPerPacket"=0}
+  |   |     "IOAudioStreamDescription" = "TOSLINK B"
+  |   |     "IOAudioStreamAvailable" = 0
+  |   |     "IOAudioStreamNumClients" = 0
+  |   |     "IOAudioStreamStartingChannelNumber" = 999
+  |   |   }
+  |   |   
+  |   +-o com_motu_driver_FWA_Stream  <class com_motu_driver_FWA_Stream, id 0x1000022dd, registered, matched, active, busy 0 (2 ms), retain 8>
+  |   |   {
+  |   |     "IOAudioStreamAvailableFormats" = ({"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0})
+  |   |     "IOAudioStreamDirection" = 1
+  |   |     "IOAudioStreamID" = 8
+  |   |     "IOAudioStreamStartingChannelID" = 1
+  |   |     "IOAudioStreamFormat" = {"IOAudioStreamAlignment"=1,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamIsMixable"=1,"IOAudioStreamFormatFlags"=0,"IOAudioStreamByteOrder"=0,"IOAudioStreamBitDepth"=24,"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamDriverTag"=0,"IOAudioStreamNumChannels"=2,"IOAudioStreamBytesPerPacket"=0,"IOAudioStreamBitWidth"=24,"IOAudioStreamFramesPerPacket"=0}
+  |   |     "IOAudioStreamDescription" = "Mic/Instrument"
+  |   |     "IOAudioStreamAvailable" = 1
+  |   |     "IOAudioStreamNumClients" = 0
+  |   |     "IOAudioStreamStartingChannelNumber" = 1
+  |   |   }
+  |   |   
+  |   +-o com_motu_driver_FWA_Stream  <class com_motu_driver_FWA_Stream, id 0x1000022de, registered, matched, active, busy 0 (8 ms), retain 8>
+  |   |   {
+  |   |     "IOAudioStreamAvailableFormats" = ({"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=8,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=8,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=8,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=8,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=8,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=8,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0})
+  |   |     "IOAudioStreamDirection" = 1
+  |   |     "IOAudioStreamID" = 9
+  |   |     "IOAudioStreamStartingChannelID" = 3
+  |   |     "IOAudioStreamFormat" = {"IOAudioStreamAlignment"=1,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamIsMixable"=1,"IOAudioStreamFormatFlags"=0,"IOAudioStreamByteOrder"=0,"IOAudioStreamBitDepth"=24,"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamDriverTag"=0,"IOAudioStreamNumChannels"=8,"IOAudioStreamBytesPerPacket"=0,"IOAudioStreamBitWidth"=24,"IOAudioStreamFramesPerPacket"=0}
+  |   |     "IOAudioStreamDescription" = "Analog"
+  |   |     "IOAudioStreamAvailable" = 1
+  |   |     "IOAudioStreamNumClients" = 0
+  |   |     "IOAudioStreamStartingChannelNumber" = 3
+  |   |   }
+  |   |   
+  |   +-o com_motu_driver_FWA_Stream  <class com_motu_driver_FWA_Stream, id 0x1000022df, registered, matched, active, busy 0 (5 ms), retain 8>
+  |   |   {
+  |   |     "IOAudioStreamAvailableFormats" = ({"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0})
+  |   |     "IOAudioStreamDirection" = 1
+  |   |     "IOAudioStreamID" = 10
+  |   |     "IOAudioStreamStartingChannelID" = 11
+  |   |     "IOAudioStreamFormat" = {"IOAudioStreamAlignment"=1,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamIsMixable"=1,"IOAudioStreamFormatFlags"=0,"IOAudioStreamByteOrder"=0,"IOAudioStreamBitDepth"=24,"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamDriverTag"=0,"IOAudioStreamNumChannels"=2,"IOAudioStreamBytesPerPacket"=0,"IOAudioStreamBitWidth"=24,"IOAudioStreamFramesPerPacket"=0}
+  |   |     "IOAudioStreamDescription" = "Reverb"
+  |   |     "IOAudioStreamAvailable" = 1
+  |   |     "IOAudioStreamNumClients" = 0
+  |   |     "IOAudioStreamStartingChannelNumber" = 11
+  |   |   }
+  |   |   
+  |   +-o com_motu_driver_FWA_Stream  <class com_motu_driver_FWA_Stream, id 0x1000022e0, registered, matched, active, busy 0 (5 ms), retain 8>
+  |   |   {
+  |   |     "IOAudioStreamAvailableFormats" = ({"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0})
+  |   |     "IOAudioStreamDirection" = 1
+  |   |     "IOAudioStreamID" = 11
+  |   |     "IOAudioStreamStartingChannelID" = 13
+  |   |     "IOAudioStreamFormat" = {"IOAudioStreamAlignment"=1,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamIsMixable"=1,"IOAudioStreamFormatFlags"=0,"IOAudioStreamByteOrder"=0,"IOAudioStreamBitDepth"=24,"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamDriverTag"=0,"IOAudioStreamNumChannels"=2,"IOAudioStreamBytesPerPacket"=0,"IOAudioStreamBitWidth"=24,"IOAudioStreamFramesPerPacket"=0}
+  |   |     "IOAudioStreamDescription" = "Return"
+  |   |     "IOAudioStreamAvailable" = 1
+  |   |     "IOAudioStreamNumClients" = 0
+  |   |     "IOAudioStreamStartingChannelNumber" = 13
+  |   |   }
+  |   |   
+  |   +-o com_motu_driver_FWA_Stream  <class com_motu_driver_FWA_Stream, id 0x1000022e1, registered, matched, active, busy 0 (6 ms), retain 8>
+  |   |   {
+  |   |     "IOAudioStreamAvailableFormats" = ({"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0})
+  |   |     "IOAudioStreamDirection" = 1
+  |   |     "IOAudioStreamID" = 12
+  |   |     "IOAudioStreamStartingChannelID" = 15
+  |   |     "IOAudioStreamFormat" = {"IOAudioStreamAlignment"=1,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamIsMixable"=1,"IOAudioStreamFormatFlags"=0,"IOAudioStreamByteOrder"=0,"IOAudioStreamBitDepth"=24,"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamDriverTag"=0,"IOAudioStreamNumChannels"=2,"IOAudioStreamBytesPerPacket"=0,"IOAudioStreamBitWidth"=24,"IOAudioStreamFramesPerPacket"=0}
+  |   |     "IOAudioStreamDescription" = "S/PDIF"
+  |   |     "IOAudioStreamAvailable" = 1
+  |   |     "IOAudioStreamNumClients" = 0
+  |   |     "IOAudioStreamStartingChannelNumber" = 15
+  |   |   }
+  |   |   
+  |   +-o com_motu_driver_FWA_Stream  <class com_motu_driver_FWA_Stream, id 0x1000022e2, registered, matched, active, busy 0 (2 ms), retain 7>
+  |   |   {
+  |   |     "IOAudioStreamAvailableFormats" = ({"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=8,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=8,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=4,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=4,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=4,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=4,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0})
+  |   |     "IOAudioStreamDirection" = 1
+  |   |     "IOAudioStreamID" = 13
+  |   |     "IOAudioStreamStartingChannelID" = 17
+  |   |     "IOAudioStreamFormat" = {"IOAudioStreamAlignment"=1,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamIsMixable"=1,"IOAudioStreamFormatFlags"=0,"IOAudioStreamByteOrder"=0,"IOAudioStreamBitDepth"=24,"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamDriverTag"=0,"IOAudioStreamNumChannels"=8,"IOAudioStreamBytesPerPacket"=0,"IOAudioStreamBitWidth"=24,"IOAudioStreamFramesPerPacket"=0}
+  |   |     "IOAudioStreamDescription" = "ADAT Optical A"
+  |   |     "IOAudioStreamAvailable" = 0
+  |   |     "IOAudioStreamNumClients" = 0
+  |   |     "IOAudioStreamStartingChannelNumber" = 999
+  |   |   }
+  |   |   
+  |   +-o com_motu_driver_FWA_Stream  <class com_motu_driver_FWA_Stream, id 0x1000022e3, registered, matched, active, busy 0 (4 ms), retain 7>
+  |   |   {
+  |   |     "IOAudioStreamAvailableFormats" = ({"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0})
+  |   |     "IOAudioStreamDirection" = 1
+  |   |     "IOAudioStreamID" = 14
+  |   |     "IOAudioStreamStartingChannelID" = 25
+  |   |     "IOAudioStreamFormat" = {"IOAudioStreamAlignment"=1,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamIsMixable"=1,"IOAudioStreamFormatFlags"=0,"IOAudioStreamByteOrder"=0,"IOAudioStreamBitDepth"=24,"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamDriverTag"=0,"IOAudioStreamNumChannels"=2,"IOAudioStreamBytesPerPacket"=0,"IOAudioStreamBitWidth"=24,"IOAudioStreamFramesPerPacket"=0}
+  |   |     "IOAudioStreamDescription" = "TOSLINK A"
+  |   |     "IOAudioStreamAvailable" = 0
+  |   |     "IOAudioStreamNumClients" = 0
+  |   |     "IOAudioStreamStartingChannelNumber" = 999
+  |   |   }
+  |   |   
+  |   +-o com_motu_driver_FWA_Stream  <class com_motu_driver_FWA_Stream, id 0x1000022e4, registered, matched, active, busy 0 (5 ms), retain 7>
+  |   |   {
+  |   |     "IOAudioStreamAvailableFormats" = ({"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=8,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=8,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=4,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=4,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=4,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=4,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0})
+  |   |     "IOAudioStreamDirection" = 1
+  |   |     "IOAudioStreamID" = 15
+  |   |     "IOAudioStreamStartingChannelID" = 27
+  |   |     "IOAudioStreamFormat" = {"IOAudioStreamAlignment"=1,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamIsMixable"=1,"IOAudioStreamFormatFlags"=0,"IOAudioStreamByteOrder"=0,"IOAudioStreamBitDepth"=24,"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamDriverTag"=0,"IOAudioStreamNumChannels"=8,"IOAudioStreamBytesPerPacket"=0,"IOAudioStreamBitWidth"=24,"IOAudioStreamFramesPerPacket"=0}
+  |   |     "IOAudioStreamDescription" = "ADAT Optical B"
+  |   |     "IOAudioStreamAvailable" = 0
+  |   |     "IOAudioStreamNumClients" = 0
+  |   |     "IOAudioStreamStartingChannelNumber" = 999
+  |   |   }
+  |   |   
+  |   +-o com_motu_driver_FWA_Stream  <class com_motu_driver_FWA_Stream, id 0x1000022e5, registered, matched, active, busy 0 (5 ms), retain 7>
+  |   |   {
+  |   |     "IOAudioStreamAvailableFormats" = ({"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=44100,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=48000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=88200,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=0,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=96000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=176400,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0},{"IOAudioStreamMinimumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamIsMixable"=1,"IOAudioStreamNumChannels"=2,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamBitWidth"=24,"IOAudioStreamDriverTag"=1,"IOAudioStreamAlignment"=1,"IOAudioStreamBitDepth"=24,"IOAudioStreamMaximumSampleRate"={"IOAudioSampleRateWholeNumber"=192000,"IOAudioSampleRateFraction"=0},"IOAudioStreamByteOrder"=0})
+  |   |     "IOAudioStreamDirection" = 1
+  |   |     "IOAudioStreamID" = 16
+  |   |     "IOAudioStreamStartingChannelID" = 35
+  |   |     "IOAudioStreamFormat" = {"IOAudioStreamAlignment"=1,"IOAudioStreamNumericRepresentation"=1936289396,"IOAudioStreamIsMixable"=1,"IOAudioStreamFormatFlags"=0,"IOAudioStreamByteOrder"=0,"IOAudioStreamBitDepth"=24,"IOAudioStreamSampleFormat"=1819304813,"IOAudioStreamDriverTag"=0,"IOAudioStreamNumChannels"=2,"IOAudioStreamBytesPerPacket"=0,"IOAudioStreamBitWidth"=24,"IOAudioStreamFramesPerPacket"=0}
+  |   |     "IOAudioStreamDescription" = "TOSLINK B"
+  |   |     "IOAudioStreamAvailable" = 0
+  |   |     "IOAudioStreamNumClients" = 0
+  |   |     "IOAudioStreamStartingChannelNumber" = 999
+  |   |   }
+  |   |   
+  |   +-o com_motu_driver_FWA_EngineUC  <class com_motu_driver_FWA_EngineUC, id 0x1000022e8, !registered, !matched, active, busy 0, retain 9>
+  |   |   {
+  |   |     "IOAudioEngineUserClientActive" = 1
+  |   |     "IOUserClientCreator" = "pid 189, coreaudiod"
+  |   |     "IOUserClientDefaultLocking" = Yes
+  |   |   }
+  |   |   
+  |   +-o com_motu_driver_FWA_UserClient  <class com_motu_driver_FWA_UserClient, id 0x1000022e9, !registered, !matched, active, busy 0, retain 6>
+  |   |   {
+  |   |     "IOUserClientCreator" = "pid 475, Claude"
+  |   |     "IOUserClientDefaultLocking" = Yes
+  |   |   }
+  |   |   
+  |   +-o com_motu_driver_FWA_IOAudioLevelControl  <class com_motu_driver_FWA_IOAudioLevelControl, id 0x1000022ea, !registered, !matched, active, busy 0, retain 8>
+  |   | | {
+  |   | |   "IOAudioLevelControlMinDB" = 18446744073703260160
+  |   | |   "IOAudioControlChannelNumber" = 1
+  |   | |   "IOAudioLevelControlMaxValue" = 96
+  |   | |   "IOAudioControlID" = 0
+  |   | |   "IOAudioControlValue" = 87
+  |   | |   "IOAudioLevelControlMaxDB" = 0
+  |   | |   "IOAudioLevelControlUseLinearScale" = 1
+  |   | |   "IOAudioControlType" = 1818588780
+  |   | |   "IOAudioControlChannelID" = 1
+  |   | |   "IOAudioControlSubType" = 1986817381
+  |   | |   "IOAudioControlUsage" = 1869968496
+  |   | |   "IOAudioLevelControlMinValue" = 0
+  |   | | }
+  |   | | 
+  |   | +-o IOAudioControlUserClient  <class IOAudioControlUserClient, id 0x1000022f8, !registered, !matched, active, busy 0, retain 6>
+  |   |     {
+  |   |       "IOUserClientCreator" = "pid 189, coreaudiod"
+  |   |       "IOUserClientDefaultLocking" = Yes
+  |   |     }
+  |   |     
+  |   +-o com_motu_driver_FWA_IOAudioLevelControl  <class com_motu_driver_FWA_IOAudioLevelControl, id 0x1000022eb, !registered, !matched, active, busy 0, retain 8>
+  |   | | {
+  |   | |   "IOAudioLevelControlMinDB" = 18446744073703260160
+  |   | |   "IOAudioControlChannelNumber" = 2
+  |   | |   "IOAudioLevelControlMaxValue" = 96
+  |   | |   "IOAudioControlID" = 0
+  |   | |   "IOAudioControlValue" = 87
+  |   | |   "IOAudioLevelControlMaxDB" = 0
+  |   | |   "IOAudioLevelControlUseLinearScale" = 1
+  |   | |   "IOAudioControlType" = 1818588780
+  |   | |   "IOAudioControlChannelID" = 2
+  |   | |   "IOAudioControlSubType" = 1986817381
+  |   | |   "IOAudioControlUsage" = 1869968496
+  |   | |   "IOAudioLevelControlMinValue" = 0
+  |   | | }
+  |   | | 
+  |   | +-o IOAudioControlUserClient  <class IOAudioControlUserClient, id 0x1000022f9, !registered, !matched, active, busy 0, retain 6>
+  |   |     {
+  |   |       "IOUserClientCreator" = "pid 189, coreaudiod"
+  |   |       "IOUserClientDefaultLocking" = Yes
+  |   |     }
+  |   |     
+  |   +-o com_motu_driver_FWA_IOAudioLevelControl  <class com_motu_driver_FWA_IOAudioLevelControl, id 0x1000022ec, !registered, !matched, active, busy 0, retain 8>
+  |   | | {
+  |   | |   "IOAudioLevelControlMinDB" = 18446744073703260160
+  |   | |   "IOAudioControlChannelNumber" = 3
+  |   | |   "IOAudioLevelControlMaxValue" = 96
+  |   | |   "IOAudioControlID" = 0
+  |   | |   "IOAudioControlValue" = 59
+  |   | |   "IOAudioLevelControlMaxDB" = 0
+  |   | |   "IOAudioLevelControlUseLinearScale" = 1
+  |   | |   "IOAudioControlType" = 1818588780
+  |   | |   "IOAudioControlChannelID" = 3
+  |   | |   "IOAudioControlSubType" = 1986817381
+  |   | |   "IOAudioControlUsage" = 1869968496
+  |   | |   "IOAudioLevelControlMinValue" = 0
+  |   | | }
+  |   | | 
+  |   | +-o IOAudioControlUserClient  <class IOAudioControlUserClient, id 0x1000022fa, !registered, !matched, active, busy 0, retain 6>
+  |   |     {
+  |   |       "IOUserClientCreator" = "pid 189, coreaudiod"
+  |   |       "IOUserClientDefaultLocking" = Yes
+  |   |     }
+  |   |     
+  |   +-o com_motu_driver_FWA_IOAudioLevelControl  <class com_motu_driver_FWA_IOAudioLevelControl, id 0x1000022ed, !registered, !matched, active, busy 0, retain 8>
+  |   | | {
+  |   | |   "IOAudioLevelControlMinDB" = 18446744073703260160
+  |   | |   "IOAudioControlChannelNumber" = 4
+  |   | |   "IOAudioLevelControlMaxValue" = 96
+  |   | |   "IOAudioControlID" = 0
+  |   | |   "IOAudioControlValue" = 59
+  |   | |   "IOAudioLevelControlMaxDB" = 0
+  |   | |   "IOAudioLevelControlUseLinearScale" = 1
+  |   | |   "IOAudioControlType" = 1818588780
+  |   | |   "IOAudioControlChannelID" = 4
+  |   | |   "IOAudioControlSubType" = 1986817381
+  |   | |   "IOAudioControlUsage" = 1869968496
+  |   | |   "IOAudioLevelControlMinValue" = 0
+  |   | | }
+  |   | | 
+  |   | +-o IOAudioControlUserClient  <class IOAudioControlUserClient, id 0x1000022fb, !registered, !matched, active, busy 0, retain 6>
+  |   |     {
+  |   |       "IOUserClientCreator" = "pid 189, coreaudiod"
+  |   |       "IOUserClientDefaultLocking" = Yes
+  |   |     }
+  |   |     
+  |   +-o com_motu_driver_FWA_IOAudioLevelControl  <class com_motu_driver_FWA_IOAudioLevelControl, id 0x1000022ee, !registered, !matched, active, busy 0, retain 8>
+  |   | | {
+  |   | |   "IOAudioLevelControlMinDB" = 18446744073703260160
+  |   | |   "IOAudioControlChannelNumber" = 5
+  |   | |   "IOAudioLevelControlMaxValue" = 96
+  |   | |   "IOAudioControlID" = 0
+  |   | |   "IOAudioControlValue" = 96
+  |   | |   "IOAudioLevelControlMaxDB" = 0
+  |   | |   "IOAudioLevelControlUseLinearScale" = 1
+  |   | |   "IOAudioControlType" = 1818588780
+  |   | |   "IOAudioControlChannelID" = 5
+  |   | |   "IOAudioControlSubType" = 1986817381
+  |   | |   "IOAudioControlUsage" = 1869968496
+  |   | |   "IOAudioLevelControlMinValue" = 0
+  |   | | }
+  |   | | 
+  |   | +-o IOAudioControlUserClient  <class IOAudioControlUserClient, id 0x1000022fc, !registered, !matched, active, busy 0, retain 6>
+  |   |     {
+  |   |       "IOUserClientCreator" = "pid 189, coreaudiod"
+  |   |       "IOUserClientDefaultLocking" = Yes
+  |   |     }
+  |   |     
+  |   +-o com_motu_driver_FWA_IOAudioLevelControl  <class com_motu_driver_FWA_IOAudioLevelControl, id 0x1000022ef, !registered, !matched, active, busy 0, retain 8>
+  |   | | {
+  |   | |   "IOAudioLevelControlMinDB" = 18446744073703260160
+  |   | |   "IOAudioControlChannelNumber" = 6
+  |   | |   "IOAudioLevelControlMaxValue" = 96
+  |   | |   "IOAudioControlID" = 0
+  |   | |   "IOAudioControlValue" = 96
+  |   | |   "IOAudioLevelControlMaxDB" = 0
+  |   | |   "IOAudioLevelControlUseLinearScale" = 1
+  |   | |   "IOAudioControlType" = 1818588780
+  |   | |   "IOAudioControlChannelID" = 6
+  |   | |   "IOAudioControlSubType" = 1986817381
+  |   | |   "IOAudioControlUsage" = 1869968496
+  |   | |   "IOAudioLevelControlMinValue" = 0
+  |   | | }
+  |   | | 
+  |   | +-o IOAudioControlUserClient  <class IOAudioControlUserClient, id 0x1000022fd, !registered, !matched, active, busy 0, retain 6>
+  |   |     {
+  |   |       "IOUserClientCreator" = "pid 189, coreaudiod"
+  |   |       "IOUserClientDefaultLocking" = Yes
+  |   |     }
+  |   |     
+  |   +-o com_motu_driver_FWA_IOAudioLevelControl  <class com_motu_driver_FWA_IOAudioLevelControl, id 0x1000022f0, !registered, !matched, active, busy 0, retain 8>
+  |   | | {
+  |   | |   "IOAudioLevelControlMinDB" = 18446744073703260160
+  |   | |   "IOAudioControlChannelNumber" = 7
+  |   | |   "IOAudioLevelControlMaxValue" = 96
+  |   | |   "IOAudioControlID" = 0
+  |   | |   "IOAudioControlValue" = 96
+  |   | |   "IOAudioLevelControlMaxDB" = 0
+  |   | |   "IOAudioLevelControlUseLinearScale" = 1
+  |   | |   "IOAudioControlType" = 1818588780
+  |   | |   "IOAudioControlChannelID" = 7
+  |   | |   "IOAudioControlSubType" = 1986817381
+  |   | |   "IOAudioControlUsage" = 1869968496
+  |   | |   "IOAudioLevelControlMinValue" = 0
+  |   | | }
+  |   | | 
+  |   | +-o IOAudioControlUserClient  <class IOAudioControlUserClient, id 0x1000022fe, !registered, !matched, active, busy 0, retain 6>
+  |   |     {
+  |   |       "IOUserClientCreator" = "pid 189, coreaudiod"
+  |   |       "IOUserClientDefaultLocking" = Yes
+  |   |     }
+  |   |     
+  |   +-o com_motu_driver_FWA_IOAudioLevelControl  <class com_motu_driver_FWA_IOAudioLevelControl, id 0x1000022f1, !registered, !matched, active, busy 0, retain 8>
+  |   | | {
+  |   | |   "IOAudioLevelControlMinDB" = 18446744073703260160
+  |   | |   "IOAudioControlChannelNumber" = 8
+  |   | |   "IOAudioLevelControlMaxValue" = 96
+  |   | |   "IOAudioControlID" = 0
+  |   | |   "IOAudioControlValue" = 96
+  |   | |   "IOAudioLevelControlMaxDB" = 0
+  |   | |   "IOAudioLevelControlUseLinearScale" = 1
+  |   | |   "IOAudioControlType" = 1818588780
+  |   | |   "IOAudioControlChannelID" = 8
+  |   | |   "IOAudioControlSubType" = 1986817381
+  |   | |   "IOAudioControlUsage" = 1869968496
+  |   | |   "IOAudioLevelControlMinValue" = 0
+  |   | | }
+  |   | | 
+  |   | +-o IOAudioControlUserClient  <class IOAudioControlUserClient, id 0x1000022ff, !registered, !matched, active, busy 0, retain 6>
+  |   |     {
+  |   |       "IOUserClientCreator" = "pid 189, coreaudiod"
+  |   |       "IOUserClientDefaultLocking" = Yes
+  |   |     }
+  |   |     
+  |   +-o com_motu_driver_FWA_IOAudioLevelControl  <class com_motu_driver_FWA_IOAudioLevelControl, id 0x1000022f2, !registered, !matched, active, busy 0, retain 8>
+  |   | | {
+  |   | |   "IOAudioLevelControlMinDB" = 18446744073703260160
+  |   | |   "IOAudioControlChannelNumber" = 9
+  |   | |   "IOAudioLevelControlMaxValue" = 96
+  |   | |   "IOAudioControlID" = 0
+  |   | |   "IOAudioControlValue" = 96
+  |   | |   "IOAudioLevelControlMaxDB" = 0
+  |   | |   "IOAudioLevelControlUseLinearScale" = 1
+  |   | |   "IOAudioControlType" = 1818588780
+  |   | |   "IOAudioControlChannelID" = 9
+  |   | |   "IOAudioControlSubType" = 1986817381
+  |   | |   "IOAudioControlUsage" = 1869968496
+  |   | |   "IOAudioLevelControlMinValue" = 0
+  |   | | }
+  |   | | 
+  |   | +-o IOAudioControlUserClient  <class IOAudioControlUserClient, id 0x100002300, !registered, !matched, active, busy 0, retain 6>
+  |   |     {
+  |   |       "IOUserClientCreator" = "pid 189, coreaudiod"
+  |   |       "IOUserClientDefaultLocking" = Yes
+  |   |     }
+  |   |     
+  |   +-o com_motu_driver_FWA_IOAudioLevelControl  <class com_motu_driver_FWA_IOAudioLevelControl, id 0x1000022f3, !registered, !matched, active, busy 0, retain 8>
+  |   | | {
+  |   | |   "IOAudioLevelControlMinDB" = 18446744073703260160
+  |   | |   "IOAudioControlChannelNumber" = 10
+  |   | |   "IOAudioLevelControlMaxValue" = 96
+  |   | |   "IOAudioControlID" = 0
+  |   | |   "IOAudioControlValue" = 96
+  |   | |   "IOAudioLevelControlMaxDB" = 0
+  |   | |   "IOAudioLevelControlUseLinearScale" = 1
+  |   | |   "IOAudioControlType" = 1818588780
+  |   | |   "IOAudioControlChannelID" = 10
+  |   | |   "IOAudioControlSubType" = 1986817381
+  |   | |   "IOAudioControlUsage" = 1869968496
+  |   | |   "IOAudioLevelControlMinValue" = 0
+  |   | | }
+  |   | | 
+  |   | +-o IOAudioControlUserClient  <class IOAudioControlUserClient, id 0x100002301, !registered, !matched, active, busy 0, retain 6>
+  |   |     {
+  |   |       "IOUserClientCreator" = "pid 189, coreaudiod"
+  |   |       "IOUserClientDefaultLocking" = Yes
+  |   |     }
+  |   |     
+  |   +-o com_motu_driver_FWA_IOAudioLevelControl  <class com_motu_driver_FWA_IOAudioLevelControl, id 0x1000022f4, !registered, !matched, active, busy 0, retain 8>
+  |   | | {
+  |   | |   "IOAudioLevelControlMinDB" = 18446744073703260160
+  |   | |   "IOAudioControlChannelNumber" = 11
+  |   | |   "IOAudioLevelControlMaxValue" = 96
+  |   | |   "IOAudioControlID" = 0
+  |   | |   "IOAudioControlValue" = 96
+  |   | |   "IOAudioLevelControlMaxDB" = 0
+  |   | |   "IOAudioLevelControlUseLinearScale" = 1
+  |   | |   "IOAudioControlType" = 1818588780
+  |   | |   "IOAudioControlChannelID" = 11
+  |   | |   "IOAudioControlSubType" = 1986817381
+  |   | |   "IOAudioControlUsage" = 1869968496
+  |   | |   "IOAudioLevelControlMinValue" = 0
+  |   | | }
+  |   | | 
+  |   | +-o IOAudioControlUserClient  <class IOAudioControlUserClient, id 0x100002302, !registered, !matched, active, busy 0, retain 6>
+  |   |     {
+  |   |       "IOUserClientCreator" = "pid 189, coreaudiod"
+  |   |       "IOUserClientDefaultLocking" = Yes
+  |   |     }
+  |   |     
+  |   +-o com_motu_driver_FWA_IOAudioLevelControl  <class com_motu_driver_FWA_IOAudioLevelControl, id 0x1000022f5, !registered, !matched, active, busy 0, retain 8>
+  |   | | {
+  |   | |   "IOAudioLevelControlMinDB" = 18446744073703260160
+  |   | |   "IOAudioControlChannelNumber" = 12
+  |   | |   "IOAudioLevelControlMaxValue" = 96
+  |   | |   "IOAudioControlID" = 0
+  |   | |   "IOAudioControlValue" = 96
+  |   | |   "IOAudioLevelControlMaxDB" = 0
+  |   | |   "IOAudioLevelControlUseLinearScale" = 1
+  |   | |   "IOAudioControlType" = 1818588780
+  |   | |   "IOAudioControlChannelID" = 12
+  |   | |   "IOAudioControlSubType" = 1986817381
+  |   | |   "IOAudioControlUsage" = 1869968496
+  |   | |   "IOAudioLevelControlMinValue" = 0
+  |   | | }
+  |   | | 
+  |   | +-o IOAudioControlUserClient  <class IOAudioControlUserClient, id 0x100002303, !registered, !matched, active, busy 0, retain 6>
+  |   |     {
+  |   |       "IOUserClientCreator" = "pid 189, coreaudiod"
+  |   |       "IOUserClientDefaultLocking" = Yes
+  |   |     }
+  |   |     
+  |   +-o com_motu_driver_FWA_IOAudioLevelControl  <class com_motu_driver_FWA_IOAudioLevelControl, id 0x1000022f6, !registered, !matched, active, busy 0, retain 8>
+  |   | | {
+  |   | |   "IOAudioLevelControlMinDB" = 18446744073703260160
+  |   | |   "IOAudioControlChannelNumber" = 13
+  |   | |   "IOAudioLevelControlMaxValue" = 96
+  |   | |   "IOAudioControlID" = 0
+  |   | |   "IOAudioControlValue" = 96
+  |   | |   "IOAudioLevelControlMaxDB" = 0
+  |   | |   "IOAudioLevelControlUseLinearScale" = 1
+  |   | |   "IOAudioControlType" = 1818588780
+  |   | |   "IOAudioControlChannelID" = 13
+  |   | |   "IOAudioControlSubType" = 1986817381
+  |   | |   "IOAudioControlUsage" = 1869968496
+  |   | |   "IOAudioLevelControlMinValue" = 0
+  |   | | }
+  |   | | 
+  |   | +-o IOAudioControlUserClient  <class IOAudioControlUserClient, id 0x100002304, !registered, !matched, active, busy 0, retain 6>
+  |   |     {
+  |   |       "IOUserClientCreator" = "pid 189, coreaudiod"
+  |   |       "IOUserClientDefaultLocking" = Yes
+  |   |     }
+  |   |     
+  |   +-o com_motu_driver_FWA_IOAudioLevelControl  <class com_motu_driver_FWA_IOAudioLevelControl, id 0x1000022f7, !registered, !matched, active, busy 0, retain 8>
+  |   | | {
+  |   | |   "IOAudioLevelControlMinDB" = 18446744073703260160
+  |   | |   "IOAudioControlChannelNumber" = 14
+  |   | |   "IOAudioLevelControlMaxValue" = 96
+  |   | |   "IOAudioControlID" = 0
+  |   | |   "IOAudioControlValue" = 96
+  |   | |   "IOAudioLevelControlMaxDB" = 0
+  |   | |   "IOAudioLevelControlUseLinearScale" = 1
+  |   | |   "IOAudioControlType" = 1818588780
+  |   | |   "IOAudioControlChannelID" = 14
+  |   | |   "IOAudioControlSubType" = 1986817381
+  |   | |   "IOAudioControlUsage" = 1869968496
+  |   | |   "IOAudioLevelControlMinValue" = 0
+  |   | | }
+  |   | | 
+  |   | +-o IOAudioControlUserClient  <class IOAudioControlUserClient, id 0x100002305, !registered, !matched, active, busy 0, retain 6>
+  |   |     {
+  |   |       "IOUserClientCreator" = "pid 189, coreaudiod"
+  |   |       "IOUserClientDefaultLocking" = Yes
+  |   |     }
+  |   |     
+  |   +-o com_motu_driver_FWA_UserClient  <class com_motu_driver_FWA_UserClient, id 0x100002306, !registered, !matched, active, busy 0, retain 6>
+  |   |   {
+  |   |     "IOUserClientCreator" = "pid 591, ChatGPT"
+  |   |     "IOUserClientDefaultLocking" = Yes
+  |   |   }
+  |   |   
+  |   +-o com_motu_driver_FWA_UserClient  <class com_motu_driver_FWA_UserClient, id 0x100002307, !registered, !matched, active, busy 0, retain 6>
+  |   |   {
+  |   |     "IOUserClientCreator" = "pid 1019, BetterDisplay"
+  |   |     "IOUserClientDefaultLocking" = Yes
+  |   |   }
+  |   |   
+  |   +-o com_motu_driver_FWA_UserClient  <class com_motu_driver_FWA_UserClient, id 0x100002308, !registered, !matched, active, busy 0, retain 6>
+  |   |   {
+  |   |     "IOUserClientCreator" = "pid 1264, Claude Helper"
+  |   |     "IOUserClientDefaultLocking" = Yes
+  |   |   }
+  |   |   
+  |   +-o com_motu_driver_FWA_UserClient  <class com_motu_driver_FWA_UserClient, id 0x10000230a, !registered, !matched, active, busy 0, retain 6>
+  |       {
+  |         "IOUserClientCreator" = "pid 618, Spotify"
+  |         "IOUserClientDefaultLocking" = Yes
+  |       }
+  |       
+  +-o IOFireWireUserClientIniter  <class IOFireWireUserClientIniter, id 0x1000022d2, !registered, !matched, active, busy 0, retain 4>
+      {
+        "IOProviderMergeProperties" = {"IOCFPlugInTypes"={"CDCFCA94-F197-11D4-87E6-000502072F80"="IOFireWireFamily.kext/Contents/PlugIns/IOFireWireLib.plugin"},"IOUserClientClass"="IOFireWireUserClient"}
+        "CFBundleIdentifier" = "com.apple.iokit.IOFireWireFamily"
+        "IOMatchCategory" = "IOFireWireUserClient"
+        "IOClass" = "IOFireWireUserClientIniter"
+        "IOPersonalityPublisher" = "com.apple.iokit.IOFireWireFamily"
+        "IOProviderClass" = "IOFireWireNub"
+        "CFBundleIdentifierKernel" = "com.apple.iokit.IOFireWireFamily"
+        "IOProbeScore" = 0
+        "IOMatchedAtBoot" = Yes
+      }
+      
+

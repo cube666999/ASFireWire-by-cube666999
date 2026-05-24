@@ -1,0 +1,18 @@
+FireWire:
+
+    FireWire Bus:
+
+      Maximum Speed: Up to 800 Mb/sec
+
+        Vendor 0x1F2 Device 0x106800:
+
+          Manufacturer: 0x1F2
+          Model: 0x106800
+          GUID: 0x1F20000087236
+          Maximum Speed: Up to 400 Mb/sec
+          Connection Speed: Up to 400 Mb/sec
+          Sub-units:
+            Unknown Unit:
+              Unit Software Version: 0x15
+              Unit Spec ID: 0x1F2
+

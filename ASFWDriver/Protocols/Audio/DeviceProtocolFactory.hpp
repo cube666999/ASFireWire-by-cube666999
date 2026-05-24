@@ -84,6 +84,51 @@ public:
         return LookupIntegrationMode(vendorId, modelId) != DeviceIntegrationMode::kNone;
     }
 
+    /// Channel counts for a MOTU V3 device's isochronous streams.
+    ///
+    /// These are the total slot counts per isoch packet (PCM + padding/MIDI),
+    /// matching the values the MOTU kext reports as fNumFWOutputChannels /
+    /// fNumFWInputChannels at 44.1/48 kHz.
+    ///
+    /// inputChannels  = channels device sends to host   (IR, talker side)
+    /// outputChannels = channels host sends to device   (IT, listener side)
+    struct MOTUChannelLayout {
+        uint32_t inputChannels{2};   ///< IR slots (device → host)
+        uint32_t outputChannels{2};  ///< IT slots (host → device)
+    };
+
+    /// Return a human-readable device name for a known MOTU V3 model.
+    static constexpr const char* GetMOTUV3DeviceName(uint32_t modelId) noexcept {
+        switch (modelId) {
+            case kMOTU828MK3FWModel:     return "MOTU 828mk3";
+            case kMOTU828MK3HybModel:    return "MOTU 828mk3 Hybrid";
+            case kMOTU896MK3Model:       return "MOTU 896mk3";
+            case kMOTUTravelerMK3Model:  return "MOTU Traveler mk3";
+            case kMOTUUltraLiteMK3Model: return "MOTU UltraLite mk3";
+            default:                     return "MOTU FireWire";
+        }
+    }
+
+    /// Return the known channel layout for a MOTU V3 model at ≤48 kHz.
+    /// Returns {2, 2} for unrecognised models (safe but non-functional).
+    static constexpr MOTUChannelLayout GetMOTUV3ChannelLayout(uint32_t modelId) noexcept {
+        switch (modelId) {
+            case kMOTU828MK3FWModel:    // unitSwVersion 0x15
+            case kMOTU828MK3HybModel:   // unitSwVersion 0x35
+                // Confirmed from Sequoia diagnostic with MOTU kext:
+                // fNumFWOutputChannels=14 (device→host=IR), fNumFWInputChannels=18 (host→device=IT)
+                return {14u, 18u};
+            case kMOTU896MK3Model:      // unitSwVersion 0x16 — 28 input / 24 output physical
+                return {20u, 16u};
+            case kMOTUTravelerMK3Model: // unitSwVersion 0x17
+                return {14u, 14u};
+            case kMOTUUltraLiteMK3Model:// unitSwVersion 0x19
+                return {14u, 10u};
+            default:
+                return {2u, 2u};
+        }
+    }
+
     /// Create a protocol handler for the given vendor/model
     /// @param vendorId   IEEE OUI vendor ID from Config ROM
     /// @param modelId    Model ID from Config ROM

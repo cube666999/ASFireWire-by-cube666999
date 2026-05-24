@@ -1,0 +1,4 @@
+ProductName:		macOS
+ProductVersion:		15.7.4
+BuildVersion:		24G517
+hw.model: Mac15,9

@@ -1,0 +1,5 @@
+dtrace: invalid probe specifier 
+        fbt:com.motu.driver.FireWireAudio::entry
+        /strstr(probefunc,"eceiv") != NULL || strstr(probefunc,"Rx") != NULL || strstr(probefunc,"acket") != NULL/
+        { printf("%Y  %s  arg0=0x%llx arg1=0x%llx\n", walltimestamp, probefunc, arg0, arg1); }
+    : probe description fbt:com.motu.driver.FireWireAudio::entry does not match any probes

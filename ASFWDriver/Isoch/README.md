@@ -65,62 +65,104 @@ graph TD
 
 ## AudioDriverKit Integration
 
-The integration with macOS CoreAudio is handled by a three-stage pipeline that bridges device discovery with audio processing, all running in user space as a DriverKit extension.
+Two device paths both terminate at `ASFWAudioNub` → `ASFWAudioDriver` → `IOUserAudioDevice`.
+Which path is taken depends on the device vendor/model identified during Config ROM scan.
 
-### 1. Discovery & Publication Layer (User Space / DriverKit)
-The process begins in `AVCDiscovery` (part of the main ASFW DriverKit extension), which scans the FireWire bus for units.
-1.  **Unit Detection**: `AVCDiscovery` detects an AV/C unit (Spec ID `0x00A02D`).
-2.  **Subunit Probing**: It probes the unit for a **Music Subunit** (type `0x0C`; often seen as `0x60` when stored in the full subunit-ID byte).
-3.  **Capability Extraction**: If a Music Subunit is found, it parses its plugs to determine:
-    *   **Channel Count**: From the number of plugs or channel clusters.
-    *   **Sample Rates**: By querying supported formats on the plugs.
-    *   **Device Name**: From the Config ROM (Vendor/Model leaf).
-4.  **Nub Creation**: `AVCDiscovery` creates an `ASFWAudioNub` (an `IOService` subclass) and populates it with a properties dictionary containing these discovered capabilities (e.g., `ASFWDeviceName`, `ASFWSampleRates`).
-5.  **Nub Registration**: The nub is registered in the IORegistry, acting as a dynamic match point.
+```
+Path A (AV/C):   AVCDiscovery ──────────────────────────────┐
+                                                             ▼
+                                                       ASFWAudioNub → ASFWAudioDriver → IOUserAudioDevice
+                                                             ▲
+Path B (MOTU V3): AudioCoordinator → MOTUAudioBackend ──────┘
+```
 
-### 2. Driver Matching Layer (System)
-*   **Matching**: The `ASFWAudioDriver` (a `.dext` service) has an `Info.plist` entry matching `ASFWAudioNub`.
-*   **Loading**: macOS matches the `ASFWAudioDriver` on the registered nub. Since both are part of the same DriverKit extension, they share the same user-space process.
+### Path A — AV/C devices (non-MOTU)
 
-### 3. Audio Engine Layer (User Space)
-`ASFWAudioDriver::Start(provider)` initializes the audio engine using the properties passed from the nub:
-1.  **Property Ingestion**: It reads `ASFWSampleRates`, `ASFWChannelCount`, and plug names from the provider (the `ASFWAudioNub` proxy).
-2.  **Device Creation**: It calls `IOUserAudioDevice::Create()` to instantiate the audio device object.
-3.  **Stream Configuration**:
-    *   Creates `IOUserAudioStream` objects for Input and Output.
-    *   Configures standard **24-bit PCM** formats (packed in 32-bit integers) for each supported sample rate.
-    *   Sets channel names (e.g., "Analog Out 1") to appear correctly in Audio MIDI Setup.
-4.  **Registration**: Finally, it calls `RegisterService()`, which publishes the `IOUserAudioDevice` to the system. CoreAudio's HAL (Hardware Abstraction Layer) then picks this up and presents it to applications.
+Handled by `AVCDiscovery`. Entry condition: unit has Spec ID `0x00A02D`.
+
+1.  **Unit Detection**: `AVCDiscovery` detects an AV/C unit on the bus.
+2.  **Subunit Probing**: Probes for a **Music Subunit** (type `0x0C`).
+3.  **Capability Extraction**: Parses Music Subunit plugs to determine:
+    *   **Channel Count** — from plug/channel cluster topology
+    *   **Sample Rates** — by querying supported formats on the plugs
+    *   **Device Name** — from Config ROM Vendor/Model text leaf
+4.  **Nub Creation**: Creates `ASFWAudioNub` populated with a properties dictionary
+    (`ASFWDeviceName`, `ASFWSampleRates`, `ASFWChannelCount`, …).
+5.  **Nub Registration**: Registers the nub in IORegistry as a dynamic match point.
+
+**Runtime sample rate switching**: `ASFWIOUserAudioDevice::HandleChangeSampleRate` sends
+AV/C INPUT PLUG SIGNAL FORMAT command (opcode `0x19`) via `FCPTransport`, then restarts
+the isoch streams at the new rate.
+
+### Path B — MOTU V3 devices
+
+Handled by `AudioCoordinator` + `MOTUAudioBackend`. Entry condition: vendor `0x0001F2`,
+`DeviceProtocolFactory::EffectiveModelId()` returns a known MOTU model (e.g. `0x000015`
+for 828 MK3).
+
+> ⚠️ **MOTU 828 MK3 declares AV/C units in Config ROM but does NOT implement FCP.**
+> Any AV/C command (UNIT INFO, SUBUNIT INFO, FCP write) will time out. Always use
+> `MOTUAudioBackend` for vendor `0x0001F2`.
+
+1.  **Routing**: `AudioCoordinator` calls `DeviceProtocolFactory::LookupIntegrationMode()`
+    → returns `kMOTUV3` → routes to `motuV3_` backend.
+2.  **Streaming start**: `MOTUAudioBackend::StartStreaming` issues V3 register sequence
+    (quadlet read/write, tCode=0x0) — see `MOTU_828_MK3_BringUp.md` for full sequence.
+3.  **Capability source**: Sample rate read from `CLOCK_STATUS` register (0x0b14),
+    bits[10:8]. Channel count from known MOTU model defaults.
+4.  **Nub Creation**: `AudioCoordinator` creates `ASFWAudioNub` with discovered properties.
+5.  **Nub Registration**: Same as Path A — registered in IORegistry.
+
+### Driver Matching & Audio Engine (both paths)
+
+*   **Matching**: `ASFWAudioDriver` (`.dext` service) has `Info.plist` entry matching
+    `ASFWAudioNub`. macOS loads it in the same user-space process as the main dext.
+*   **`ASFWAudioDriver::Start(provider)`**:
+    1.  Reads `ASFWSampleRates`, `ASFWChannelCount`, plug names from the nub proxy.
+    2.  Creates `ASFWIOUserAudioDevice` (subclass of `IOUserAudioDevice`).
+    3.  Creates `IOUserAudioStream` objects for Input and Output; configures 24-bit PCM
+        formats for each supported rate.
+    4.  Calls `RegisterService()` → CoreAudio HAL picks up the device.
 
 ### Capability Processing Summary
-| Capability | Source | Path to CoreAudio |
+
+| Capability | Path A (AV/C) | Path B (MOTU V3) |
 | :--- | :--- | :--- |
-| **Sample Rates** | Music Subunit Plug Formats | `AVCDiscovery` → `Nub Properties` → `IOUserAudioStream::SetAvailableStreamFormats` |
-| **Channel Count** | Music Subunit Topology | `AVCDiscovery` → `Nub Properties` → `IOUserAudioStream` (channels per frame) |
-| **Current Rate** | Active Plug Signal Format | `AVCDiscovery` checks signal format → `Nub Properties` → `IOUserAudioDevice::SetSampleRate` |
+| **Sample Rates** | Music Subunit plug formats | `CLOCK_STATUS` bits[10:8] |
+| **Channel Count** | Music Subunit topology | Model defaults |
+| **Device Name** | Config ROM text leaf | Config ROM text leaf |
+| **Rate switching** | AV/C opcode 0x19 via FCP | Stop → write `CLOCK_STATUS` → Start |
 
 ### Integration Flow Chart
+
 ```mermaid
 graph TD
     subgraph "DriverKit Extension (User Space)"
-        FW["FireWire Bus"] --> |"Unit Detected"| DISC["AVCDiscovery"]
-        DISC --> |"Probes"| UNIT["Music Subunit"]
-        
-        subgraph "Discovery Phase"
-            UNIT --> |"Extract Capabilities"| PROPS["Property Dictionary"]
-            PROPS --> |"ASFWDeviceName..."| NUB["ASFWAudioNub"]
+        FW["FireWire Bus"] --> ROM["Config ROM Scan"]
+        ROM --> FACTORY["DeviceProtocolFactory\nLookupIntegrationMode()"]
+
+        FACTORY -->|"AV/C device\n(Spec ID 0x00A02D)"| DISC["AVCDiscovery"]
+        FACTORY -->|"MOTU V3\n(vendor 0x0001F2)"| COORD["AudioCoordinator\n→ MOTUAudioBackend"]
+
+        subgraph "Path A — AV/C"
+            DISC --> UNIT["Music Subunit\nprobe + parse"]
+            UNIT --> PROPS_A["Property Dictionary\n(rates, channels, name)"]
         end
-        
-        subgraph "Audio Engine Launch"
-            NUB -.-> |"Matches"| DRV["ASFWAudioDriver"]
-            DRV --> |"Reads Properties"| NUB
-            DRV --> |"Creates"| DEV["IOUserAudioDevice"]
+
+        subgraph "Path B — MOTU V3"
+            COORD --> REG["V3 Register Sequence\n(CLOCK_STATUS, PACKET_FORMAT,\nISOC_COMM_CONTROL)"]
+            REG --> PROPS_B["Property Dictionary\n(rates, channels, name)"]
         end
+
+        PROPS_A --> NUB["ASFWAudioNub\n(IORegistry)"]
+        PROPS_B --> NUB
+
+        NUB -.->|"Matches"| DRV["ASFWAudioDriver"]
+        DRV --> DEV["ASFWIOUserAudioDevice"]
     end
 
     subgraph "System"
-        DEV --> |"RegisterService"| IOR["IORegistry"]
-        IOR --> |"Publish"| HAL["Core Audio HAL"]
+        DEV -->|"RegisterService"| HAL["Core Audio HAL"]
     end
 ```
 
