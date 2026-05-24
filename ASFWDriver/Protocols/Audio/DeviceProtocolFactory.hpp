@@ -9,6 +9,7 @@
 #include "../Ports/FireWireBusPort.hpp"
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 namespace ASFW::Audio {
 
@@ -39,6 +40,22 @@ public:
     static constexpr uint32_t kMOTU896MK3Model    = 0x000016;
     static constexpr uint32_t kMOTUTravelerMK3Model= 0x000017;
     static constexpr uint32_t kMOTUUltraLiteMK3Model=0x000019;
+
+    /// Resolve the effective model ID for a device.
+    ///
+    /// MOTU devices store the model identifier in Unit_SW_Vers (unit directory
+    /// key 0x13), NOT in the root directory ModelId (key 0x17), which MOTU
+    /// always leaves as 0x000000. All other known vendors use root ModelId.
+    static constexpr uint32_t EffectiveModelId(
+        uint32_t vendorId,
+        uint32_t rootModelId,
+        std::optional<uint32_t> unitSwVersion
+    ) noexcept {
+        if (vendorId == kMOTUVendorId && unitSwVersion.has_value()) {
+            return *unitSwVersion;
+        }
+        return rootModelId;
+    }
 
     /// Resolve integration mode for a known vendor/model pair.
     static constexpr DeviceIntegrationMode LookupIntegrationMode(

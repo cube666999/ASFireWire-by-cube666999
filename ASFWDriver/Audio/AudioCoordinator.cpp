@@ -134,8 +134,10 @@ void AudioCoordinator::OnAVCAudioConfigurationReady(uint64_t guid,
     // Route to correct backend based on device vendor/model.
     const auto* record = registry_.FindByGuid(guid);
     if (record) {
+        const uint32_t effectiveModel = DeviceProtocolFactory::EffectiveModelId(
+            record->vendorId, record->modelId, record->unitSwVersion);
         const auto integration = DeviceProtocolFactory::LookupIntegrationMode(
-            record->vendorId, record->modelId);
+            record->vendorId, effectiveModel);
         if (integration == DeviceIntegrationMode::kMOTUV3) {
             motuV3_.OnAudioConfigurationReady(guid, config);
             return;
@@ -152,7 +154,9 @@ IAudioBackend* AudioCoordinator::BackendForGuid(uint64_t guid) noexcept {
         return &avc_;
     }
 
-    const auto integration = DeviceProtocolFactory::LookupIntegrationMode(record->vendorId, record->modelId);
+    const uint32_t effectiveModel = DeviceProtocolFactory::EffectiveModelId(
+        record->vendorId, record->modelId, record->unitSwVersion);
+    const auto integration = DeviceProtocolFactory::LookupIntegrationMode(record->vendorId, effectiveModel);
     if (integration == DeviceIntegrationMode::kHardcodedNub) {
         return &dice_;
     }
