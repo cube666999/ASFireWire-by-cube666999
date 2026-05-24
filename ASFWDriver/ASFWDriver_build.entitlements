@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Build-time entitlements: intentionally empty.
+	     Xcode cannot sign DriverKit entitlements without a provisioning profile,
+	     but a paid Personal Team cannot provision DriverKit features.
+	     resign.sh re-signs the installed dext with ASFWDriver.entitlements
+	     (the full DriverKit entitlements) after each build.
+	     amfi_get_out_of_my_way=1 boot-arg bypasses runtime entitlement validation. -->
+</dict>
+</plist>

@@ -210,7 +210,24 @@ void BusResetCoordinator::EnableFilters() {
         return;
     }
 
-    hardware_->Write(Register32::kAsReqFilterHiSet, kAsReqAcceptAllMask);
+    // Accept async requests from ALL nodes (nodes 0-63).
+    // OHCI ASReqFilter: HiSet covers nodes 32-63, LoSet covers nodes 0-31.
+    // Previously only bit 31 of HiSet was set (node 63 = broadcast only),
+    // which caused FCP responses from node 0 (and others) to be silently dropped.
+    hardware_->Write(Register32::kAsReqFilterHiSet, 0xFFFFFFFFu);
+    hardware_->Write(Register32::kAsReqFilterLoSet, 0xFFFFFFFFu);
+
+    // Readback: verify filter writes actually reached hardware
+    const uint32_t hiReadback = hardware_->Read(Register32::kAsReqFilterHiSet);
+    const uint32_t loReadback = hardware_->Read(Register32::kAsReqFilterLoSet);
+    ASFW_LOG(BusReset, "ASReqFilter readback: HiSet=0x%08X LoSet=0x%08X (expected 0xFFFFFFFF each)",
+             hiReadback, loReadback);
+    if (hiReadback == 0 && loReadback == 0) {
+        ASFW_LOG(BusReset,
+                 "⚠️ ASReqFilter readback=0! Writes NOT reaching hardware — "
+                 "FCP responses from remote nodes will be dropped by OHCI");
+    }
+
     filtersEnabled_ = true;
 }
 

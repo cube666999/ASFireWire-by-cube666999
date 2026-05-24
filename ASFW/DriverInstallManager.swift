@@ -36,7 +36,14 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
     }
 
     func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
-        completion?(.failure(error))
+        let nsError = error as NSError
+        // Error 4 = OSSystemExtensionErrorExtensionNotFound when same version already active —
+        // treat as success so the UI doesn't show a spurious error on re-launch.
+        if nsError.domain == "OSSystemExtensionErrorDomain" && nsError.code == 4 && currentOp == .activation {
+            completion?(.success("Extension already active (version match)"))
+        } else {
+            completion?(.failure(error))
+        }
         completion = nil
     }
 

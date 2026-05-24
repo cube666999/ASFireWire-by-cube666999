@@ -175,11 +175,17 @@ void DriverWiring::EnsureSbp2Deps(::ServiceContext& ctx) {
     router->RegisterRequestHandler(
         0x1,
         [sbp2Manager, fcpRouter](const ASFW::Async::ARPacketView& packet) {
+            const uint64_t destOffset = (packet.header.size() >= 16)
+                                            ? ASFW::Async::ExtractDestOffset(packet.header)
+                                            : 0;
+            ASFW_LOG(FCP, "AR Req tCode=0x1: srcID=0x%04x destOffset=0x%012llx payloadLen=%zu",
+                     packet.sourceID, destOffset, packet.payload.size());
+
             if (sbp2Manager && packet.header.size() >= 16 && !packet.payload.empty()) {
-                const uint64_t destOffset = ASFW::Async::ExtractDestOffset(packet.header);
                 const auto sbp2Result =
                     sbp2Manager->ApplyRemoteWrite(destOffset, packet.payload);
                 if (sbp2Result != ASFW::Async::ResponseCode::AddressError) {
+                    ASFW_LOG(FCP, "  → handled by SBP2 (result=%d)", static_cast<int>(sbp2Result));
                     return sbp2Result;
                 }
             }
@@ -187,16 +193,19 @@ void DriverWiring::EnsureSbp2Deps(::ServiceContext& ctx) {
             if (fcpRouter) {
                 const ASFW::Protocols::Ports::BlockWriteRequestView request{
                     .sourceID = packet.sourceID,
-                    .destOffset = ASFW::Async::ExtractDestOffset(packet.header),
+                    .destOffset = destOffset,
                     .payload = packet.payload,
                 };
                 const auto disposition = fcpRouter->RouteBlockWrite(request);
                 if (disposition == ASFW::Protocols::Ports::BlockWriteDisposition::kAddressError) {
+                    ASFW_LOG(FCP, "  → FCPRouter: AddressError (destOffset mismatch)");
                     return ASFW::Async::ResponseCode::AddressError;
                 }
+                ASFW_LOG(FCP, "  → FCPRouter: accepted");
                 return ASFW::Async::ResponseCode::Complete;
             }
 
+            ASFW_LOG(FCP, "  → no handler (sbp2+fcp both miss)");
             return ASFW::Async::ResponseCode::AddressError;
         });
 

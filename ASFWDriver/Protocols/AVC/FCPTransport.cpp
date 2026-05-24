@@ -338,7 +338,7 @@ void FCPTransport::OnAsyncWriteComplete(Async::AsyncStatus status,
 
     if (status != Async::AsyncStatus::kSuccess) {
         ASFW_LOG_V1(FCP,
-                     "FCPTransport: Async write failed: %d",
+                     "FCPTransport: AT write FAILED (no ack): status=%d",
                      static_cast<int>(status));
 
         if (pending_->retriesLeft > 0) {
@@ -357,6 +357,9 @@ void FCPTransport::OnAsyncWriteComplete(Async::AsyncStatus status,
         CompleteCommand(FCPStatus::kTransportError, {});
         return;
     }
+
+    // AT write succeeded (ack_complete from remote) — now waiting for FCP response
+    ASFW_LOG_V1(FCP, "FCPTransport: AT write ack'd by MOTU (kSuccess) — waiting for FCP response Block Write");
 
     IOLockUnlock(lock_);
 }

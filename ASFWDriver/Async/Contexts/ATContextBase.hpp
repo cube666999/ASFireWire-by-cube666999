@@ -767,56 +767,73 @@ std::optional<TxCompletion> ATContextBase<Derived, Tag>::ScanCompletion() noexce
             // Detection: If CommandPtr has advanced past this descriptor, it's orphaned.
             // Hardware processes descriptors sequentially via branch_address linkage.
             // If CommandPtr > head descriptor's IOVA, the head descriptor was skipped.
-            
+
             const uint32_t commandPtr = this->ReadCommandPtr();
             const uint32_t headIOVA = ring_->CommandPtrWordTo(desc, 0) & 0xFFFFFFF0u;
             const uint32_t commandPtrAddr = commandPtr & 0xFFFFFFF0u;
-            
+
             // Check if CommandPtr has moved beyond head (orphaned descriptor)
             // OR if context is idle (CommandPtr == 0 or context not running)
             const uint32_t controlReg = this->ReadControl();
             const bool isRunning = (controlReg & kContextControlRunBit) != 0;
             const bool isActive = (controlReg & kContextControlActiveBit) != 0;
-            
+
+            // PATH1 no-branch completed: OHCI processed all descriptors and cleared CommandPtr.
+            // RUN bit stays set (software hasn't cleared it yet), Active bit clears, CommandPtr=0.
+            // The look-ahead above may have missed OUTPUT_LAST's xferStatus due to PCIe ordering.
+            // We must advance past any OUTPUT_MORE precursor and let the loop reach OUTPUT_LAST.
+            const bool completedAndIdle = (isRunning && !isActive && commandPtrAddr == 0);
+
             // Descriptor is orphaned if:
             // 1. Context is not running/active (hardware bypassed this descriptor), OR
-            // 2. CommandPtr has moved past this descriptor
+            // 2. CommandPtr has moved past this descriptor, OR
+            // 3. PATH1 no-branch completed (OHCI done, xferStatus may not yet be visible via look-ahead)
             const bool isOrphaned = (!isRunning && !isActive) ||
-                                    (commandPtrAddr != headIOVA && commandPtrAddr != 0);
-            
+                                    (commandPtrAddr != headIOVA && commandPtrAddr != 0) ||
+                                    completedAndIdle;
+
             if (isOrphaned) {
                 // Skip orphaned descriptor by advancing head
                 ASFW_LOG_V3(Async,
-                         "ScanCompletion: Skipping ORPHANED descriptor at head=%zu (cmdPtr=0x%08x headIOVA=0x%08x run=%d active=%d)",
-                         headIndex, commandPtrAddr, headIOVA, isRunning ? 1 : 0, isActive ? 1 : 0);
-                
+                         "ScanCompletion: Skipping ORPHANED descriptor at head=%zu (cmdPtr=0x%08x headIOVA=0x%08x run=%d active=%d completedAndIdle=%d)",
+                         headIndex, commandPtrAddr, headIOVA, isRunning ? 1 : 0, isActive ? 1 : 0, completedAndIdle ? 1 : 0);
+
                 // Clear the descriptor status and advance head (like Apple's deferred completion)
                 const bool isImm = HW::IsImmediate(*desc);
                 const uint8_t blocks = isImm ? 2 : 1;
-                
+
                 for (uint8_t i = 0; i < blocks; ++i) {
                     const size_t clearIndex = (headIndex + i) % ring_->Capacity();
                     HW::OHCIDescriptor* clearDesc = ring_->At(clearIndex);
                     if (clearDesc) {
                         ClearDescriptorStatus(*clearDesc);
                         if (dmaManager_) {
-                            const size_t flushSize = HW::IsImmediate(*clearDesc) 
+                            const size_t flushSize = HW::IsImmediate(*clearDesc)
                                 ? sizeof(HW::OHCIDescriptorImmediate) : sizeof(HW::OHCIDescriptor);
                             dmaManager_->PublishRange(clearDesc, flushSize);
                         }
                     }
                 }
-                
+
                 const size_t newHead = (headIndex + blocks) % ring_->Capacity();
                 ring_->SetHead(newHead);
-                ASFW_LOG_V3(Async, "ScanCompletion: head %zu→%zu (ORPHANED, %u blocks)", headIndex, newHead, blocks);
-                
+                ASFW_LOG_V3(Async, "ScanCompletion: head %zu→%zu (ORPHANED, %u blocks, completedAndIdle=%d)",
+                            headIndex, newHead, blocks, completedAndIdle ? 1 : 0);
+
+                // PATH1 no-branch completed at an OUTPUT_MORE precursor:
+                // OUTPUT_LAST is now at HEAD — loop back to process it directly.
+                // This avoids a missed completion when xferStatus was not yet visible
+                // via the look-ahead (PCIe write ordering on ARM64).
+                if (completedAndIdle && cmd != HW::OHCIDescriptor::kCmdOutputLast) {
+                    continue;  // lock still held — next iteration processes OUTPUT_LAST
+                }
+
                 unlock();
                 // Return a synthetic completion with evt_no_status for orphaned descriptors
                 // This signals to caller that descriptor was cleaned up but had no real completion
                 return std::nullopt;  // Caller should loop to check next descriptor
             }
-            
+
             // Not orphaned - hardware is still processing, return without advancing
             unlock();
             return std::nullopt;

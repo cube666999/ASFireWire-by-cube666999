@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Build-time entitlements: DriverKit userclient-access omitted.
+	     Xcode 26 requires a provisioning profile for com.apple.developer.driverkit.userclient-access
+	     even for ad-hoc/Automatic signing. We omit it here so the build succeeds;
+	     resign.sh re-signs the installed dext with App.entitlements (full entitlements)
+	     after each build. amfi_get_out_of_my_way=1 boot-arg bypasses runtime entitlement validation. -->
+	<key>com.apple.security.app-sandbox</key>
+	<false/>
+	<key>com.apple.developer.system-extension.install</key>
+	<true/>
+</dict>
+</plist>

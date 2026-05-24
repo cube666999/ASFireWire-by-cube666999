@@ -119,6 +119,9 @@ struct PlugChannelSummary {
 
 /// 1394 Trade Association spec ID (24-bit)
 constexpr uint32_t kAVCSpecID = 0x00A02D;
+
+/// Vendor IDs known to respond to AV/C FCP despite using their own Spec ID in Config ROM
+constexpr uint32_t kMOTUVendorID = 0x0001F2;
 constexpr uint32_t kDuetPrefetchTimeoutMs = 1200;
 constexpr uint32_t kClassIdPhantomPower = static_cast<uint32_t>('phan');
 constexpr uint32_t kClassIdPhaseInvert = static_cast<uint32_t>('phsi');
@@ -1054,10 +1057,23 @@ bool AVCDiscovery::IsAVCUnit(std::shared_ptr<Discovery::FWUnit> unit) const {
         return false;
     }
 
-    // Check unit spec ID (24-bit, should be 0x00A02D for AV/C)
+    // Check unit spec ID (24-bit, standard AV/C spec ID from 1394 TA)
     uint32_t specID = unit->GetUnitSpecID() & 0xFFFFFF;
+    if (specID == kAVCSpecID) {
+        return true;
+    }
 
-    return specID == kAVCSpecID;
+    // Some vendors use their own OUI as Spec ID but still respond to AV/C FCP.
+    // Probe these by vendor ID — FCP SUBUNIT_INFO will confirm AV/C support.
+    auto device = unit->GetDevice();
+    if (device) {
+        uint32_t vendorID = device->GetVendorID() & 0xFFFFFF;
+        if (vendorID == kMOTUVendorID) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 bool AVCDiscovery::IsApogeeDuet(const Discovery::FWDevice& device) const noexcept {

@@ -540,7 +540,15 @@ kern_return_t ControllerCore::InitialiseHardware(IOService* provider) {
     hw.SetLinkControlBits(ASFW::Driver::kDefaultLinkControl);
     ASFW_LOG(Hardware,
              "LinkControl: rcvSelfID | rcvPhyPkt | cycleTimerEnable (cycleMaster deferred)");
-    hw.WriteAndFlush(Register32::kAsReqFilterHiSet, ASFW::Driver::kAsReqAcceptAllMask);
+    // Accept async requests from all nodes (0-63): HiSet=nodes 32-63, LoSet=nodes 0-31.
+    hw.WriteAndFlush(Register32::kAsReqFilterHiSet, 0xFFFFFFFFu);
+    hw.WriteAndFlush(Register32::kAsReqFilterLoSet, 0xFFFFFFFFu);
+    {
+        const uint32_t asReqHi = hw.Read(Register32::kAsReqFilterHiSet);
+        const uint32_t asReqLo = hw.Read(Register32::kAsReqFilterLoSet);
+        ASFW_LOG(Hardware, "ASReqFilter init readback: HiSet=0x%08X LoSet=0x%08X (expected 0xFFFFFFFF)",
+                 asReqHi, asReqLo);
+    }
 
     // Build full 32-bit value explicitly per OHCI spec:
     // [31:24]=reserved(0), [23:16]=cycleLimit, [15:8]=maxPhys, [7:4]=maxResp, [3:0]=maxReq

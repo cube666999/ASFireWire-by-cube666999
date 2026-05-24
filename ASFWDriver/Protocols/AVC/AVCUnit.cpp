@@ -179,6 +179,24 @@ void AVCUnit::ProbeSubunits(std::function<void(bool)> completion) {
         // Store subunit info
         StoreSubunitInfo(info);
 
+        // Some vendors (e.g. MOTU) respond to SUBUNIT_INFO with all-0xFF (no subunits
+        // declared) despite implementing AV/C Music Subunit in firmware.
+        // Synthesize a Music Subunit for known vendors that behave this way.
+        if (subunits_.empty()) {
+            auto device = device_.lock();
+            if (device) {
+                uint32_t vendorID = device->GetVendorID() & 0xFFFFFF;
+                constexpr uint32_t kMOTUVendorID = 0x0001F2;
+                if (vendorID == kMOTUVendorID) {
+                    ASFW_LOG_V1(AVC,
+                        "AVCUnit: MOTU device reports no subunits via SUBUNIT_INFO — "
+                        "synthesizing Music Subunit (vendorID=0x%06x)", vendorID);
+                    subunits_.push_back(
+                        std::make_shared<Music::MusicSubunit>(AVCSubunitType::kMusic0C, 0));
+                }
+            }
+        }
+
         ASFW_LOG_V1(AVC, "AVCUnit: Found %zu subunits", subunits_.size());
 
         // Now parse capabilities for each subunit
