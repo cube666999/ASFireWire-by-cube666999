@@ -1,229 +1,127 @@
-# MOTU 828 MK3 — Analiza ścieżki bring-up audio
+# MOTU 828 MK3 — Bring-up audio (V3 Protocol)
 
-> **Etap 4 Focus.md** — Ustalenie co musi się wydarzyć żeby MOTU 828 MK3 zaczął streamować audio przez ASFireWire na Tahoe.
->
-> Data analizy: maj 2026. Autor: Etap 4 sesji ASFireWire.
-
----
-
-## 1. Wymagana sekwencja bring-up
-
-Poniżej pełna sekwencja zdarzeń, krok po kroku, wymagana przez IEEE 1394 + IEC 61883-1 + AV/C (TA 1999027):
-
-```
-[Boot / Bus Reset]
-  │
-  ▼
-1. Self-ID + Topology                    ✅ zaimplementowane (OHCI init, BusManager)
-2. Config ROM scan                        ✅ zaimplementowane (ROMScanner FSM)
-3. AV/C: UNIT INFO                       ✅ zaimplementowane (AVCUnit::ProbeSubunits)
-4. AV/C: SUBUNIT INFO                    ✅ zaimplementowane (AVCUnit::ProbeSubunits)
-5. AV/C: MUSIC SUBUNIT capabilities      ✅ zaimplementowane (MusicSubunit probe)
-6. AV/C: PLUG INFO (unit plugs)          ✅ zaimplementowane (AVCUnit::ProbePlugs)
-7. AV/C: EXTENDED STREAM FORMAT          ✅ zaimplementowane (StreamFormatParser)
-8. AV/C: SET INPUT PLUG SIGNAL FORMAT    ✅ zaimplementowane (AVCDiscovery, opcode 0x19)
-
-[CoreAudio StartIO — AVCAudioBackend::StartStreaming]
-  │
-  ▼
-9.  IRM: AllocateResources(ch, bw)       ❌ BRAK — kanały hardcoded 0/1
-10. CMP: ConnectOPCR(0, channel=N)       ⚠️  p2p inkrementowany, ale ch NIE pisany do oPCR
-11. IR:  IsochReceiveContext::Configure  ✅ zaimplementowane, ale z hardcoded ch=0
-12. IR:  IsochReceiveContext::Start()    ✅ zaimplementowane
-13. IT:  IsochTransmitContext::Configure ✅ zaimplementowane, ale z hardcoded ch=1
-14. IT:  IsochTransmitContext::Start()   ✅ zaimplementowane
-15. CMP: ConnectIPCR(0, channel=M)       ✅ zaimplementowane (ch=1 hardcoded)
-```
+> Zaktualizowano: 2026-05-24. Poprzednia wersja tego dokumentu (AV/C/FCP/CMP) jest
+> **nieaktualna i błędna** — MOTU 828 MK3 nie implementuje FCP mimo deklarowania AV/C
+> w Config ROM. Właściwe podejście: **V3 register protocol** (patrz niżej).
 
 ---
 
-## 2. Co jest zaimplementowane ✅
+## Kluczowe odkrycie
 
-### AV/C Discovery (`AVCDiscovery.cpp`)
-- UNIT INFO / SUBUNIT INFO / plug scan działa
-- Sample rate switch: opcode 0x19 (INPUT PLUG SIGNAL FORMAT) na poziomie unit (subunit=0xFF), operand 0x90/0x02 = AM824 48kHz
-- `MusicSubunitCapabilities::GetAudioDeviceConfiguration()` poprawnie mapuje kanały
-- `AVCAudioBackend` jest tworzony i ma `SetCMPClient(...)` — CMP jest podłączony
+MOTU 828 MK3 używa **własnego protokołu rejestrowego V3** opartego na async quadlet
+read/write (tCode=0x0). Brak AV/C, FCP, CMP.
 
-### IRM Client (`IRMClient.cpp`)
-- `AllocateResources(channel, bw, callback)` — pełna implementacja z CAS na `CHANNELS_AVAILABLE` (0xFFFF F000 0218) i `BANDWIDTH_AVAILABLE` (0xFFFF F000 0220) na węźle IRM
-- `ReleaseResources(channel, bw, callback)` — symetrycznie zaimplementowane
-- IRM node jest ustawiany po topology scan przez `ControllerCore`
+Źródła:
+- Linux kernel `sound/firewire/motu/motu-protocol-v3.c`
+- Linux kernel `sound/firewire/motu/motu-stream.c`
+- Disassembly `/Library/Extensions/MOTUFireWireAudio.kext` (x86_64, Sequoia)
 
-### CMP Client (`CMPClient.cpp`)
-- `ConnectOPCR(plug, callback)` — read → check online → CAS p2p+1
-- `ConnectIPCR(plug, channel, callback)` — read → check online → CAS p2p+1 + set channel
-- `DisconnectOPCR/DisconnectIPCR` — symetrycznie zaimplementowane
-- `ReadOPCR(plug, callback)` — dostępne do read-back
-
-### IsochReceiveContext
-- `Configure(channel, contextIndex)` — ustawia `ContextMatch = 0xF0000000 | (channel & 0x3F)`, wzywa `audio_.ConfigureFor48k()`, buduje DMA ring
-- `Start()` — wpisuje `CommandPtr`, ustawia `ContextControlSet = kRun | kIsochHeader`, włącza IR interrupt mask
-- `Poll()` — przetwarza zakończone deskryptory, wywołuje `OnPacket`
-
-### AVCAudioBackend::StartStreaming (sekwencja)
-- Poprawna kolejność operacji: StartReceive → ConnectOPCR (sync) → StartTransmit → ConnectIPCR (sync)
-- Poprawny teardown w razie błędu (StopReceive + DisconnectOPCR)
-- SYT clock gate w StartTransmit (czeka max 500ms na ExternalSyncBridge)
+Implementacja: `ASFWDriver/Audio/Backends/MOTUAudioBackend.cpp`
 
 ---
 
-## 3. Zidentyfikowane gapy ❌
+## Mapa rejestrów V3 (baza: 0xfffff0000000)
 
-### GAP 1 — IRM nie jest wywoływany (krytyczny)
+| Offset | Rejestr | Opis |
+|--------|---------|------|
+| `0x0b00` | ISOC_COMM_CONTROL | Aktywacja kanałów RX/TX isoch |
+| `0x0b10` | PACKET_FORMAT | Prędkość TX (S400) + exclude differed |
+| `0x0b14` | CLOCK_STATUS | Rate code [10:8], FETCH_PCM_FRAMES bit27 |
 
-**Plik:** `ASFWDriver/Audio/Backends/AVCAudioBackend.cpp`, `AVCAudioBackend.hpp`
+### CLOCK_STATUS (0x0b14) — bit layout
 
-`AVCAudioBackend` nie ma pola `IRMClient*`. Klasa ma tylko `CMPClient*` (wstrzyknięty przez `SetCMPClient`). W `StartStreaming` kanały są hardcoded:
+| Bity | Stała | Wartość | Znaczenie |
+|------|-------|---------|-----------|
+| [10:8] | `kClockRateMask = 0x00000700` | 0x02 = 48kHz | Aktualny sample rate |
+| [27] | `kFetchPCMFrames = 0x02000000` | 1 = aktywny | Streaming aktywny |
 
-```cpp
-constexpr uint8_t kDefaultIrChannel = 0;   // hardcoded
-constexpr uint8_t kDefaultItChannel = 1;   // hardcoded
-```
+> ⚠️ `kClockRateMask = 0x00000700` (NIE `0x0000ff00`) — potwierdzone przez kext: `andl $0x700`
 
-`IRMClient::AllocateResources` nigdy nie jest wywołane. Skutki:
-- Naruszenie IEEE 1394 (pasmo nie jest rezerwowane)
-- Jeśli inny węzeł na magistrali zajął kanał 0, MOTU i tak nadaje na 0 → kolizja
-- Przy starcie CoreAudio na MOTU, który sam wybrał inny kanał (np. po reset), kontekst IR słucha na złym kanale
+### PACKET_FORMAT (0x0b10) — bit layout
 
-**Wymagana poprawka:**
-1. Dodaj `IRMClient* irmClient_{nullptr}` + `SetIRMClient(IRMClient*)` do `AVCAudioBackend`
-2. Przed `StartReceive` wywołaj `irmClient_->AllocateResources(channel, bandwidth, callback)` asynchronicznie
-3. Przekaż rzeczywisty kanał z IRM do `StartReceive` i `ConnectOPCR`
+| Bit | Stała | Wartość |
+|-----|-------|---------|
+| 7 | `kTxExcludeDiffered = 0x00000080` | zawsze 1 |
+| 6 | `kRxExcludeDiffered = 0x00000040` | zawsze 1 |
+| [1:0] | `kSpeedS400 = 0x02` | S400 |
 
-Bandwidth dla 48kHz AM824 S400 (MOTU 828 MK3, 18 kanałów):
-```
-syt_interval = 8 (48kHz non-blocking)
-dbs = 18 (16 audio + 2 midi/reserved slots)
-isoch_payload = syt_interval * dbs * 4 = 8 * 18 * 4 = 576 bytes
-// IEC 61883-1 §B.2:
-bandwidth_units = ceil((32 + 576) * 8 / (0.0491775 * 1600)) ≈ 146 units  (S400)
-// Praktycznie: Apple używa ~146 units dla stereo 48kHz, skaluj proporcjonalnie do kanałów
-```
+Wartość do zapisu: `0xC2` = `0x80 | 0x40 | 0x02` ✅ potwierdzono w kexcie
 
----
+### ISOC_COMM_CONTROL (0x0b00) — bit layout
 
-### GAP 2 — ConnectOPCR nie wpisuje kanału do oPCR (krytyczny)
-
-**Plik:** `ASFWDriver/Protocols/AVC/CMP/CMPClient.cpp`, linia 149-158
-
-```cpp
-void CMPClient::ConnectOPCR(uint8_t plugNum, CMPCallback callback) {
-    // ...
-    PerformConnect(PCRRegisters::GetOPCRAddress(plugNum), plugNum,
-                   std::nullopt,   // ← channel NOT written!
-                   callback);
-}
-```
-
-Per IEC 61883-1 §10.4.2, przy p2p connection do oPCR, kontroler MUSI napisać numer kanału do pola `channel[5:0]` w tym samym CAS który inkrementuje `p2p_connection_count`. Bez tego:
-- MOTU widzi p2p=1 (connection established)
-- Ale pole `channel` w oPCR = cokolwiek co device miał domyślnie (zazwyczaj 63 = unallocated lub ostatnia wartość)
-- Kontekst IR słucha na kanale 0 (hardcoded), MOTU nadaje na innym → brak pakietów
-
-Dla porównania: `ConnectIPCR` **robi to poprawnie** (bierze `channel` i pisze do iPCR).
-
-**Wymagana poprawka:**
-```cpp
-// Dodaj przeciążenie lub zmień sygnaturę:
-void CMPClient::ConnectOPCR(uint8_t plugNum, uint8_t channel, CMPCallback callback);
-// → PerformConnect(..., setChannel = channel, ...)
-```
+| Bity | Znaczenie |
+|------|-----------|
+| 31 | Change RX isoch state |
+| 30 | RX isoch activated |
+| [29:24] | RX channel number |
+| 23 | Change TX isoch state |
+| 22 | TX isoch activated |
+| [21:16] | TX channel number |
 
 ---
 
-### GAP 3 — Brak read-back kanału z oPCR po connect
+## Sekwencja StartStreaming (MOTUAudioBackend)
 
-**Plik:** `ASFWDriver/Audio/Backends/AVCAudioBackend.cpp`
+Odpowiednik Linux `begin_session` + `switch_fetching_mode`:
 
-Po `ConnectOPCR` kanał w oPCR powinien być odczytany z powrotem i użyty do konfiguracji IR context. Prawidłowy flow (per Apple IOFireWireAVC):
 ```
-AllocateIRMChannel(N)
-ConnectOPCR(plug=0, channel=N)   ← pisze N do oPCR
-ReadOPCR(plug=0)                  ← potwierdza że N jest w oPCR
-IsochReceiveContext::Configure(channel=N, ...)
+1. ReadRegister(0x0b14)               → odczyt CLOCK_STATUS (log rate code)
+2. IRM AllocateResources(irCh, itCh)  → rezerwacja kanałów + bandwidth
+3. WriteRegister(0x0b10, 0xC2)        → PACKET_FORMAT: S400 + exclude differed
+4. isoch_.StartReceive(irCh)          → start IR OHCI DMA
+5. isoch_.StartTransmit(itCh)         → start IT OHCI DMA
+6. ReadModifyWrite(0x0b00)            → ISOC_COMM_CONTROL: aktywuj oba kanały
+7. ReadModifyWrite(0x0b14)            → CLOCK_STATUS: ustaw FETCH_PCM_FRAMES
 ```
 
-Obecnie `StartReceive(kDefaultIrChannel=0)` jest wywołany **przed** `ConnectOPCR`, i używa hardcoded 0. To zbieg okoliczności jeśli zadziała.
+**Wszystkie operacje = quadlet write (tCode=0x0)** — inny code path niż FCP block write
+(tCode=0x1). `WriteQuad(length=4)` → `WriteCommand` automatycznie wybiera tCode=0x0.
 
 ---
 
-### GAP 4 — opcode 0x19 vs 0x18 dla MOTU RX path
+## Identyfikacja urządzenia w Config ROM
 
-**Plik:** `ASFWDriver/Protocols/AVC/AVCDiscovery.cpp`, linia ~449
+MOTU NIE wstawia modelu do root directory. Prawidłowe pole:
 
-```cpp
-cdb.opcode = 0x19;   // INPUT PLUG SIGNAL FORMAT — DEVICE RECEIVES from host (TX path)
-```
+| Pole ROM | Klucz | Wartość dla 828 MK3 |
+|----------|-------|---------------------|
+| Root dir `Model` | 0x17 | `0x106800` (ignoruj!) |
+| Unit dir `Unit_SW_Vers` | 0x13 | `0x000015` ← to jest model ID |
+| GUID | — | `0x1F20000087236` |
 
-Opcode 0x19 = `INPUT PLUG SIGNAL FORMAT` = format na wejściu urządzenia (co przyjmuje od hosta).
-Opcode 0x18 = `OUTPUT PLUG SIGNAL FORMAT` = format na wyjściu urządzenia (co wysyła do hosta = nasze RX).
+Fix: `DeviceProtocolFactory::EffectiveModelId()` dla vendor `0x0001F2` zwraca
+`unitSwVersion` zamiast `rootModelId`. Commit `abc75ea`.
 
-Większość urządzeń (w tym MOTU 828 MK3 na Apple stack) mirroruje oba przy zmianie jednego. Ale jeśli MOTU nie zaczyna nadawać po CMP connect, warto sprawdzić czy wysłanie 0x18 na unit output plug 0 z tym samym operandem zmienia sytuację.
+### Obsługiwane modele MOTU (vendor 0x0001F2)
 
-Nie jest to bloker — niskie prawdopodobieństwo problemu z MOTU.
-
----
-
-### GAP 5 — IRMClient nie jest wstrzykiwany do AVCAudioBackend
-
-**Plik:** `ASFWDriver/Audio/Backends/AVCAudioBackend.hpp`
-
-`AVCAudioBackend` ma `SetCMPClient(CMPClient*)` ale nie ma odpowiednika dla `IRMClient`. Nawet gdyby chcieć dodać IRM allocation, nie ma ścieżki injection. Dla porównania: `DiceAudioBackend` nie ma też IRM (używa hardcoded kanałów 0/1 w tej samej przestrzeni problemowej).
-
----
-
-## 4. Kolejność naprawy
-
-| # | Gap | Trudność | Bloker? |
-|---|-----|----------|---------|
-| 1 | `ConnectOPCR` bez channel | Mała — dodać parametr + testy | **TAK** |
-| 2 | IRM allocation missing | Średnia — wstrzyknąć IRMClient, async flow | **TAK** |
-| 3 | Read-back oPCR po connect | Mała — ReadOPCR callback chain | Tak (precyzja) |
-| 4 | StartReceive przed ConnectOPCR | Refactor kolejności | Nie (SYT gate je rozdziela) |
-| 5 | opcode 0x18 dla output plug | Mała — opcjonalny dodatkowy AVC command | Nie |
+| Model | Unit_SW_Vers | Backend |
+|-------|-------------|---------|
+| 828 MK3 FW | 0x000015 | `kMOTUV3` |
+| 828 MK3 Hybrid | 0x000035 | `kMOTUV3` |
+| 896 MK3 | 0x000016 | `kMOTUV3` |
+| Traveler MK3 | 0x000017 | `kMOTUV3` |
+| UltraLite MK3 | 0x000019 | `kMOTUV3` |
 
 ---
 
-## 5. Proponowany poprawiony flow w AVCAudioBackend::StartStreaming
+## Weryfikacja vs kext MOTU (Sequoia, x86_64)
 
-```
-1. AllocateResources(ch=auto, bw=146*ratio) →async→ callback z ch
-2. StartReceive(ch)          ← IR context konfiguruje się na ch
-3. ConnectOPCR(0, ch)        ← oPCR[0].channel = ch, p2p++
-4. ReadOPCR(0)               ← potwierdzenie (optional)
-5. [SYT clock gate]
-6. StartTransmit(ch+1)       ← IT na kanale ch+1 (też z IRM)
-7. ConnectIPCR(0, ch+1)      ← iPCR[0].channel = ch+1, p2p++
-```
+Wszystkie stałe potwierdzone przez disassembly `MOTUFireWireAudio.kext`:
 
-Teardown (odwrotna kolejność):
-```
-DisconnectIPCR → StopTransmit → DisconnectOPCR → StopReceive → ReleaseResources
-```
+| Stała | Wartość kext | Nasza wartość | Status |
+|-------|-------------|---------------|--------|
+| CLOCK_STATUS addr | `0xf0000b14` (LE w `__DATA __const`) | `kClockStatusOff = 0x0b14` | ✅ |
+| FETCH_PCM_FRAMES | `0x02000000` (data table word[1]) | `kFetchPCMFrames = 0x02000000` | ✅ |
+| Rate mask | `andl $0x700` | `kClockRateMask = 0x00000700` | ✅ |
+| PACKET_FORMAT addr | `0xf0000b10` | `kPacketFmtOff = 0x0b10` | ✅ |
+| PACKET_FORMAT value | `0xC2` | `0xC2` | ✅ |
+| ISOC_COMM_CONTROL addr | `0xf0000b00` | `kIsocCtrlOff = 0x0b00` | ✅ |
 
 ---
 
-## 6. MOTU 828 MK3 — identyfikacja urządzenia
+## Czego NIE robić z MOTU
 
-Brak wpisu MOTU w codebase. Vendory MOTU do dodania w quirks gdy potrzeba:
-
-| Parametr | Wartość |
-|----------|---------|
-| Vendor ID | `0x0001F2` (MOTU — Mark of the Unicorn) |
-| Model ID 828 MK3 | sprawdzić z `dmesg`/FireBug na Sequoia |
-| Spec ID | `0x00A02D` (standardowy AV/C) |
-| Stream mode | `kNonBlocking` (standard IEC 61883-6, 8 samples/packet @ 48kHz) |
-
-Brak MOTU quirka oznacza że urządzenie będzie traktowane jako generyczny AV/C — co jest prawidłowe.
-
----
-
-## 7. Podsumowanie — co zrobić żeby MOTU zagrał
-
-**Minimalne poprawki (2 pliki):**
-
-1. **`CMPClient::ConnectOPCR`** — dodać parametr `uint8_t channel`, przekazać do `PerformConnect` jako `setChannel`
-2. **`AVCAudioBackend`** — dodać `IRMClient* irmClient_` + `SetIRMClient`, wywołać `AllocateResources` przed `StartReceive`, przekazać kanał dynamicznie zamiast hardcoded 0/1
-
-Po tych poprawkach sekwencja będzie spec-compliant i MOTU powinien zacząć nadawać na właściwym kanale.
+- ❌ NIE wysyłaj FCP commands (MOTU ignoruje FCP mimo AV/C w Config ROM)
+- ❌ NIE używaj CMP (`ConnectOPCR`/`ConnectIPCR`) — zbędne dla V3
+- ❌ NIE próbuj AV/C UNIT INFO / SUBUNIT INFO — timeout
+- ❌ NIE używaj `AVCAudioBackend` dla MOTU — to jest backend dla innych urządzeń
