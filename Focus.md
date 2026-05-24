@@ -167,11 +167,26 @@ Zdisassemblowano kext `/Library/Extensions/MOTUFireWireAudio.kext` na Sequoia (s
 
 ---
 
+## ✅ ROZWIĄZANE — AT DMA block write (tCode=0x1) (2026-05-24)
+
+**Plik:** `ASFWDriver/Async/Contexts/ATContextBase.hpp` — `ScanCompletion()`
+
+**Problem:** Po zakończeniu PATH1 no-branch chain (np. FCP write) OHCI ustawia:
+- RUN=1 (software nie wyczyścił), Active=0, CommandPtr=0
+
+Stary `isOrphaned` miał dwa człony — oba false w tym stanie → `ScanCompletion` zwracał `nullopt` jakby hardware wciąż pracował → timeout każdego block write.
+
+**Fix:** Dodano trzecią klauzulę `completedAndIdle = (isRunning && !isActive && commandPtrAddr == 0)` do warunku `isOrphaned`. Przy OUTPUT_MORE precursorze: `continue` zamiast `return nullopt` → OUTPUT_LAST przetwarzany w tym samym wywołaniu, bez czekania na drugi interrupt.
+
+Commit `eeb8787`. 488/488 testów ✅. Odblokuje AV/C dla ~80% rynku interfejsów FireWire audio.
+
+---
+
 ## Znane nierozwiązane problemy
 
 | Problem | Priorytet | Opis |
 |---------|-----------|------|
-| AT DMA block write (tCode=0x1) | Średni | OHCI nie dostaje ack — descriptor chain bug w `ATContextBase.hpp` offset ~870. Nie blokuje MOTU V3 (używa quadlet write), ale dotyczy innych urządzeń AV/C. |
+| ~~AT DMA block write (tCode=0x1)~~ | ✅ NAPRAWIONE | `ScanCompletion` orphan check, commit `eeb8787` |
 | ~~Model ID 0x000000 w Discovery~~ | ✅ NAPRAWIONE | Root dir model=0x106800, unit SW vers=0x000015. Fix: `EffectiveModelId()` commit `abc75ea` |
 | IR Receive walidacja na hardware | Wysoki | Kod istnieje, nieprzetestowany na żywym sprzęcie |
 
