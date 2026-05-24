@@ -249,6 +249,17 @@ Dotykaj tylko tego, co musisz: - Nie „poprawiaj" sąsiedniego kodu bez pytania
 
 Gdy Twoje zmiany tworzą „osierocone" elementy: - Usuń importy/zmienne/funkcje, które stały się nieużywane przez Twoje zmiany - Nie usuwaj sam wcześniej istniejącego martwego kodu (Poinformuj o nim wyraźnie), usuń wtedy gdy zostaniesz o to poproszony
 
+## Git — zasady push
+
+Repozytorium ma dwa remote:
+- `origin` = `mrmidi/ASFireWire.git` — **NIE należy do użytkownika**, brak uprawnień do push
+- `cube666` = `cube666999/ASFireWire-by-cube666999.git` — **fork użytkownika**, tu pushujemy
+
+**ZAWSZE przed pushem:**
+1. Sprawdź `git remote -v`
+2. Używaj jawnie: `git push cube666 main`
+3. Nigdy nie używaj samego `git push` (domyślnie trafia na `origin` = brak uprawnień)
+
 
 ## ✅ DEXT DZIAŁA — Status po sesjach debugowania (2026-05-18)
 
