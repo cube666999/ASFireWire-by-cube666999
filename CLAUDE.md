@@ -345,15 +345,50 @@ Przy ponownym uruchomieniu apki (gdy dext już jest [activated enabled]), `activ
 
 ## Related Documents
 
+### Dokumenty projektowe (czytaj jako pierwsze)
+
 | Plik | Zawartość |
 |------|-----------|
-| `Focus.md` | **Aktywny plan pracy** — bieżący stan, etap 10 (MOTU V3), instrukcja hardware testu |
+| `Focus.md` | **Aktywny plan pracy** — bieżący stan, etap 10 (MOTU V3), instrukcja hardware testu, lista rozwiązanych bugów |
 | `DevLog.md` | Archiwum ukończonych etapów 1–9, logi sesji debugowania, szczegóły signing/build |
-| `MOTU_828_MK3_BringUp.md` | Analiza pełnej ścieżki bring-up MOTU 828 MK3 |
+| `MOTU_828_MK3_BringUp.md` | **V3 register protocol** — mapa rejestrów, sekwencja StartStreaming, weryfikacja vs kext, czego NIE robić z MOTU |
 | `CHANGES.md` | Changelog forka cube666999, link do GitHub |
-| `AGENTS.md` | Dodatkowy przewodnik dla AI assistants (architektura, wzorce) |
-| `REFACTOR_THOUGHTS.md` | Propozycje refaktoringu (żaden niezaimplementowany) |
 | `README.md` | Ogólny opis projektu |
+| `AGENTS.md` | Przewodnik dla AI assistants — architektura, wzorce, zasady |
+| `REFACTOR_THOUGHTS.md` | Propozycje refaktoringu (żaden niezaimplementowany — tylko notatki) |
+
+### Dokumentacja techniczna (`documentation/`)
+
+| Plik | Zawartość |
+|------|-----------|
+| `documentation/FWOHCI_IR.md` | Architektura IR (Isoch Receive) z dekompilacji Apple AppleFWOHCI — jak Apple implementuje DMA ring dla IR |
+| `documentation/IRM_EXPLAINED.md` | Trace IRM protocol krok po kroku — jak Mac rezerwuje kanał i bandwidth (CAS na CHANNELS_AVAILABLE) |
+| `documentation/COMPLETION_STRATEGIES.md` | Strategie completion dla AT async stack — kiedy sygnalizować finalizację |
+| `documentation/ASYNC_COMPARE_SWAP.md` | Pełny flow CAS (tCode=0x2) — entry points, packet construction, completion |
+| `documentation/ASYNC_READ_API.md` | Dokumentacja async read API |
+| `documentation/PHY_COMMAND_CONTRACTS.md` | Kontrakty dla PHY commands i alpha PHY packets |
+| `documentation/ieee1394_bus_reset.md` | IEEE 1394 bus reset state machine (modernizowana dokumentacja) |
+| `documentation/ieee1394_tree_identification.md` | IEEE 1394 tree identification state machine |
+
+### Narzędzia diagnostyczne (`tools/`) — od mrmidi
+
+| Plik | Zawartość |
+|------|-----------|
+| `tools/DMA_PROGRAM_MODES.md` | **AT DMA approaches** — 5 trybów (PATH1/PATH2/LINUX/APPLE1/APPLE2), Z nibble bug, APPLE2 jako rekomendowany |
+| `tools/itprog.md` | **IT DMA ring reference** — diagram dla 48kHz blocking, Z=3 DATA / Z=2 NO-DATA, schedule [8,8,8,8,8,8,0,0] |
+
+### READMEs subsystemów
+
+| Plik | Zawartość |
+|------|-----------|
+| `ASFWDriver/README.md` | Główny przegląd sterownika — warstwy, wejścia, zależności |
+| `ASFWDriver/Bus/README.md` | Bus management — bus reset, Self-ID, topology |
+| `ASFWDriver/ConfigROM/README.md` | Config ROM subsystem — builder, stager, scanner, parser |
+| `ASFWDriver/Controller/README.md` | Controller Core — lifecycle, state machine |
+| `ASFWDriver/Isoch/README.md` | Isoch stack — IT/IR DMA, AM824, SYT, AudioDriverKit |
+| `ASFWDriver/Shared/README.md` | Shared transfer stack — rings, DMA memory manager |
+| `ASFWDriver/Async/Interfaces/IFireWireBusContract.md` | Kontrakt `IFireWireBusOps` — co musi implementować każdy bus provider |
+| `ASFWDriver/Bus/IEEE1394-BusReset.md` | Specyfikacja IEEE 1394 bus reset (lokalna kopia/notki) |
 
 ---
 
