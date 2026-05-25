@@ -8,38 +8,34 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ SESJA NA MAC STUDIO — Przeczytaj to na starcie
 
-> Jesteś na Mac Studio (macOS Tahoe). Kod jest gotowy — MOTU V3 backend zaimplementowany.
-> Poniżej co musisz wiedzieć zanim podłączysz MOTU.
->
-> **🆕 Naprawione po Sequoia-diagnostic (2026-05-25):**
-> `MOTUAudioBackend` nigdy nie dostawał konfiguracji kanałów — `OnAVCAudioConfigurationReady`
-> wywoływane tylko przez `AVCDiscovery`, który milcząco timeoutuje dla MOTU (FCP nie działa).
-> Fix: `AudioCoordinator::OnDeviceAdded` teraz bezpośrednio wstrzykuje config {in=14, out=18}
-> do `motuV3_` z pominięciem AV/C. Bez tego fixa `StartStreaming` zwracał `kIOReturnNotReady`
-> natychmiast. Wymaga rebuildu dextu.
+> **Stan na 2026-05-25 (sesja 4):**
+> - ✅ MOTU 828 MK3 pojawia się w **System Settings → Sound** jako "FireWire" — potwierdzono!
+> - ✅ CoreAudio wywołuje `StartDevice` → `StartAudioStreaming` → `MOTUAudioBackend::StartStreaming`
+> - ✅ IRM fix działa — `local-IRM CAS OK` w logach, kanały i bandwidth alokowane
+> - ✅ IR DMA startuje (OHCI context aktywny)
+> - ❌ **Aktualny bloker:** `StartTransmit timeout` — ISOC_COMM_CONTROL był pisany za późno
+> - 🔧 **Fix wdrożony:** ISOC_COMM_CONTROL przeniesiony przed `StartTransmit` (deadlock naprawiony)
+> - ⏳ **Czeka na test:** zbuduj w Xcode (Cmd+B), zainstaluj, puść muzykę, sprawdź logi
 
-### Realistyczna ocena szans
+### Stan po sesji 4
 
-| Krok | Prawdopodobieństwo |
-|------|--------------------|
-| MOTU V3 StartStreaming w logach (register writes OK) | **85–90%** ↑ (config injection fix) |
-| Urządzenie pojawia się w CoreAudio | 40–50% |
-| Słyszysz dźwięk z Maca przez MOTU (TX) | 30–40% |
-| Pełny duplex (TX + RX) | 15–20% |
+| Krok | Status |
+|------|--------|
+| MOTU pojawia się w CoreAudio / Sound Settings | ✅ **POTWIERDZONE** |
+| StartDevice wywoływane przez CoreAudio | ✅ **POTWIERDZONE** |
+| IRM alokacja (local-IRM shadow bypass) | ✅ **POTWIERDZONE** |
+| IR DMA startuje | ✅ **POTWIERDZONE** |
+| ISOC_COMM_CONTROL pisany przed StartTransmit | ✅ Fix wdrożony — **wymaga testu** |
+| StartTransmit (IT DMA) startuje | ⏳ Czeka na test po fixie |
+| Słyszysz dźwięk z Maca przez MOTU (TX) | ⏳ Czeka na test |
+| Pełny duplex (TX + RX) | ⏳ Kolejny etap |
 
-**Nie zrażaj się jeśli nie zadziała od razu — dwie sesje to realistyczny cel.**
+### Największe ryzyko które pozostało
 
-### Dwa największe ryzyka
-
-1. **`StartDevice` nie jest wywoływane przez CoreAudio** — zidentyfikowany i naprawiony
-   (sesja 2026-05-25 część 3). Dwa bugi: race condition (timer po RegisterService) + brak
-   SUPERDISPATCH w StartDevice/StopDevice. Fix wdrożony — wymaga rebuildu i retestowania.
-   Jeśli po fiksie pojawia się `super::StartDevice failed` → osobny problem HALC po stronie
-   CoreAudio; zbierz logi z `coreaudiod` i szukaj `HALC_ShellObject`.
-
-2. **Isoch IR** — kod istnieje, nigdy nie testowany na sprzęcie. MOTU V3 może nie używać
-   standardowych nagłówków CIP → `StreamProcessor`/`AM824Decoder` mogą wymagać zmian.
-   Do odtwarzania (Mac→MOTU) wystarczy sam TX. Pełny duplex wymaga działającego IR.
+**Isoch IR — format CIP** — MOTU V3 może nie używać standardowych nagłówków CIP (IEC 61883-1).
+`StreamProcessor`/`AM824Decoder` są napisane dla zgodnych strumieni. Jeśli MOTU pomija
+nagłówki CIP lub używa własnego formatu, dekodowanie PCM nie zadziała.
+Objaw: IR DMA odbiera pakiety (Total Packets > 0), ale `AM824Decoder` odrzuca je z błędem DBC/CIP.
 
 ### Uruchom to zanim podłączysz MOTU
 
@@ -141,10 +137,15 @@ MOTU nie implementuje FCP mimo deklarowania AV/C units w Config ROM.
 2. IRM AllocateResources        → kanały irCh + itCh + bandwidth
 3. WriteRegister(0x0b10, fmt)   → PACKET_FORMAT: speed S400 + exclude differed
 4. isoch_.StartReceive(irCh)    → start IR OHCI DMA
-5. isoch_.StartTransmit(itCh)   → start IT OHCI DMA
-6. ReadModifyWrite(0x0b00)      → ISOC_COMM_CONTROL: aktywuj oba kanały
+5. WriteRegister(0x0b00, ctrl)  → ISOC_COMM_CONTROL: aktywuj oba kanały (PRZED StartTransmit!)
+6. isoch_.StartTransmit(itCh)   → start IT OHCI DMA  ← SYT gate teraz przechodzi (MOTU nadaje)
 7. ReadModifyWrite(0x0b14)      → CLOCK_STATUS: ustaw FETCH_PCM_FRAMES
 ```
+
+> ⚠️ **Ważne:** ISOC_COMM_CONTROL musi być zapisany PRZED `StartTransmit`. `IsochService::StartTransmit`
+> czeka 500ms na IR SYT clock — ale MOTU nie zacznie wysyłać pakietów IR dopóki nie dostanie
+> ISOC_COMM_CONTROL. Deadlock: StartTransmit czeka na IR, IR czeka na ISOC_COMM_CONTROL.
+> Fix: pisz ISOC_COMM_CONTROL po starcie IR, przed startem IT.
 
 **Kluczowe:** Wszystkie operacje to **quadlet write (tCode=0x0)** — inny code path niż zepsuty FCP block write (tCode=0x1). `WriteQuad(length=4)` → `WriteCommand` automatycznie wybiera tCode=0x0.
 
@@ -318,6 +319,63 @@ ADK framework timeoutuje — prawdopodobnie HALC_ShellObject problem jest osobny
 głębszym błędem. W tym wypadku potrzeba logów z `coreaudiod`:
 ```bash
 log show --last 5m --debug --info 2>/dev/null | grep -E "(coreaudiod|HALC)" | head -50
+```
+
+---
+
+## ✅ Sesja hardware 2026-05-25 część 4 — IRM fix + ISOC_COMM_CONTROL deadlock
+
+### Naprawione w tej sesji
+
+**Fix 1 — IRM self-addressed async transactions (IRMClient)**
+
+Gdy Mac jest jedynym IRM-em, `ReadIRMQuadlet` i `CompareSwapIRMQuadlet` wysyłały async read/lock
+do siebie samego przez OHCI. OHCI nie routuje AT→AR dla self-addressed transakcji → timeout.
+
+**Rozwiązanie:** shadow registers (`shadowBandwidth_=4915`, `shadowChannelsLo/Hi_=0xFFFF`).
+Gdy `irmNodeId_ == localNodeId_` (IsLocalIRM()), operacje wykonywane lokalnie bez transakcji async.
+Resetowane przy każdym `SetLocalNode()` (mirrors bus-reset semantics).
+
+**Potwierdzone w logach:**
+```
+[IRM] IRMClient: local-IRM read addr=0xf0000220 value=0x00001333
+[IRM] IRMClient: local-IRM CAS addr=0xf0000220 old=0x00001333 ... OK
+[IRM] Bandwidth allocation succeeded (294 units)
+[IRM] Channel 0 allocation succeeded
+[IRM] Channel 1 allocation succeeded
+```
+
+**Pliki:** `ASFWDriver/IRM/IRMClient.hpp`, `IRMClient.cpp`, `Controller/ControllerCoreDiscovery.cpp`
+
+---
+
+**Fix 2 — ISOC_COMM_CONTROL deadlock (MOTUAudioBackend)**
+
+`StartTransmit` (IsochService) czekał 500ms na IR SYT clock przed startem IT DMA.
+Ale MOTU nie wysyła pakietów IR dopóki nie dostanie ISOC_COMM_CONTROL.
+ISOC_COMM_CONTROL był pisany dopiero PO StartTransmit → deadlock.
+
+**Rozwiązanie:** ISOC_COMM_CONTROL przeniesiony z kroku 7 na krok 5.5
+(po `StartReceive`, przed `StartTransmit`). MOTU natychmiast zaczyna nadawać IR,
+SYT gate przechodzi, IT startuje.
+
+**Plik:** `ASFWDriver/Audio/Backends/MOTUAudioBackend.cpp`
+
+### Potwierdzone milestony
+
+- ✅ MOTU 828 MK3 widoczny w System Settings → Sound → Wyjście jako "FireWire"
+- ✅ CoreAudio wywołuje StartDevice → StartAudioStreaming → MOTUAudioBackend
+- ✅ IRM alokacja działa bez timeoutów
+- ✅ IR DMA startuje (OHCI context aktywny na kanale 0)
+- ⏳ IT DMA — czeka na test po ISOC_COMM_CONTROL fix
+
+### Czego szukać w logach po fixie
+
+```
+[IRM] local-IRM CAS ... OK                    ← IRM shadow działa
+[Audio] MOTUAudioBackend: ISOC_COMM_CONTROL=0xC0000100 (irCh=0 itCh=1)  ← NOWE — przed IT
+[Controller] ✅ Started IT Context             ← IT DMA ruszyło
+[Audio] MOTUAudioBackend: Streaming started   ← 🎯 cel
 ```
 
 ---

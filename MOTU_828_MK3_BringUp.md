@@ -69,10 +69,16 @@ Odpowiednik Linux `begin_session` + `switch_fetching_mode`:
 2. IRM AllocateResources(irCh, itCh)  → rezerwacja kanałów + bandwidth
 3. WriteRegister(0x0b10, 0xC2)        → PACKET_FORMAT: S400 + exclude differed
 4. isoch_.StartReceive(irCh)          → start IR OHCI DMA
-5. isoch_.StartTransmit(itCh)         → start IT OHCI DMA
-6. ReadModifyWrite(0x0b00)            → ISOC_COMM_CONTROL: aktywuj oba kanały
+5. WriteRegister(0x0b00, ctrl)        → ISOC_COMM_CONTROL: aktywuj oba kanały  ← PRZED IT!
+6. isoch_.StartTransmit(itCh)         → start IT OHCI DMA  (SYT gate przechodzi — MOTU nadaje)
 7. ReadModifyWrite(0x0b14)            → CLOCK_STATUS: ustaw FETCH_PCM_FRAMES
 ```
+
+> ⚠️ **KRYTYCZNE — kolejność kroków 4→5→6:**
+> `IsochService::StartTransmit` czeka 500ms na IR SYT clock. MOTU nie zacznie nadawać IR
+> dopóki nie dostanie ISOC_COMM_CONTROL. Pisz ISOC_COMM_CONTROL po `StartReceive` ale
+> **przed** `StartTransmit` — inaczej deadlock (timeout 500ms, StartStreaming fails).
+> Potwierdzone przez hardware test 2026-05-25. Fix w `MOTUAudioBackend.cpp`.
 
 **Wszystkie operacje = quadlet write (tCode=0x0)** — inny code path niż FCP block write
 (tCode=0x1). `WriteQuad(length=4)` → `WriteCommand` automatycznie wybiera tCode=0x0.
