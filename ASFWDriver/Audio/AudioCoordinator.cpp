@@ -6,6 +6,8 @@
 #include "../Discovery/FWDevice.hpp"
 #include "Model/ASFWAudioDevice.hpp"
 
+#include <algorithm>
+
 namespace ASFW::Audio {
 
 AudioCoordinator::AudioCoordinator(IOService* driver,
@@ -74,11 +76,6 @@ void AudioCoordinator::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device
 
     const auto layout = DeviceProtocolFactory::GetMOTUV3ChannelLayout(effectiveModel);
 
-    // Supported sample rates confirmed via ioreg on Sequoia with MOTU 828 MK3.
-    static constexpr uint32_t kMOTUSampleRates[] = {
-        44100u, 48000u, 88200u, 96000u, 176400u, 192000u
-    };
-
     Model::ASFWAudioDevice config;
     config.guid               = guid;
     config.vendorId           = record->vendorId;
@@ -88,7 +85,8 @@ void AudioCoordinator::OnDeviceAdded(std::shared_ptr<Discovery::FWDevice> device
     config.outputChannelCount = layout.outputChannels;
     config.channelCount       = std::max(layout.inputChannels, layout.outputChannels);
     config.currentSampleRate  = 48000u;
-    config.sampleRates.assign(std::begin(kMOTUSampleRates), std::end(kMOTUSampleRates));
+    // Supported sample rates confirmed via ioreg on Sequoia with MOTU 828 MK3.
+    config.sampleRates        = {44100u, 48000u, 88200u, 96000u, 176400u, 192000u};
     // MOTU V3 uses blocking isochronous transfer (fixed 8-sample + NO-DATA cadence).
     config.streamMode         = Model::StreamMode::kBlocking;
 
