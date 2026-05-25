@@ -220,7 +220,7 @@ IOReturn MOTUAudioBackend::StartStreaming(uint64_t guid) noexcept {
     }
 
     const FW::NodeId  nodeId{static_cast<uint8_t>(record->nodeId)};
-    const FW::Generation gen{static_cast<uint32_t>(record->gen)};
+    const FW::Generation gen = record->gen;
 
     // Step 1 — Read CLOCK_STATUS: log current sample rate reported by MOTU.
     {
@@ -377,7 +377,7 @@ IOReturn MOTUAudioBackend::StopStreaming(uint64_t guid) noexcept {
     const auto* record = registry_.FindByGuid(guid);
     if (record && busOps_) {
         const FW::NodeId   nodeId{static_cast<uint8_t>(record->nodeId)};
-        const FW::Generation gen{static_cast<uint32_t>(record->gen)};
+        const FW::Generation gen = record->gen;
 
         // Clear FETCH_PCM_FRAMES first to stop PCM delivery.
         uint32_t clockStatus = 0;
