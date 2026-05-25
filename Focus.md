@@ -31,9 +31,11 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ### Dwa największe ryzyka
 
-1. **`HALC_ShellObject: Error: "nope"`** — błąd rejestracji `IOUserAudioDevice` w CoreAudio
-   HAL, widoczny w poprzedniej sesji. Jeśli nadal występuje, urządzenie nie pojawi się
-   w systemie niezależnie od protokołu MOTU. Przyczyna nieznana — nie debugowaliśmy tego.
+1. **`StartDevice` nie jest wywoływane przez CoreAudio** — zidentyfikowany i naprawiony
+   (sesja 2026-05-25 część 3). Dwa bugi: race condition (timer po RegisterService) + brak
+   SUPERDISPATCH w StartDevice/StopDevice. Fix wdrożony — wymaga rebuildu i retestowania.
+   Jeśli po fiksie pojawia się `super::StartDevice failed` → osobny problem HALC po stronie
+   CoreAudio; zbierz logi z `coreaudiod` i szukaj `HALC_ShellObject`.
 
 2. **Isoch IR** — kod istnieje, nigdy nie testowany na sprzęcie. MOTU V3 może nie używać
    standardowych nagłówków CIP → `StreamProcessor`/`AM824Decoder` mogą wymagać zmian.
@@ -42,8 +44,11 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 ### Uruchom to zanim podłączysz MOTU
 
 ```bash
-# Terminal 1 — logi drivera
-log stream --predicate 'subsystem == "net.mrmidi.ASFW"' --level debug
+# Terminal 1 — logi drivera (WŁAŚCIWA METODA — potwierdzona na Tahoe 2026-05-25)
+log stream --debug --info 2>/dev/null | grep "ASFWDriver.dext"
+
+# Lub po zdarzeniu (ostatnie N minut):
+log show --last 10m --debug --info 2>/dev/null | grep "ASFWDriver.dext"
 
 # Terminal 2 — po podłączeniu MOTU, sprawdź czy nub jest w IORegistry
 ioreg -l -r -c ASFWAudioNub
@@ -167,6 +172,153 @@ MOTU nie implementuje FCP mimo deklarowania AV/C units w Config ROM.
 **Fix:** `DeviceProtocolFactory::EffectiveModelId()` — dla vendor `0x0001F2` zwraca `unitSwVersion` zamiast `rootModelId`. Commit `abc75ea`. 488/488 testów ✅.
 
 Routing będzie teraz poprawny: `LookupIntegrationMode(0x0001F2, 0x000015)` → `kMOTUV3`.
+
+---
+
+## ✅ POTWIERDZONE — Sesja hardware 2026-05-25 część 1 (Mac Studio, Tahoe)
+
+### Co udało się ustalić
+
+**Potwierdzenia:**
+- Async reads (ReadQuad) na rejestrach MOTU działają ✅ — rCode=Complete
+- Async writes (WriteQuad) na rejestrach MOTU działają ✅ — rCode=Complete (test: PACKET_FORMAT)
+- ASFWAudioNub pojawia się w IORegistry ✅
+- MOTU 828 MK3 pojawia się w macOS Sound settings jako "FireWire" ✅
+- `MOTUAudioBackend::StartStreaming` JEST wywoływany przez ścieżkę CoreAudio ✅ (patrz niżej)
+
+**Kluczowe odkrycie — PACKET_FORMAT jest write-only:**
+Rejestr `0x0b10` (PACKET_FORMAT) zwraca `0x00000000` przy odczycie niezależnie od tego co się do niego zapisało. Zapis działa (rCode=Complete), ale wartość nie jest czytelna z powrotem. Analogicznie ISOC_COMM_CONTROL i CLOCK_STATUS mogą mieć podobne właściwości (odczyt 0 ≠ nie zapisane).
+
+---
+
+## ✅ POTWIERDZONE — Sesja hardware 2026-05-25 część 2 (Mac Studio, Tahoe)
+
+### Kluczowe odkrycia (nowe)
+
+**1. Logi dextu są dostępne:**
+```bash
+log show --last 5m --debug --info 2>/dev/null | grep "ASFWDriver.dext"
+# live:
+log stream --debug --info 2>/dev/null | grep "ASFWDriver.dext"
+```
+Poprzednie próby z `log stream --predicate 'process == ...'` nie działały. Dext logi widoczne
+jako `kernel: (net.mrmidi.ASFW.ASFWDriver.dext) [Kategoria] Treść`.
+
+**2. IR DMA uruchomiony — ale przez RĘCZNY KLIK, nie CoreAudio:**
+```
+[Isoch] ✅ Started IR Context 0 for Channel 0!   ← 11:19:50 — ręczny klik Isoch Metrics
+[Isoch] RxStats Pkts=0 every ~700ms              ← 0 pakietów mimo running IR
+```
+> ⚠️ Poprzedni zapis był błędny. CoreAudio NIE wywołało `StartDevice`. IR był uruchomiony
+> przez ręczne kliknięcie przycisku "Start" w zakładce Isoch Metrics aplikacji ASFW.
+
+**3. DMA Slab IOVA na Tahoe/Apple Silicon = `0x80000000`** — valid non-zero. DMA mapping działa.
+
+**4. Total Packets = 0** mimo running IR DMA.
+MOTU nie wysyłał pakietów — bo nie dostał ISOC_COMM_CONTROL + CLOCK_STATUS
+(kroki 6-7 `MOTUAudioBackend::StartStreaming`). Ręczny Start IR minął całą sekwencję backendu.
+
+**5. App crash pattern — fix:**
+Po crashu apki dext wpada w `[terminating for upgrade via delegate]`.
+Fix: `sudo kill -9 $(pgrep -f "net.mrmidi.ASFW.ASFWDriver" | head -1)` → dext restartuje się
+automatycznie i apka łączy się przez strzałkę reconnect.
+
+### Analiza 60-minutowych logów (kluczowe odkrycie)
+
+Logi: `log show --last 60m --debug --info 2>/dev/null | grep "ASFWDriver.dext"`
+
+```
+11:19:41  Dext restart po kill -9
+11:19:41  [FCP] FCPTransport: Command timeout  ← AVCDiscovery timeoutuje (oczekiwane)
+11:19:50  [UserClient] StartIsochReceive channel=0  ← RĘCZNY KLIK (nie CoreAudio!)
+11:19:50  [Isoch] ✅ Started IR Context 0 for Channel 0!
+11:20:03  [AVC] AVCUnit: UNIT_INFO failed  + AVCDiscovery: AVCUnit initialization failed
+11:20:03+ RxStats Pkts=0 co ~700ms
+```
+
+**BRAK w logach:**
+- `[Audio] ASFWAudioDriver: StartDevice(...)` ← CoreAudio NIGDY nie wywołało StartDevice
+- `[Audio] AudioCoordinator: StartStreaming`
+- `[Audio] MOTUAudioBackend:` czegokolwiek
+- `[Audio] MOTUAudioBackend: IRM allocated`
+
+**Wniosek: CoreAudio nie wywołało `StartDevice` przez cały czas obserwacji.**
+Urządzenie widoczne w Sound Settings, status "Idle". Spotify grało, ale StartDevice nigdy.
+
+---
+
+## 🔧 FIX — Sesja 2026-05-25 część 3 (analiza + fix kodu)
+
+### Dwa bugi znalezione w `ASFWAudioDriver.cpp`
+
+#### Bug 1 — Race condition: timer tworzony PO `RegisterService()` [KRYTYCZNY]
+
+**Problem:**
+```
+Start():
+  ...
+  AddObject(audioDevice)      ← device widoczny
+  RegisterService()            ← od teraz CoreAudio może dzwonić StartDevice!
+  // ← OKIENKO RYZYKA
+  IOTimerDispatchSource::Create(...)  ← timer jeszcze nie istnieje
+  timestampTimer = OSSharedPtr(...)
+```
+
+Jeśli Spotify grało, gdy dext się restartował (kill -9 → auto-restart), CoreAudio
+**natychmiast** wywołało `StartDevice` po `RegisterService()`. W tym momencie
+`ivars->runtime.timestampTimer == nullptr` → `StartDevice` zwracało `kIOReturnNotReady`.
+CoreAudio interpretuje NotReady jako błąd i rezygnuje — urządzenie zostaje na stałe "Idle".
+
+Log który świadczyłby o tym: `"StartDevice failed - not initialized"` — ale ten log mógł
+powstać w okienku przed uruchomieniem `log stream` przez użytkownika.
+
+**Fix:** timer i akcja tworzone **przed** `RegisterService()`.
+
+#### Bug 2 — Brak `SUPERDISPATCH` w `StartDevice` i `StopDevice`
+
+**Problem:**
+`Start()` i `Stop()` wywołują `SUPERDISPATCH` (np. `Start(provider, SUPERDISPATCH)`).
+`StartDevice` i `StopDevice` używały plain C++ override bez SUPERDISPATCH — framework ADK
+nigdy nie był notyfikowany o starcie IO. Bez tego:
+- zero-timestamps wysyłane przez nasz timer mogły być ignorowane przez HAL daemon
+- HAL mógł nigdy nie wysyłać nam `BeginRead`/`WriteEnd` operacji IO
+
+**Fix:** `StartDevice` i `StopDevice` zmienione z plain C++ na `IMPL` + dodano
+`StartDevice(in_object_id, in_flags, SUPERDISPATCH)` / `StopDevice(..., SUPERDISPATCH)`.
+
+### Zmiany w kodzie (plik: `ASFWDriver/Isoch/Audio/ASFWAudioDriver.cpp`)
+
+| Co zmieniono | Dlaczego |
+|---|---|
+| Timer tworzony przed `RegisterService()` | Eliminuje race condition przy dext restart |
+| `StartDevice` → `IMPL` + SUPERDISPATCH | ADK framework notyfikowany o starcie IO |
+| `StopDevice` → `IMPL` + SUPERDISPATCH | Symetria z StartDevice |
+| Więcej logów w `StartDevice` (timer ptr, flags) | Lepsza diagnostyka |
+
+### Jak przetestować po buildzie
+
+```bash
+# Terminal 1 — dext + coreaudiod razem (logi z obu stron):
+log stream --debug --info 2>/dev/null | grep -E "(ASFWDriver\.dext|HALC_ShellObject|coreaudiod.*StartIO)"
+
+# Terminal 2 — po teście, ostatnie 3 minuty:
+log show --last 3m --debug --info 2>/dev/null | grep -E "(ASFWDriver\.dext|HALC)"
+```
+
+**Czego szukać po buildzie:**
+```
+[Audio] ASFWAudioDriver: Timestamp timer ready (before RegisterService)  ← nowy log
+[Audio] ASFWAudioDriver: StartDevice(id=X flags=0x0)                     ← CoreAudio wywołało!
+[Audio] AudioCoordinator: StartStreaming backend=MOTU-V3                 ← routing działa
+[Audio] MOTUAudioBackend: Streaming started GUID=0x...                   ← pełna sekwencja
+```
+
+**Jeśli `super::StartDevice failed kr=0xE00002C7` (kIOReturnTimeout):**
+ADK framework timeoutuje — prawdopodobnie HALC_ShellObject problem jest osobnym,
+głębszym błędem. W tym wypadku potrzeba logów z `coreaudiod`:
+```bash
+log show --last 5m --debug --info 2>/dev/null | grep -E "(coreaudiod|HALC)" | head -50
+```
 
 ---
 

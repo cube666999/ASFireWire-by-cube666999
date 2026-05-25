@@ -21,6 +21,24 @@ void IRMClient::ReadIRMQuadlet(
     uint32_t addressLo,
     std::function<void(bool success, uint32_t value)> callback)
 {
+    // When this node is the IRM, async AT reads to self never produce an AR
+    // response (OHCI does not loopback self-addressed packets).  Read from
+    // the software shadow instead.
+    if (IsLocalIRM()) {
+        uint32_t value = 0;
+        if (addressLo == IRMRegisters::kBandwidthAvailable) {
+            value = shadowBandwidth_;
+        } else if (addressLo == IRMRegisters::kChannelsAvailable31_0) {
+            value = shadowChannelsLo_;
+        } else if (addressLo == IRMRegisters::kChannelsAvailable63_32) {
+            value = shadowChannelsHi_;
+        }
+        ASFW_LOG(IRM, "IRMClient: local-IRM read addr=0x%08x value=0x%08x",
+                 addressLo, value);
+        callback(true, value);
+        return;
+    }
+
     auto callbackState = Common::ShareCallback(std::move(callback));
     Async::FWAddress addr{Async::FWAddress::AddressParts{
         .addressHi = IRMRegisters::kAddressHi,
@@ -51,6 +69,38 @@ void IRMClient::CompareSwapIRMQuadlet(
     uint32_t desired,
     std::function<void(bool success, uint32_t oldValue)> callback)
 {
+    // When this node is the IRM, perform a software CAS on the shadow register
+    // instead of sending an async lock transaction to self (which would time out).
+    if (IsLocalIRM()) {
+        uint32_t* shadow = nullptr;
+        if (addressLo == IRMRegisters::kBandwidthAvailable) {
+            shadow = &shadowBandwidth_;
+        } else if (addressLo == IRMRegisters::kChannelsAvailable31_0) {
+            shadow = &shadowChannelsLo_;
+        } else if (addressLo == IRMRegisters::kChannelsAvailable63_32) {
+            shadow = &shadowChannelsHi_;
+        }
+
+        if (shadow != nullptr) {
+            const uint32_t oldValue = *shadow;
+            const bool succeeded = (oldValue == expected);
+            if (succeeded) {
+                *shadow = desired;
+            }
+            ASFW_LOG(IRM,
+                     "IRMClient: local-IRM CAS addr=0x%08x old=0x%08x "
+                     "exp=0x%08x des=0x%08x %{public}s",
+                     addressLo, oldValue, expected, desired,
+                     succeeded ? "OK" : "MISS");
+            callback(succeeded, oldValue);
+        } else {
+            ASFW_LOG_ERROR(IRM, "IRMClient: local-IRM CAS unknown addr=0x%08x",
+                           addressLo);
+            callback(false, 0u);
+        }
+        return;
+    }
+
     auto callbackState = Common::ShareCallback(std::move(callback));
     Async::FWAddress addr{Async::FWAddress::AddressParts{
         .addressHi = IRMRegisters::kAddressHi,
@@ -89,6 +139,20 @@ void IRMClient::SetIRMNode(uint8_t irmNodeId, Generation generation) {
 
     ASFW_LOG(IRM, "IRMClient: Set IRM node=%u generation=%u",
              irmNodeId, generation.value);
+}
+
+void IRMClient::SetLocalNode(uint8_t localNodeId) {
+    localNodeId_ = localNodeId;
+
+    // Reset shadow CSR registers to IEEE 1394 initial values.
+    // Called after every bus reset, mirroring hardware behaviour: the IRM
+    // CSR space reinitialises on reset so all allocations are cleared.
+    shadowBandwidth_ = kMaxBandwidthUnitsS400;
+    shadowChannelsLo_ = kChannelsAvailableInitial;
+    shadowChannelsHi_ = kChannelsAvailableInitial;
+
+    ASFW_LOG(IRM, "IRMClient: local node=%u (isLocalIRM=%s)",
+             localNodeId, IsLocalIRM() ? "yes" : "no");
 }
 
 void IRMClient::AllocateChannel(uint8_t channel,

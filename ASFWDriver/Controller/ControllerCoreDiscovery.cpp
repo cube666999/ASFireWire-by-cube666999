@@ -107,8 +107,9 @@ void ControllerCore::OnTopologyReady(const TopologySnapshot& snap) {
     if (deps_.irmClient) {
         const uint8_t irmNodeId = snap.irmNodeId.value_or(0xFF);
         deps_.irmClient->SetIRMNode(irmNodeId, Discovery::Generation{snap.generation});
-        ASFW_LOG(Discovery, "IRMClient updated: IRM node=%u, generation=%u", irmNodeId,
-                 snap.generation);
+        deps_.irmClient->SetLocalNode(localNodeId);
+        ASFW_LOG(Discovery, "IRMClient updated: IRM node=%u, local node=%u, generation=%u",
+                 irmNodeId, localNodeId, snap.generation);
     }
 
     if (deps_.cmpClient) {

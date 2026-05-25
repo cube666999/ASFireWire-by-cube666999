@@ -652,21 +652,11 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
     ASFW_LOG(Audio, "ASFWAudioDriver: Reported HAL latency out/in=%u, safety out/in=%u frames",
              kReportedDeviceLatencyFrames, kReportedSafetyOffsetFrames);
 
-    // Add device to driver
-    error = AddObject(ivars->audioDevice.get());
-    if (error != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: Failed to add device: %d", error);
-        return error;
-    }
-    
-    // Register service
-    error = RegisterService();
-    if (error != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: RegisterService() failed: %d", error);
-        return error;
-    }
-    
-    // Create timer for timestamp generation
+    // Create timer BEFORE RegisterService to prevent a race:
+    // If CoreAudio calls StartDevice immediately after RegisterService (e.g. when dext
+    // restarts while Spotify is already playing), timestampTimer must be ready.
+    // Previously the timer was created AFTER RegisterService — StartDevice would return
+    // kIOReturnNotReady, CoreAudio would give up, and the device would stay "Idle" forever.
     IOTimerDispatchSource* timerSource = nullptr;
     error = IOTimerDispatchSource::Create(ivars->workQueue.get(), &timerSource);
     if (error != kIOReturnSuccess) {
@@ -674,7 +664,7 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         return error;
     }
     ivars->runtime.timestampTimer = OSSharedPtr(timerSource, OSNoRetain);
-    
+
     // Create timer action (DriverKit generates CreateActionZtsTimerOccurred from .iig)
     OSAction* timerAction = nullptr;
     error = CreateActionZtsTimerOccurred(sizeof(void*), &timerAction);
@@ -684,7 +674,22 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
     }
     ivars->runtime.timestampTimerAction = OSSharedPtr(timerAction, OSNoRetain);
     ivars->runtime.timestampTimer->SetHandler(ivars->runtime.timestampTimerAction.get());
-    
+    ASFW_LOG(Audio, "ASFWAudioDriver: Timestamp timer ready (before RegisterService)");
+
+    // Add device to driver
+    error = AddObject(ivars->audioDevice.get());
+    if (error != kIOReturnSuccess) {
+        ASFW_LOG(Audio, "ASFWAudioDriver: Failed to add device: %d", error);
+        return error;
+    }
+
+    // Register service — from this point CoreAudio may call StartDevice at any time.
+    error = RegisterService();
+    if (error != kIOReturnSuccess) {
+        ASFW_LOG(Audio, "ASFWAudioDriver: RegisterService() failed: %d", error);
+        return error;
+    }
+
     ASFW_LOG(Audio,
              "✅ ASFWAudioDriver: Started - device '%{public}s' (in=%u out=%u aggregate=%u)",
              ivars->device.deviceName,
@@ -725,10 +730,15 @@ kern_return_t IMPL(ASFWAudioDriver, NewUserClient)
 kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
                                             IOUserAudioStartStopFlags in_flags)
 {
-    ASFW_LOG(Audio, "ASFWAudioDriver: StartDevice(id=%u)", in_object_id);
-    
+    ASFW_LOG(Audio, "ASFWAudioDriver: StartDevice(id=%u flags=0x%x)", in_object_id,
+             static_cast<unsigned>(in_flags));
+
+    // NOTE: SUPERDISPATCH cannot be used here — IIG does not generate
+    // ASFWAudioDriver_StartDevice_Args for inherited override methods. Zero-timestamps
+    // sent by our timer drive the HAL IO cycle directly without needing super's call.
     if (!ivars || !ivars->audioDevice || !ivars->runtime.timestampTimer) {
-        ASFW_LOG(Audio, "ASFWAudioDriver: StartDevice failed - not initialized");
+        ASFW_LOG(Audio, "ASFWAudioDriver: StartDevice failed - not initialized (timer=%p)",
+                 ivars ? ivars->runtime.timestampTimer.get() : nullptr);
         return kIOReturnNotReady;
     }
 
@@ -815,8 +825,12 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
 kern_return_t ASFWAudioDriver::StopDevice(IOUserAudioObjectID in_object_id,
                                            IOUserAudioStartStopFlags in_flags)
 {
-    ASFW_LOG(Audio, "ASFWAudioDriver: StopDevice(id=%u)", in_object_id);
-    
+    ASFW_LOG(Audio, "ASFWAudioDriver: StopDevice(id=%u flags=0x%x)", in_object_id,
+             static_cast<unsigned>(in_flags));
+
+    // NOTE: SUPERDISPATCH cannot be used here — IIG does not generate
+    // ASFWAudioDriver_StopDevice_Args for inherited override methods.
+
     ivars->runtime.isRunning.store(false, std::memory_order_release);
 
     if (ivars && ivars->device.audioNub) {

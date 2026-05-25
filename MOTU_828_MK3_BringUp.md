@@ -104,6 +104,40 @@ Fix: `DeviceProtocolFactory::EffectiveModelId()` dla vendor `0x0001F2` zwraca
 
 ---
 
+## ✅ Logi dext — dostępne przez kernel log (Tahoe, 2026-05-25 update)
+
+`log stream` z predykatami `process ==` / `processID ==` nie działa. Ale logi dextu są widoczne
+jako **komunikaty kernela** przypisane do dext bundle. Właściwy sposób:
+
+```bash
+# Logi z ostatnich N minut (po zdarzeniu):
+log show --last 5m --debug --info 2>/dev/null | grep "ASFWDriver.dext"
+
+# Live stream (uruchom przed testem):
+log stream --debug --info 2>/dev/null | grep "ASFWDriver.dext"
+```
+
+Format wyjścia: `kernel: (net.mrmidi.ASFW.ASFWDriver.dext) [Kategoria] Treść`
+
+**Potwierdzone na Tahoe (2026-05-25):** wszystkie ASFW_LOG wiadomości są widoczne tą metodą.
+
+**DMA Slab IOVA na Tahoe/Apple Silicon:** IOVA Base = `0x80000000` (non-zero, valid). Poprzedni
+debug snapshot pokazywał `0x0` — był to artefakt ze starej instancji dextu.
+
+**Diagnostykę należy prowadzić przez:**
+1. `log show --last Xm 2>/dev/null | grep "ASFWDriver.dext"` ← **GŁÓWNA METODA**
+2. `log show --last Xm 2>/dev/null | grep -E "(ASFWDriver\.dext|HALC)"` — razem z coreaudiod
+3. Async Commands UI (write/read rejestrów)
+4. Isoch Metrics (licznik pakietów)
+5. IORegistry (`ioreg -l -r -c ASFWAudioNub`)
+
+**⚠️ Ważne:** Ręczny Start IR przez Isoch Metrics UI **omija całą sekwencję `MOTUAudioBackend`**.
+IR uruchomiony ręcznie nie wysyła ISOC_COMM_CONTROL ani CLOCK_STATUS do MOTU —
+dlatego Total Packets = 0. Jedyna poprawna ścieżka: CoreAudio → `StartDevice` → `StartAudioStreaming`
+→ `AudioCoordinator::StartStreaming` → `MOTUAudioBackend::StartStreaming`.
+
+---
+
 ## Weryfikacja vs kext MOTU (Sequoia, x86_64)
 
 Wszystkie stałe potwierdzone przez disassembly `MOTUFireWireAudio.kext`:
@@ -116,6 +150,19 @@ Wszystkie stałe potwierdzone przez disassembly `MOTUFireWireAudio.kext`:
 | PACKET_FORMAT addr | `0xf0000b10` | `kPacketFmtOff = 0x0b10` | ✅ |
 | PACKET_FORMAT value | `0xC2` | `0xC2` | ✅ |
 | ISOC_COMM_CONTROL addr | `0xf0000b00` | `kIsocCtrlOff = 0x0b00` | ✅ |
+
+---
+
+## ⚠️ WAŻNE — Diagnostyka przez odczyt rejestrów jest zawodna (2026-05-25)
+
+**PACKET_FORMAT (0x0b10) jest write-only.** Zapis: rCode=Complete ✅. Odczyt: zawsze `0x00000000` — niezależnie od zapisanej wartości. Potwierdzone na hardware (Mac Studio, Tahoe, MOTU 828 MK3 FW).
+
+**Konsekwencja:** nie możemy wnioskować o stanie StartStreaming na podstawie odczytu 0x00000000 z ISOC_COMM_CONTROL lub CLOCK_STATUS. Te rejestry mogą mieć podobną właściwość (zapis momentary / trigger, odczyt zawsze 0 w stanie idle).
+
+**Prawidłowa diagnostyka stanu streamingu:**
+- Obserwuj Isoch Metrics → Total Packets (jeśli > 0 — IR DMA odbiera dane od MOTU)
+- Sprawdź stan OHCI IR context przez `ReceiveContext()->GetState()` (nie dostępne z UI)
+- Jeśli przycisk Start w Isoch Metrics → natychmiast Stop: `isoch_.StartReceive` było już wywołane
 
 ---
 
@@ -138,9 +185,82 @@ Jeśli IR nie działa od razu → zbadaj format pakietu przez Linux
 
 ---
 
+## 🔧 Naprawione bugi AudioDriverKit (2026-05-25, sesja 3)
+
+### Bug 1 — Race condition: timer po `RegisterService()` [NAPRAWIONY]
+
+**Plik:** `ASFWDriver/Isoch/Audio/ASFWAudioDriver.cpp` — `IMPL(ASFWAudioDriver, Start)`
+
+**Problem:** `IOTimerDispatchSource` był tworzony **po** `RegisterService()`. Przy restarcie
+dextu gdy Spotify grało, CoreAudio natychmiast wywoływało `StartDevice` — timer był null,
+`StartDevice` zwracało `kIOReturnNotReady`. CoreAudio nie ponawiało i urządzenie zostawało
+"Idle" na zawsze.
+
+**Fix:** Timer i OSAction tworzone **przed** `RegisterService()`. Nowy log potwierdzający:
+`[Audio] ASFWAudioDriver: Timestamp timer ready (before RegisterService)`
+
+### Bug 2 — Brak SUPERDISPATCH w StartDevice/StopDevice [NAPRAWIONY]
+
+**Plik:** `ASFWDriver/Isoch/Audio/ASFWAudioDriver.cpp`
+
+**Problem:** `StartDevice` i `StopDevice` były plain C++ overrides bez wywołania
+`StartDevice(in_object_id, in_flags, SUPERDISPATCH)`. Porównaj z `Start()`/`Stop()`
+które poprawnie wywołują SUPERDISPATCH. Bez tego AudioDriverKit framework nie notyfikował
+HAL daemon (`audiodriverkit_server`) o starcie IO — zero-timestamps mogły być ignorowane.
+
+**Fix:** Zmieniono z plain C++ na `IMPL(ASFWAudioDriver, StartDevice/StopDevice)`
+i dodano wywołanie SUPERDISPATCH jako pierwszy krok.
+
+### Diagnoza jeśli problem nadal istnieje
+
+Jeśli po tych fixach `StartDevice` wciąż nie pojawia się w logach:
+```bash
+# Sprawdź coreaudiod — błąd HALC to osobny problem
+log show --last 5m --debug --info 2>/dev/null | grep -E "(coreaudiod|HALC|ShellObject)"
+```
+
+Jeśli `super::StartDevice failed kr=0x...` — ADK framework odmawia startu IO.
+Możliwa przyczyna: nieprawidłowe stream formats lub device UID conflict.
+
+---
+
+## 🛠️ Troubleshooting: dext utknął w `[terminating for upgrade via delegate]`
+
+**Symptom:** Po rebuildzie `systemextensionsctl list` pokazuje dwa wpisy — stary
+`[terminating for upgrade via delegate]` i nowy `[activated enabled]`, ale nowy
+proces dextu nie startuje (puste logi). Driver Status w ASFW app = szary.
+
+**Przyczyna:** Stary proces dextu (może być zombie — od nieudanego poprzedniego
+deployu) blokuje starty. sysextd czeka na delegate callback (ASFW app) który nigdy
+nie przychodzi.
+
+**Fix (szybki — 30 sekund):**
+```bash
+# 1. Zamknij ASFW app + zabij stary proces dextu
+killall ASFW 2>/dev/null; sudo kill -9 <PID_starego_dextu> 2>/dev/null
+
+# PID znajdź przez: ps aux | grep "net.mrmidi" | grep -v grep
+# Przykład: sudo kill -9 82946
+
+# 2. Poczekaj 2s i otwórz świeżo ASFW z DerivedData
+sleep 2
+open "/Users/kuba/Library/Developer/Xcode/DerivedData/ASFW-cnsxxyhtbpewiqgxvpywrevoashk/Build/Products/Debug/ASFW.app"
+
+# 3. Weryfikacja — nowy PID z nowym UUID powinien być widoczny
+ps aux | grep "net.mrmidi" | grep -v grep
+systemextensionsctl list   # powinno być tylko 1 wpis: [activated enabled]
+```
+
+**Uwaga:** Jeśli `systemextensionsctl list` pokazuje `[terminating for upgrade via delegate]`
+po rebuildzie i pojawia się szary status — ZAWSZE najpierw sprawdź `ps aux | grep net.mrmidi`
+i pozbądź się starego procesu. Nie czekaj, nie rebuilduj — to nie pomoże.
+
+---
+
 ## Czego NIE robić z MOTU
 
 - ❌ NIE wysyłaj FCP commands (MOTU ignoruje FCP mimo AV/C w Config ROM)
 - ❌ NIE używaj CMP (`ConnectOPCR`/`ConnectIPCR`) — zbędne dla V3
 - ❌ NIE próbuj AV/C UNIT INFO / SUBUNIT INFO — timeout
 - ❌ NIE używaj `AVCAudioBackend` dla MOTU — to jest backend dla innych urządzeń
+- ❌ NIE używaj ręcznego Start IR w Isoch Metrics jako testu — omija całą sekwencję backendu

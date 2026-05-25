@@ -24,6 +24,12 @@ public:
 
     void SetIRMNode(uint8_t irmNodeId, Generation generation);
 
+    /// Tell IRMClient which node is the local (self) node.
+    /// Must be called alongside SetIRMNode so the client can detect the
+    /// self-addressed case and use software shadow registers instead of
+    /// async transactions (OHCI does not loopback self-addressed AT→AR packets).
+    void SetLocalNode(uint8_t localNodeId);
+
     void AllocateChannel(uint8_t channel,
                         AllocationCallback callback,
                         const RetryPolicy& retryPolicy = RetryPolicy::Default());
@@ -58,7 +64,20 @@ private:
     Async::IFireWireBusOps& busOps_;
 
     uint8_t irmNodeId_{0xFF};
+    uint8_t localNodeId_{0xFF};
     Generation generation_{0};
+
+    // Software shadow registers — used when this node is the IRM.
+    // OHCI does not loopback self-addressed AT→AR packets, so async reads
+    // to self never complete. Shadows are reset to IEEE 1394 initial values
+    // on every SetLocalNode() call (mirrors bus-reset behaviour).
+    uint32_t shadowBandwidth_{kMaxBandwidthUnitsS400};
+    uint32_t shadowChannelsLo_{kChannelsAvailableInitial};
+    uint32_t shadowChannelsHi_{kChannelsAvailableInitial};
+
+    [[nodiscard]] bool IsLocalIRM() const noexcept {
+        return irmNodeId_ != 0xFF && irmNodeId_ == localNodeId_;
+    }
 
     void ReadIRMQuadlet(
         uint32_t addressLo,
