@@ -3,7 +3,7 @@
 Fork: https://github.com/cube666999/ASFireWire-by-cube666999  
 Base: https://github.com/mrmidi/ASFireWire  
 Test device: MOTU 828 MK3 (target), developed with Claude Code  
-Tests: 488/488 passing
+Tests: 493/493 passing
 
 ---
 
@@ -210,6 +210,52 @@ in `MOTUFireWireAudio.kext` log). `DeviceProtocolFactory` gains `GetMOTUV3Channe
 
 ---
 
+### Fix 14 — `FW::Generation` construction: nielegalny cast na DriverKit25.4
+**Plik:** `ASFWDriver/Audio/Backends/MOTUAudioBackend.cpp` — linie 223, 380  
+**Commit:** `f88b326`
+
+```cpp
+// Przed (błąd na DriverKit25.4):
+const FW::Generation gen{static_cast<uint32_t>(record->gen)};
+// Po:
+const FW::Generation gen = record->gen;
+```
+
+`record->gen` jest już typu `FW::Generation`. Kod próbował `FW::Generation → uint32_t`
+(brak operatora konwersji) a następnie `uint32_t → FW::Generation`. SDK DriverKit25.4
+(Xcode 26.4.1) odrzuca tę konwersję. Fix: bezpośrednia kopia wartości.
+
+Lokalnie (stary SDK / CMake) kompilator przepuszczał to przez niejawne konwersje —
+błąd ujawnił się dopiero na CI z DriverKit25.4.
+
+---
+
+### Fix 15 — CI: post-build scheme signing pada bez certyfikatu
+**Plik:** `ASFW.xcodeproj/xcshareddata/xcschemes/ASFW.xcscheme`  
+**Commit:** `8eec7a7`
+
+Schemat Xcode ma post-akcję która podpisuje `.app` i `.dext` certyfikatem
+`Apple Development: j.slipiec@gmail.com (239NB3LFDQ)`. Na runnerze GitHub Actions
+certyfikat nie istnieje → `codesign` pada → `set -euo pipefail` → cały build pada.
+
+`CODE_SIGNING_ALLOWED=NO` przekazywany przez workflow wyłącza tylko *wbudowane*
+podpisywanie Xcode — **nie wyłącza** niestandardowych skryptów PostActions.
+
+**Fix:** dodano guard na początku skryptu: `security find-identity` sprawdza czy
+identity jest w keychain; jeśli nie — `exit 0` (podpisanie pomijane, build zielony).
+Na maszynie developerskiej z zainstalowanym certyfikatem skrypt działa jak wcześniej.
+
+---
+
+### Fix 16 — CI: opt-in Node.js 24 dla GitHub Actions
+**Plik:** `.github/workflows/build-and-test.yml`  
+**Commit:** `2e21b0d`
+
+`actions/checkout@v4` używało Node.js 20, które GitHub usuwa z runnerów 2 czerwca 2026.
+Dodano `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true` do sekcji `env` joba.
+
+---
+
 ### Feature — MOTU V3 register protocol backend
 **Files:** `ASFWDriver/Audio/Backends/MOTUAudioBackend.hpp/.cpp`,
 `ASFWDriver/Protocols/Audio/DeviceProtocolFactory.hpp`,
@@ -263,6 +309,6 @@ All register constants verified against `MOTUFireWireAudio.kext` — see `MOTU_8
 
 - All AV/C fixes (Fix 1–9) remain active for non-MOTU devices (e.g. Apogee Duet 2)
 - MOTU 828 MK3 routes exclusively to `MOTUAudioBackend` — AV/C/FCP/CMP never called
-- No existing tests were broken; 64 new tests added across all fix areas
+- No existing tests were broken; 69 new tests added across all fix areas (493 total)
 - Hardware test pending: Mac Studio (Apple Silicon, macOS Tahoe) + TB→FW adapter + MOTU 828 MK3
 - Full V3 protocol reference: `MOTU_828_MK3_BringUp.md`

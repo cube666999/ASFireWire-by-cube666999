@@ -166,6 +166,12 @@ Pass `count=0` to `ReadRootDirQuadlets()` to enable autosize: the reader issues 
 
 **Test isolation:** All C++ tests compile with `ASFW_HOST_TEST` defined, which stubs out DriverKit APIs. Logic tested this way cannot cover actual hardware interaction.
 
+**DriverKit SDK strictness vs. local CMake:** CMake builds use the system clang which includes many standard headers transitively (e.g. `<algorithm>`, `<iterator>`). The DriverKit SDK target in Xcode is stricter — if you don't `#include` it explicitly, it's not available. Always add explicit includes for anything you use from `<algorithm>`, `<iterator>`, `<utility>`, etc. when touching files compiled in the DriverKit target.
+
+**`FW::Generation` has no implicit conversion to `uint32_t`:** The struct has `explicit` constructor and no `operator uint32_t()`. `static_cast<uint32_t>(someGeneration)` is a compile error on DriverKit25.4. Use `.value` directly or copy: `const FW::Generation gen = record->gen;`.
+
+**`CODE_SIGNING_ALLOWED=NO` does NOT suppress scheme PostActions:** Passing this flag to `xcodebuild` disables Xcode's built-in code signing phases, but custom shell scripts in scheme PostActions still run unconditionally. If a PostAction calls `codesign`, it will fail on CI runners without the developer certificate. Guard the script with `security find-identity` to detect missing identities and exit cleanly.
+
 ## Code Patterns
 
 - **Error handling:** `std::expected<T, E>` — no exceptions in driver code. Mark all error-returning functions `[[nodiscard]]`.
