@@ -197,6 +197,31 @@ Wszystkie stałe potwierdzone przez disassembly `MOTUFireWireAudio.kext`:
 
 **PACKET_FORMAT (0x0b10) jest write-only.** Zapis: rCode=Complete ✅. Odczyt: zawsze `0x00000000` — niezależnie od zapisanej wartości. Potwierdzone na hardware (Mac Studio, Tahoe, MOTU 828 MK3 FW).
 
+---
+
+## ⚠️ KRYTYCZNE — IR DMA ContextControlSet: NIE ustawiaj bit 30 (2026-05-26)
+
+**Bit 30 ContextControlSet = `cycleMatchEnable` (OHCI §10.2.2 IR), NIE „isoch header enable".**
+
+Ustawienie bit 30 na IR kontekście powoduje:
+- OHCI czeka aż cycle counter w rejestrze ContextMatch zostanie dopasowany
+- Do czasu matchu: **zero pakietów odebranych** (kontekst formalnie "aktywny" ale nie przetwarza)
+- `Dead=0`, `Active=0`, `RxStats Pkts=0` — trudne do zdiagnozowania
+
+**Poprawny start IR:**
+```cpp
+hardware_->Write(registers_.ContextControlClear, 0xFFFFFFFFu);  // wyczyść wszystkie bity
+const uint32_t ctlValue = ContextControl::kRun | ContextControl::kWake;  // 0x9000
+hardware_->Write(registers_.ContextControlSet, ctlValue);
+```
+Matching Linux `firewire-ohci.c`: `CONTEXT_RUN (0x8000) | CONTEXT_WAKE (0x1000)`.
+
+**Nagłówek isoch w buforze** (OHCI §10.2.2 Tab. 54 — 4 bajty: tcode+sy+channel+length+tag)
+jest kontrolowany przez bit `"i"` w polu control deskryptora INPUT_MORE/INPUT_LAST,
+**nie** przez żaden bit ContextControlSet.
+
+Commit `935d3ff` naprawia ten błąd w `IsochReceiveContext.cpp` i `OHCIConstants.hpp`.
+
 **Konsekwencja:** nie możemy wnioskować o stanie StartStreaming na podstawie odczytu 0x00000000 z ISOC_COMM_CONTROL lub CLOCK_STATUS. Te rejestry mogą mieć podobną właściwość (zapis momentary / trigger, odczyt zawsze 0 w stanie idle).
 
 **Prawidłowa diagnostyka stanu streamingu:**

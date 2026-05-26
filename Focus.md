@@ -8,14 +8,49 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ SESJA NA MAC STUDIO — Przeczytaj to na starcie
 
-> **Stan na 2026-05-26 (sesja 6):**
-> - ✅ CoreAudio wywołuje `StartDevice` — **potwierdzone przez logi coreaudiod**
-> - ✅ IO faktycznie działa — 234 816 klatek (≈5s @ 48kHz) przepływa przez urządzenie
-> - ✅ `ASFWAudioDevice` jest widoczny w CoreAudio jako preferred output/input
-> - ❌ **Bloker (naprawiony):** "Sample time is not consecutive" — 2 bugi w `AudioClockEngine`
-> - 🔧 **Fix C:** `UpdateCurrentZeroTimestamp(0, currentTime)` zamiast `(0, 0)` — patrz niżej
-> - 🔧 **Fix D:** guard przed double-start w `StartDevice` — patrz niżej
-> - ⏳ **Czeka na test:** Cmd+B → otwórz apkę → puść muzykę → sprawdź czy IO trwa >5s
+> **Stan na 2026-05-26 (sesja 7) — po restarcie:**
+> - ✅ v10 (work queue deadlock fix `5554280`) potwierdzony: MOTU rejestry czytelne, `StartStreaming` wywoływane
+> - ✅ v11 (IR cycleMatchEnable fix `935d3ff`) wdrożony po restarcie — **wymaga testu**
+> - ✅ `kRun|kWake = 0x9000` w IR ContextControlSet (usunięto błędny bit 30 = `kCycleMatchEnable`)
+> - ✅ Auto-aktywacja dextu przy starcie apki (`ModernContentView.onAppear → installDriver()`)
+> - ⏳ **Do testu IR:** `seq > 0`, `syt != 0x0000`, `ageMs > 0` w logach ExternalSyncBridge
+> - ⏳ **Do testu IO:** IO trwa >5s bez "not consecutive" (Fix C+D z sesji 6, patrz niżej)
+
+### Odkrycia sesji 7 (2026-05-26) — IR bit 30 bug
+
+**Fix E — IR ContextControlSet: kIsochHeader → kRun|kWake:**
+
+`OHCIConstants.hpp` miał `kIsochHeader = 1u << 30`. Nazwa myląca — bit 30 w ContextControlSet
+to `cycleMatchEnable` (OHCI §9.2 IT / §10.2.2 IR), **nie** włącznik nagłówka isoch.
+
+Ustawienie bit 30 na IR kontekście: kontekst zatrzymuje się, czeka aż `ContextMatch.cycleCount`
+zgadza się z aktualnym cyklem zegara OHCI → **zero pakietów odebranych**.
+
+Fix: `IsochReceiveContext.cpp` używa teraz `kRun | kWake = 0x9000` (matching Linux
+`CONTEXT_RUN | CONTEXT_WAKE`) bez żadnych dodatkowych bitów.
+
+Nagłówek isoch w buforze odbiorczym (OHCI §10.2.2 Tab. 54) jest sterowany przez flagę `"i"`
+w polu control deskryptora INPUT_MORE/INPUT_LAST — nie przez ContextControlSet.
+
+Commit: `935d3ff`
+
+**Fix F — Work queue deadlock (StartDevice / StartStreaming):**
+
+`StartDevice` (wywoływane przez CoreAudio na serial dispatch queue) próbowało synchronicznie
+odczytać rejestry MOTU przez AT async quadlet read. AT completions lądują na tej samej serial
+queue → deadlock: queue czeka na własne callbacki.
+
+Fix: `StartStreaming` wysyłany przez `DispatchAsync_f` na nową `IODispatchQueue`.
+MOTU rejestry teraz czytelne (CLOCK_STATUS readback OK w v10 logach).
+
+Commit: `5554280`
+
+**Fix G — Zombie dext PID przy upgrade:**
+
+Przy próbie upgrade dextu z v9 → v10, stary `_driverkit` PID (704, ścieżka `125CE7EC`)
+nie chciał zakończyć pracy bo CoreAudio HAL trzymał aktywne urządzenie audio.
+`systemextensionsctl` ugrzązło w `terminating_for_upgrade_via_delegate`.
+Jedyne rozwiązanie: **reboot**. Reload dextu zawsze wymaga restartu gdy AudioDriverKit jest aktywny.
 
 ### Odkrycia sesji 6 (2026-05-26)
 
@@ -61,11 +96,14 @@ Poprawna wartość (irCh=0, itCh=1): `0xC1C00000`.
 | StartDevice wywoływane przez CoreAudio | ✅ **POTWIERDZONE** |
 | IRM alokacja (local-IRM shadow bypass) | ✅ **POTWIERDZONE** |
 | IR DMA startuje | ✅ **POTWIERDZONE** |
-| ISOC_COMM_CONTROL + FETCH_PCM_FRAMES przed StartTransmit | ✅ Fix wdrożony — **wymaga testu** |
-| AudioClockEngine timestamp anchor | ✅ Fix C+D wdrożony (2026-05-26) |
-| IO trwa >5s bez "not consecutive" | ⏳ Czeka na test (build gotowy) |
-| StartTransmit (IT DMA) startuje | ⏳ Czeka na test po fixie |
-| Słyszysz dźwięk z Maca przez MOTU (TX) | ⏳ Czeka na test |
+| ISOC_COMM_CONTROL + FETCH_PCM_FRAMES przed StartTransmit | ✅ Fix wdrożony + potwierdzone (sesja 5) |
+| AudioClockEngine timestamp anchor | ✅ Fix C+D wdrożony (sesja 6) |
+| IR cycleMatchEnable bit 30 usunięty | ✅ Fix E wdrożony v11 (935d3ff) — **wymaga testu** |
+| Work queue deadlock naprawiony | ✅ Fix F wdrożony v10 (5554280) — potwierdzone rejestry OK |
+| IR odbiera pakiety (seq>0, syt!=0) | ⏳ **Test po restarcie z v11** |
+| IO trwa >5s bez "not consecutive" | ⏳ Czeka na test |
+| StartTransmit (IT DMA) startuje | ⏳ Czeka na IR packets + SYT clock |
+| Słyszysz dźwięk z Maca przez MOTU (TX) | ⏳ Kolejny krok po IT start |
 | Pełny duplex (TX + RX) | ⏳ Kolejny etap |
 
 ### Największe ryzyko które pozostało
@@ -103,7 +141,17 @@ MOTUAudioBackend: PACKET_FORMAT=0x000000c2 written            ← quadlet write 
 MOTUAudioBackend: ISOC_COMM_CONTROL=0x... (irCh=X itCh=Y)    ← MOTU dostaje kanały
 MOTUAudioBackend: FETCH_PCM_FRAMES set (clockStatus=0x...)    ← MOTU zaczyna nadawać IR!
 MOTUAudioBackend: Streaming started GUID=0x...                ← V3 sekwencja kompletna 🎯
+
+Start: Wrote Match=0xf000000X Cmd=0x801f0001 Ctl=0x00009000   ← IR startuje (kRun|kWake)
+ExternalSyncBridge: seq=X syt=0x.... ageMs=Y                  ← IR odbiera pakiety!  (⬅️ to jest cel testu v11)
+ExternalSyncBridge: SYT clock established                     ← IT może startować
 ```
+
+**Po v11 — pierwsze co sprawdzić:**
+```bash
+log show --last 5m --debug --info 2>/dev/null | grep -E "(ASFWDriver\.dext)" | grep -E "(Isoch|IR|syt|seq|SYT|Streaming)"
+```
+Szukaj linii `Start: Ctl=0x00009000` (dowód że bit 30 nie jest ustawiony) i `seq>0` (pakiety odebrane).
 
 Jeśli **brak "Injecting MOTU V3 config"** → `OnDeviceAdded` nie widzi rekordu
 w `DeviceRegistry` (race condition: Config ROM scan niegotowy). W logu szukaj:
@@ -515,7 +563,10 @@ Commit `eeb8787`. 488/488 testów ✅. Odblokuje AV/C dla ~80% rynku interfejsó
 |---------|-----------|------|
 | ~~AT DMA block write (tCode=0x1)~~ | ✅ NAPRAWIONE | `ScanCompletion` orphan check, commit `eeb8787` |
 | ~~Model ID 0x000000 w Discovery~~ | ✅ NAPRAWIONE | Root dir model=0x106800, unit SW vers=0x000015. Fix: `EffectiveModelId()` commit `abc75ea` |
-| IR Receive walidacja na hardware | Wysoki | Kod istnieje, nieprzetestowany na żywym sprzęcie |
+| ~~IR cycleMatchEnable (bit 30)~~ | ✅ NAPRAWIONE | `kIsochHeader=1u<<30` to był `cycleMatchEnable` → zero RX packets. Fix: `kRun\|kWake=0x9000`, commit `935d3ff` |
+| ~~Work queue deadlock~~ | ✅ NAPRAWIONE | `StartStreaming` na background queue, commit `5554280` |
+| IR Receive walidacja pakietów | Wysoki | Bit 30 naprawiony — czeka na potwierdzenie `seq>0` na hardware |
+| FCP spam do MOTU | Niski | AVC discovery pisze do MOTU co ~2s; MOTU V3 nie używa AV/C — zbędne |
 
 ---
 

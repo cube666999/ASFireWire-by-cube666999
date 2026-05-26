@@ -54,6 +54,65 @@ Szczegóły w `MOTU_828_MK3_BringUp.md`. Zidentyfikowane 2 krytyczne gapy (GAP 1
 
 ---
 
+## Sesja 7 — 2026-05-26 (IR cycleMatchEnable + work queue deadlock)
+
+### Fix E — IR cycleMatchEnable bug (`935d3ff`)
+
+**Objaw:** IR DMA uruchomione (ContextControlSet, Dead=0), ale `seq=0 syt=0x0000 ageMs=0`
+— zero pakietów odebranych mimo że MOTU nadaje.
+
+**Przyczyna:** `OHCIConstants.hpp` definiowało `kIsochHeader = 1u << 30`.
+W `IsochReceiveContext.cpp` używano `kRun | kIsochHeader` przy starcie IR kontekstu.
+Bit 30 w ContextControlSet to **`cycleMatchEnable`** (OHCI §10.2.2 IR) — nie „włącznik nagłówka".
+Ustawienie go powoduje, że kontekst zatrzymuje się i czeka aż OHCI cycle counter
+zgadza się z wartością w rejestrze ContextMatch → zero pakietów dopóki przypadkowy match.
+
+**Fix:** `IsochReceiveContext.cpp` zmieniono na:
+```cpp
+hardware_->Write(registers_.ContextControlClear, 0xFFFFFFFFu);
+const uint32_t ctlValue = ContextControl::kRun | ContextControl::kWake;  // 0x9000
+hardware_->Write(registers_.ContextControlSet, ctlValue);
+```
+Usunięto `kIsochHeader` z `OHCIConstants.hpp`, dodano `kCycleMatchEnable` z pełną dokumentacją.
+Nagłówek isoch w buforze: sterowany przez flagę `"i"` w polu control deskryptora, nie przez ContextControlSet.
+
+### Fix F — Work queue serial deadlock (`5554280`)
+
+**Objaw:** `StartStreaming` wywoływane przez CoreAudio nigdy nie kończyło.
+CLOCK_STATUS read zwracało timeout — rejestry MOTU nieczytelne.
+
+**Przyczyna:** CoreAudio wywołuje `StartDevice` na serialowej dispatch queue.
+`StartStreaming` → AT async quadlet read → `IODispatchQueue::DispatchSync` czeka na completion.
+Completion callbacki lądują na tej samej serialowej queue → **deadlock**.
+
+**Fix:** `StartStreaming` wysłany przez `DispatchAsync_f` na nową `IODispatchQueue`.
+Potwierdzono w v10 logach: CLOCK_STATUS=0x0a000100 (clock locked, fetch active) — rejestry czytelne.
+
+### Fix G — Auto-aktywacja dextu przy starcie apki
+
+`ModernContentView.onAppear` teraz wywołuje `driverVM.installDriver()`.
+Dext instaluje/upgraduje się bez klikania przycisku. `DriverInstallManager` traktuje
+error 4 (OSSystemExtensionErrorDomain) jako sukces (wersja już aktywna).
+
+### Fix H — Zombie dext przy upgrade (AudioDriverKit)
+
+Przy upgrade dextu (v9→v10), stary `_driverkit` PID nie terminował — CoreAudio HAL
+trzymał aktywne `IOUserAudioDevice`. `systemextensionsctl` ugrzązło w
+`terminating_for_upgrade_via_delegate`. `kill -9` nie pomogło. **Jedyne rozwiązanie: reboot.**
+
+Lekcja: dext z aktywnym AudioDriverKit wymaga restartu systemu przy każdym upgrade.
+
+### Stan po sesji 7
+
+| Element | Wersja | Stan |
+|---------|--------|------|
+| work queue deadlock | v10 (`5554280`) | ✅ potwierdzone — rejestry OK |
+| IR cycleMatchEnable | v11 (`935d3ff`) | ⏳ deployed, czeka na test |
+| MOTU StartStreaming | v11 | ✅ wywoływane przez CoreAudio |
+| IR odbiera pakiety | v11 | ⏳ do weryfikacji |
+
+---
+
 ## Sesja debugowania — Mac Studio Tahoe (2026-05-18)
 
 ### Problem: FCP timeout
