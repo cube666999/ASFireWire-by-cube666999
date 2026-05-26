@@ -215,8 +215,13 @@ extension ASFWDriverConnector {
         source.setEventHandler { [weak self] in
             self?.handleAsyncMessages()
         }
-        source.setCancelHandler { [port] in
-            mach_port_deallocate(mach_task_self_, port)
+        source.setCancelHandler { [weak self] in
+            // GCD automatically drains and destroys the mach port when a MachReceiveSource
+            // is cancelled (Apple docs: "the system drains any remaining messages from the
+            // port and destroys the port"). Calling mach_port_deallocate here is a
+            // double-free that triggers EXC_GUARD (INVALID_RIGHT) on macOS 26 (Tahoe)
+            // when the IOKit user-client connection drops before the cancel fires.
+            self?.asyncPort = mach_port_t(MACH_PORT_NULL)
         }
         asyncSource = source
         source.resume()
