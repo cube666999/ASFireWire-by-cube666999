@@ -347,9 +347,13 @@ void PrepareClockEngineForStart(AudioClockEngineState& state) {
              sampleRate,
              state.ioBufferPeriodFrames);
 
-    state.audioDevice->UpdateCurrentZeroTimestamp(0, 0);
-
+    // Anchor to the present, not (0,0).
+    // (0,0) tells CoreAudio "sample 0 happened at boot time" — it then tries to
+    // fast-forward through hours of missed IO cycles before the first real tick
+    // arrives, producing a "sample time not consecutive" storm that kills IO in ~5s.
     const uint64_t currentTime = mach_absolute_time();
+    state.audioDevice->UpdateCurrentZeroTimestamp(0, currentTime);
+
     state.timestampTimer->WakeAtTime(kIOTimerClockMachAbsoluteTime,
                                      currentTime + *state.hostTicksPerBuffer,
                                      0);
@@ -394,17 +398,17 @@ void HandleClockTimerTick(AudioClockEngineState& state, uint64_t time) {
     const uint32_t q8 = state.rxQueueValid ? state.rxQueueReader->CorrHostNanosPerSampleQ8() : 0;
     const uint64_t hostTicksPerBuffer = detail::ComputeHostTicksPerBuffer(state, q8, rxPllReady);
 
-    if (currentHostTime != 0) {
-        currentSampleTime += state.ioBufferPeriodFrames;
-        currentHostTime += hostTicksPerBuffer;
-    } else {
-        currentSampleTime = 0;
-        currentHostTime = time;
-    }
-
-    state.audioDevice->UpdateCurrentZeroTimestamp(currentSampleTime, currentHostTime);
+    // Advance sample time by exactly one IO period.
+    // Use the ACTUAL timer fire time (`time`) as the anchor host time, not the
+    // ideal computed time (prevAnchor + H).  Computing from the ideal anchor
+    // causes it to drift behind the real clock by accumulated jitter; after ~10s
+    // CoreAudio detects the divergence and logs "sample time not consecutive".
+    // Using the actual fire time keeps the anchor pinned to real-time on every
+    // tick (matches Apple SimpleAudioDriver reference pattern).
+    currentSampleTime += state.ioBufferPeriodFrames;
+    state.audioDevice->UpdateCurrentZeroTimestamp(currentSampleTime, time);
     state.timestampTimer->WakeAtTime(kIOTimerClockMachAbsoluteTime,
-                                     currentHostTime + hostTicksPerBuffer,
+                                     time + hostTicksPerBuffer,
                                      0);
 
     detail::LogPeriodicMetrics(state, time, localEncodingActive, rxFill, rxPllReady, q8);

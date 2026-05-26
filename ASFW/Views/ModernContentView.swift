@@ -171,6 +171,9 @@ struct ModernContentView: View {
             topologyVM.startAutoRefresh()
             romExplorerVM.setConnector(debugVM.connector, topologyViewModel: topologyVM)
             loadLoggingPreset()
+            // Auto-activate on launch so we don't need a button click for install/upgrade.
+            // Error 4 (same version already active) is treated as success in DriverInstallManager.
+            driverVM.installDriver()
         }
         .onDisappear {
             debugVM.disconnect()

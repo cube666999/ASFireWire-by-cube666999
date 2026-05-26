@@ -742,10 +742,27 @@ kern_return_t ASFWAudioDriver::StartDevice(IOUserAudioObjectID in_object_id,
         return kIOReturnNotReady;
     }
 
+    // Guard against double-start: if CoreAudio calls StartDevice for a second
+    // client context while we are already running, skip re-initialisation.
+    // Re-initialising would reset the zero-timestamp anchor mid-stream (sample
+    // time jumps back to 0 from ~1.7 M) which triggers "not consecutive" errors.
+    if (ivars->runtime.isRunning.load(std::memory_order_acquire)) {
+        ASFW_LOG(Audio, "ASFWAudioDriver: StartDevice already running — skipping re-init");
+        return kIOReturnSuccess;
+    }
+
     if (ivars->device.audioNub) {
+        // StartAudioStreaming creates queues and dispatches the actual MOTU register
+        // writes + DMA start to a background thread (to avoid work queue deadlock).
+        // It only returns an error for hard precondition failures (no coordinator,
+        // guid=0) — in that case propagate so the HAL knows we cannot start.
         const kern_return_t startKr = ivars->device.audioNub->StartAudioStreaming();
         if (startKr != kIOReturnSuccess) {
-            ASFW_LOG(Audio, "ASFWAudioDriver: StartAudioStreaming failed: 0x%x", startKr);
+            ASFW_LOG(Audio,
+                     "ASFWAudioDriver: StartAudioStreaming prerequisites failed 0x%x"
+                     " — not starting clock engine",
+                     startKr);
+            return startKr;
         }
 
         // StartAudioStreaming creates the rx/tx queues lazily (CreateRxQueue / CreateTxQueue).

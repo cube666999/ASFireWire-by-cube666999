@@ -32,10 +32,15 @@ Implementacja: `ASFWDriver/Audio/Backends/MOTUAudioBackend.cpp`
 
 | Bity | Stała | Wartość | Znaczenie |
 |------|-------|---------|-----------|
-| [10:8] | `kClockRateMask = 0x00000700` | 0x02 = 48kHz | Aktualny sample rate |
-| [27] | `kFetchPCMFrames = 0x02000000` | 1 = aktywny | Streaming aktywny |
+| [10:8] | `kClockRateMask = 0x00000700` | 0x01 = 48kHz | Aktualny sample rate |
+| [25] | `kFetchPCMFrames = 0x02000000` | 1 = aktywny | Streaming aktywny |
 
 > ⚠️ `kClockRateMask = 0x00000700` (NIE `0x0000ff00`) — potwierdzone przez kext: `andl $0x700`
+>
+> ⚠️ Rate code tabela (Linux `clock_rates[]`, indeksy 0–5): 44100=0x00, **48000=0x01**, 88200=0x02, 96000=0x03, 176400=0x04, 192000=0x05.
+> Potwierdzone: `CLOCK_STATUS=0x08000100 rateCode=0x01` przy MOTU ustawionym na 48kHz (hardware test 2026-05-25).
+>
+> ⚠️ `kFetchPCMFrames = 0x02000000` = bit 25 (NIE bit 27). Bit 27 (`0x08000000`) to inny status MOTU (clock locked / device ready) — widoczny w CLOCK_STATUS odczycie idle.
 
 ### PACKET_FORMAT (0x0b10) — bit layout
 
@@ -49,36 +54,65 @@ Wartość do zapisu: `0xC2` = `0x80 | 0x40 | 0x02` ✅ potwierdzono w kexcie
 
 ### ISOC_COMM_CONTROL (0x0b00) — bit layout
 
-| Bity | Znaczenie |
-|------|-----------|
-| 31 | Change RX isoch state |
-| 30 | RX isoch activated |
-| [29:24] | RX channel number |
-| 23 | Change TX isoch state |
-| 22 | TX isoch activated |
-| [21:16] | TX channel number |
+⚠️ **Nazewnictwo z perspektywy MOTU (device-centric), NIE hosta:**
+
+| Bity | Znaczenie (MOTU-centric) | Odpowiada (host-centric) |
+|------|--------------------------|--------------------------|
+| 31 | Change "RX" isoch state | zmiana kanału IT (host→device) |
+| 30 | "RX" isoch activated | IT aktywowany |
+| [29:24] | "RX" channel number | numer kanału IT (host→device) |
+| 23 | Change "TX" isoch state | zmiana kanału IR (device→host) |
+| 22 | "TX" isoch activated | IR aktywowany |
+| [21:16] | "TX" channel number | numer kanału IR (device→host) |
+
+**Mapowanie kanałów w kodzie:**
+- bity [29:24] (`kRxChannelShift=24`) ← `itChannel` (MOTU odbiera = host→device)
+- bity [21:16] (`kTxChannelShift=16`) ← `irChannel` (MOTU nadaje = device→host)
+
+Przykład irCh=0, itCh=1: `0xC1C00000` (MOTU nadaje IR na ch=0, odbiera IT z ch=1)
 
 ---
 
 ## Sekwencja StartStreaming (MOTUAudioBackend)
 
-Odpowiednik Linux `begin_session` + `switch_fetching_mode`:
+Odpowiednik Linux `begin_session` + `switch_fetching_mode` (obie wywołane **przed** startem DMA):
 
 ```
 1. ReadRegister(0x0b14)               → odczyt CLOCK_STATUS (log rate code)
 2. IRM AllocateResources(irCh, itCh)  → rezerwacja kanałów + bandwidth
 3. WriteRegister(0x0b10, 0xC2)        → PACKET_FORMAT: S400 + exclude differed
 4. isoch_.StartReceive(irCh)          → start IR OHCI DMA
-5. WriteRegister(0x0b00, ctrl)        → ISOC_COMM_CONTROL: aktywuj oba kanały  ← PRZED IT!
-6. isoch_.StartTransmit(itCh)         → start IT OHCI DMA  (SYT gate przechodzi — MOTU nadaje)
-7. ReadModifyWrite(0x0b14)            → CLOCK_STATUS: ustaw FETCH_PCM_FRAMES
+5. WriteRegister(0x0b00, ctrl)        → ISOC_COMM_CONTROL: aktywuj oba kanały (Linux: begin_session)
+6. ReadModifyWrite(0x0b14)            → CLOCK_STATUS: ustaw FETCH_PCM_FRAMES  ← PRZED IT! (Linux: switch_fetching_mode)
+7. isoch_.StartTransmit(itCh)         → start IT OHCI DMA  (SYT gate przechodzi — MOTU już nadaje IR)
 ```
 
-> ⚠️ **KRYTYCZNE — kolejność kroków 4→5→6:**
-> `IsochService::StartTransmit` czeka 500ms na IR SYT clock. MOTU nie zacznie nadawać IR
-> dopóki nie dostanie ISOC_COMM_CONTROL. Pisz ISOC_COMM_CONTROL po `StartReceive` ale
-> **przed** `StartTransmit` — inaczej deadlock (timeout 500ms, StartStreaming fails).
-> Potwierdzone przez hardware test 2026-05-25. Fix w `MOTUAudioBackend.cpp`.
+> ⚠️ **KRYTYCZNE — kolejność kroków 4→5→6→7:**
+>
+> `IsochService::StartTransmit` czeka 500ms na IR SYT clock. MOTU V3 NIE wyśle żadnych IR
+> pakietów dopóki **obie** operacje nie zostaną wykonane:
+> - Krok 5: ISOC_COMM_CONTROL — mówi MOTU które kanały isoch używać
+> - Krok 6: CLOCK_STATUS FETCH_PCM_FRAMES — **to dopiero wyzwala nadawanie IR przez MOTU**
+>
+> Pisz **oba** rejestry po `StartReceive` ale **przed** `StartTransmit`.
+>
+> Poprzedni błąd (FETCH_PCM_FRAMES po StartTransmit): klasyczny deadlock —
+> StartTransmit czekał na SYT, MOTU czekało na FETCH_PCM_FRAMES → timeout 500ms.
+> **Potwierdzone przez hardware test 2026-05-25 (sesja 5). Fix w `MOTUAudioBackend.cpp`.**
+
+### ISOC_COMM_CONTROL — odczyt zwraca niezerową wartość
+
+MOTU zwraca `0x3000` z odczytu 0x0b00 w stanie idle (bity dolne [15:0]).
+Kod wykonuje read-modify-write: `ctrl &= ~kIsocMask; ctrl |= nasze_bity`.
+Bity `0x3000` z odczytu są zachowywane — MOTU je ustawił, niech pozostaną.
+
+Poprawna wartość zapisu (irCh=0, itCh=1): `0xC1C00000`
+- bity[31:24]=0xC1 → Change=1, Activated=1, RX-channel=1 (IT=1, host→device)
+- bity[23:16]=0xC0 → Change=1, Activated=1, TX-channel=0 (IR=0, device→host)
+
+**Błąd wykryty 2026-05-25 sesja 5:** poprzedni kod miał kanały zamienione miejscami
+(`irCh` w polu RX, `itCh` w polu TX), co powodowało że MOTU nadawało IR na kanale 1,
+a nasze IR DMA słuchało kanału 0 → zero pakietów odebranych.
 
 **Wszystkie operacje = quadlet write (tCode=0x0)** — inny code path niż FCP block write
 (tCode=0x1). `WriteQuad(length=4)` → `WriteCommand` automatycznie wybiera tCode=0x0.

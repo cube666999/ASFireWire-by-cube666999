@@ -301,22 +301,26 @@ IOReturn MOTUAudioBackend::StartStreaming(uint64_t guid) noexcept {
 
     // Step 6 — ISOC_COMM_CONTROL: activate MOTU RX+TX isochronous channels.
     //
-    // This MUST come before StartTransmit.  IsochService::StartTransmit waits
-    // up to 500 ms for the IR SYT clock to be established — but MOTU V3 will
-    // not send any isochronous packets until this register is written.  Writing
-    // it here tells MOTU to begin transmitting on the IR channel, allowing the
-    // SYT gate to be satisfied before IT starts.
+    // Must precede FETCH_PCM_FRAMES and StartTransmit.  Tells MOTU which isoch
+    // channels to use for IR (device→host) and IT (host→device).
     //
-    // MOTU V3 register 0x0b00 is effectively write-only; the read may return 0,
-    // which is handled gracefully (ctrl starts at 0 and we OR in the required bits).
+    // ⚠️  MOTU-centric naming: "RX" = MOTU receives from host = host→device = our IT.
+    //                          "TX" = MOTU transmits to host = device→host = our IR.
+    // So the channel fields are:
+    //   bits [29:24] ("RX channel") = itChannel  (host→device, MOTU receives)
+    //   bits [21:16] ("TX channel") = irChannel  (device→host, MOTU transmits)
+    //
+    // Note: register 0x0b00 is readable; MOTU may return non-zero current state
+    // (observed: 0x3000 in lower bits).  We mask with kIsocMask and OR in our bits
+    // to perform a correct read-modify-write.
     {
         uint32_t ctrl = 0;
-        (void)ReadRegister(nodeId, gen, kIsocCtrlOff, ctrl); // write-only on V3; ignore failure
+        (void)ReadRegister(nodeId, gen, kIsocCtrlOff, ctrl); // preserve lower bits MOTU owns
         ctrl &= ~kIsocMask;
         ctrl |= kChangeRxIsocState | kRxIsocActivated |
-                (static_cast<uint32_t>(irChannel) << kRxChannelShift) |
+                (static_cast<uint32_t>(itChannel) << kRxChannelShift) |  // MOTU-RX = IT (host→device)
                 kChangeTxIsocState | kTxIsocActivated |
-                (static_cast<uint32_t>(itChannel) << kTxChannelShift);
+                (static_cast<uint32_t>(irChannel) << kTxChannelShift);   // MOTU-TX = IR (device→host)
 
         if (!WriteRegister(nodeId, gen, kIsocCtrlOff, ctrl)) {
             ASFW_LOG_ERROR(Audio, "MOTUAudioBackend: ISOC_COMM_CONTROL write failed");
@@ -328,9 +332,39 @@ IOReturn MOTUAudioBackend::StartStreaming(uint64_t guid) noexcept {
                  ctrl, irChannel, itChannel);
     }
 
-    // Step 7 — Start IT DMA (playback to MOTU).
-    // MOTU is now streaming IR packets (ISOC_COMM_CONTROL written above), so the
-    // 500 ms SYT gate inside IsochService::StartTransmit will be satisfied quickly.
+    // Step 7 — CLOCK_STATUS: set FETCH_PCM_FRAMES to trigger MOTU IR streaming.
+    //
+    // Linux equivalent: switch_fetching_mode(true) called immediately after begin_session().
+    //
+    // CRITICAL: MOTU V3 will NOT send any IR isochronous packets until both
+    // ISOC_COMM_CONTROL (step 6) AND FETCH_PCM_FRAMES (this step) are written.
+    // This MUST happen before StartTransmit, which waits up to 500 ms for the IR
+    // SYT clock — that clock can only be established once MOTU starts sending IR.
+    //
+    // Previous ordering (FETCH_PCM_FRAMES after StartTransmit) caused a deadlock:
+    //   StartTransmit waited for IR SYT → MOTU waited for FETCH_PCM_FRAMES → timeout.
+    {
+        uint32_t clockStatus = 0;
+        if (ReadRegister(nodeId, gen, kClockStatusOff, clockStatus)) {
+            clockStatus |= kFetchPCMFrames;
+            if (!WriteRegister(nodeId, gen, kClockStatusOff, clockStatus)) {
+                ASFW_LOG_WARNING(Audio,
+                    "MOTUAudioBackend: FETCH_PCM_FRAMES write failed — MOTU may not stream");
+            } else {
+                ASFW_LOG(Audio,
+                    "MOTUAudioBackend: FETCH_PCM_FRAMES set (clockStatus=0x%08x) — MOTU streaming IR",
+                    clockStatus);
+            }
+        } else {
+            ASFW_LOG_WARNING(Audio,
+                "MOTUAudioBackend: CLOCK_STATUS read failed — attempting FETCH_PCM_FRAMES blind write");
+            (void)WriteRegister(nodeId, gen, kClockStatusOff, kFetchPCMFrames);
+        }
+    }
+
+    // Step 8 — Start IT DMA (playback to MOTU).
+    // MOTU is now streaming IR packets (ISOC_COMM_CONTROL + FETCH_PCM_FRAMES set above),
+    // so the 500 ms SYT gate inside IsochService::StartTransmit will be satisfied.
     {
         IOBufferMemoryDescriptor* txMemRaw = nullptr;
         uint64_t txBytes = 0;
@@ -338,6 +372,13 @@ IOReturn MOTUAudioBackend::StartStreaming(uint64_t guid) noexcept {
         auto txMem = Common::AdoptRetained(txMemRaw);
         if (txCopy != kIOReturnSuccess || !txMem || txBytes == 0) {
             (void)isoch_.StopReceive();
+            // Clear FETCH_PCM_FRAMES — IT could not start.
+            uint32_t cs = 0;
+            if (ReadRegister(nodeId, gen, kClockStatusOff, cs)) {
+                (void)WriteRegister(nodeId, gen, kClockStatusOff, cs & ~kFetchPCMFrames);
+            }
+            (void)WriteRegister(nodeId, gen, kIsocCtrlOff,
+                                kChangeRxIsocState | kChangeTxIsocState);
             ReleaseIRMResources();
             return (txCopy == kIOReturnSuccess) ? kIOReturnNoMemory : txCopy;
         }
@@ -351,25 +392,15 @@ IOReturn MOTUAudioBackend::StartStreaming(uint64_t guid) noexcept {
         if (kr != kIOReturnSuccess) {
             ASFW_LOG_ERROR(Audio, "MOTUAudioBackend: StartTransmit failed kr=0x%x", kr);
             (void)isoch_.StopReceive();
-            // Deactivate MOTU isochronous channels — IT could not start.
+            // Clear FETCH_PCM_FRAMES and deactivate MOTU isochronous channels.
+            uint32_t cs = 0;
+            if (ReadRegister(nodeId, gen, kClockStatusOff, cs)) {
+                (void)WriteRegister(nodeId, gen, kClockStatusOff, cs & ~kFetchPCMFrames);
+            }
             (void)WriteRegister(nodeId, gen, kIsocCtrlOff,
                                 kChangeRxIsocState | kChangeTxIsocState);
             ReleaseIRMResources();
             return kr;
-        }
-    }
-
-    // Step 8 — CLOCK_STATUS: set V3_FETCH_PCM_FRAMES to start PCM streaming.
-    {
-        uint32_t clockStatus = 0;
-        if (ReadRegister(nodeId, gen, kClockStatusOff, clockStatus)) {
-            clockStatus |= kFetchPCMFrames;
-            if (!WriteRegister(nodeId, gen, kClockStatusOff, clockStatus)) {
-                ASFW_LOG_WARNING(Audio,
-                    "MOTUAudioBackend: FETCH_PCM_FRAMES write failed (may still stream)");
-            } else {
-                ASFW_LOG(Audio, "MOTUAudioBackend: FETCH_PCM_FRAMES set");
-            }
         }
     }
 

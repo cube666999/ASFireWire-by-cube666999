@@ -37,10 +37,14 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
 
     func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
         let nsError = error as NSError
-        // Error 4 = OSSystemExtensionErrorExtensionNotFound when same version already active —
-        // treat as success so the UI doesn't show a spurious error on re-launch.
-        if nsError.domain == "OSSystemExtensionErrorDomain" && nsError.code == 4 && currentOp == .activation {
-            completion?(.success("Extension already active (version match)"))
+        // Error 4 = OSSystemExtensionErrorExtensionNotFound:
+        // - activation: same version already active → treat as success
+        // - deactivation: bundle path mismatch with installed dext → treat as "already gone"
+        if nsError.domain == "OSSystemExtensionErrorDomain" && nsError.code == 4 {
+            let msg = currentOp == .activation
+                ? "Extension already active (version match)"
+                : "Extension not found — already inactive or installed from different path"
+            completion?(.success(msg))
         } else {
             completion?(.failure(error))
         }

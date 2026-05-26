@@ -53,6 +53,62 @@ static ASFW::Audio::AudioCoordinator* GetAudioCoordinator(const ASFWAudioNub_IVa
     return ctx->audioCoordinator.get();
 }
 
+// Returns a shared_ptr copy so the coordinator outlives any background dispatch block.
+static std::shared_ptr<ASFW::Audio::AudioCoordinator>
+GetAudioCoordinatorShared(const ASFWAudioNub_IVars* iv) noexcept {
+    ASFWDriver* parent = GetParentASFWDriver(iv);
+    if (!parent) return nullptr;
+    auto* ctx = static_cast<ServiceContext*>(parent->GetServiceContext());
+    if (!ctx) return nullptr;
+    return ctx->audioCoordinator; // copies the shared_ptr — refcount increment
+}
+
+// ---------------------------------------------------------------------------
+// Background streaming start via IODispatchQueue.
+//
+// StartStreaming blocks the calling thread with IOSleep-based polling in
+// MOTUAudioBackend::ReadRegister / WriteRegister, and again for up to 500ms
+// in IsochService::StartTransmit (SYT gate).
+//
+// StartDevice — and therefore StartAudioStreaming — runs on the driver work
+// queue (a serial GCD-backed IODispatchQueue).  Async AT completion callbacks
+// are also dispatched to the same work queue via the interrupt handler.
+// A serial queue runs one block at a time, so if we block here the completions
+// queue up behind us and can never fire → all register writes time out after
+// 200ms → StartStreaming returns kIOReturnError → no MOTU streaming.
+//
+// Fix: create a separate IODispatchQueue for the streaming-start work.  That
+// queue runs on a different GCD thread, leaving the work queue free to process
+// AT completion callbacks while MOTUAudioBackend polls.
+//
+// IODispatchQueue is the only permitted concurrency primitive in DriverKit:
+//   - std::thread  : disabled (_LIBCPP_HAS_THREADS 0 in DriverKit SDK)
+//   - <pthread.h>  : not in the DriverKit SDK header search path
+//   - <dispatch/dispatch.h> : not in the DriverKit SDK header search path
+// IODispatchQueue::DispatchAsync_f (C function pointer, no Obj-C block needed)
+// is included via <DriverKit/DriverKit.h> already in this translation unit.
+// ---------------------------------------------------------------------------
+
+struct BackgroundStreamCtx {
+    std::shared_ptr<ASFW::Audio::AudioCoordinator> coordinator;
+    uint64_t guid;
+};
+
+static void BackgroundStreamFn(void* ctx) noexcept {
+    auto* args = static_cast<BackgroundStreamCtx*>(ctx);
+    const IOReturn kr = args->coordinator->StartStreaming(args->guid);
+    if (kr != kIOReturnSuccess) {
+        ASFW_LOG(Audio,
+                 "ASFWAudioNub: Background StartStreaming failed GUID=0x%016llx kr=0x%x",
+                 args->guid, kr);
+    } else {
+        ASFW_LOG(Audio,
+                 "ASFWAudioNub: Background StartStreaming succeeded GUID=0x%016llx",
+                 args->guid);
+    }
+    delete args;
+}
+
 struct ProtocolRuntimeBinding {
     ASFW::Discovery::DeviceRecord* device{nullptr};
     ASFW::Audio::IDeviceProtocol* protocol{nullptr};
@@ -639,21 +695,52 @@ kern_return_t IMPL(ASFWAudioNub, StartAudioStreaming)
         return kIOReturnSuccess;
     }
 
-    auto* coordinator = GetAudioCoordinator(ivars);
-    if (!coordinator) {
+    // Capture shared_ptr so the coordinator outlives the background block even if
+    // the dext receives a Stop() call while streaming is starting.
+    auto coordinatorSp = GetAudioCoordinatorShared(ivars);
+    if (!coordinatorSp) {
         ASFW_LOG(Audio, "ASFWAudioNub: StartAudioStreaming: missing AudioCoordinator");
         return kIOReturnNotReady;
     }
 
-    // Ensure queues exist before starting isoch.
+    // Ensure queues exist. These are synchronous IOKit memory allocations —
+    // they do NOT block on async work and complete before we return.
     (void)CreateRxQueue(ivars);
     (void)CreateTxQueue(ivars);
 
-    const IOReturn kr = coordinator->StartStreaming(ivars->guid);
-    if (kr != kIOReturnSuccess) {
-        ASFW_LOG(Audio, "ASFWAudioNub: StartAudioStreaming failed GUID=0x%016llx kr=0x%x", ivars->guid, kr);
+    // ⚠️  THREADING: coordinator->StartStreaming blocks the calling thread via
+    // IOSleep-based polling in MOTUAudioBackend::ReadRegister / WriteRegister, and
+    // again for up to 500ms in IsochService::StartTransmit (SYT gate).
+    //
+    // StartDevice — and therefore this method — runs on the driver work queue
+    // (a serial GCD queue).  Async AT completion callbacks are also dispatched to
+    // the same work queue through the interrupt handler.  If we block here, the
+    // completions are queued behind us and can never run → all register writes time
+    // out after 200ms → StartStreaming returns kIOReturnError → no MOTU streaming.
+    //
+    // Fix: dispatch StartStreaming to a GCD global (concurrent) queue so the work
+    // queue thread is immediately returned to service AT completion callbacks.
+    // The TX/RX queues above are already created; StartDevice can re-map them now.
+    const uint64_t guid = ivars->guid;
+    ASFW_LOG(Audio,
+             "ASFWAudioNub: Dispatching StartStreaming to background GUID=0x%016llx",
+             guid);
+
+    IODispatchQueue* bgQueue = nullptr;
+    const kern_return_t qkr = IODispatchQueue::Create("ASFW.StreamStart", 0, 0, &bgQueue);
+    if (qkr != kIOReturnSuccess || !bgQueue) {
+        ASFW_LOG_ERROR(Audio,
+                       "ASFWAudioNub: Failed to create background queue kr=0x%x",
+                       qkr);
+        return kIOReturnError;
     }
-    return kr;
+    // Transfer ownership to the context struct; callback owns and deletes it.
+    auto* ctx = new BackgroundStreamCtx{coordinatorSp, guid};
+    bgQueue->DispatchAsync_f(ctx, BackgroundStreamFn);
+    // Release our retain — GCD retains the queue internally for the pending work.
+    bgQueue->release();
+
+    return kIOReturnSuccess;
 }
 
 kern_return_t IMPL(ASFWAudioNub, StopAudioStreaming)

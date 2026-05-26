@@ -8,16 +8,52 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ SESJA NA MAC STUDIO — Przeczytaj to na starcie
 
-> **Stan na 2026-05-25 (sesja 4):**
-> - ✅ MOTU 828 MK3 pojawia się w **System Settings → Sound** jako "FireWire" — potwierdzono!
-> - ✅ CoreAudio wywołuje `StartDevice` → `StartAudioStreaming` → `MOTUAudioBackend::StartStreaming`
-> - ✅ IRM fix działa — `local-IRM CAS OK` w logach, kanały i bandwidth alokowane
-> - ✅ IR DMA startuje (OHCI context aktywny)
-> - ❌ **Aktualny bloker:** `StartTransmit timeout` — ISOC_COMM_CONTROL był pisany za późno
-> - 🔧 **Fix wdrożony:** ISOC_COMM_CONTROL przeniesiony przed `StartTransmit` (deadlock naprawiony)
-> - ⏳ **Czeka na test:** zbuduj w Xcode (Cmd+B), zainstaluj, puść muzykę, sprawdź logi
+> **Stan na 2026-05-26 (sesja 6):**
+> - ✅ CoreAudio wywołuje `StartDevice` — **potwierdzone przez logi coreaudiod**
+> - ✅ IO faktycznie działa — 234 816 klatek (≈5s @ 48kHz) przepływa przez urządzenie
+> - ✅ `ASFWAudioDevice` jest widoczny w CoreAudio jako preferred output/input
+> - ❌ **Bloker (naprawiony):** "Sample time is not consecutive" — 2 bugi w `AudioClockEngine`
+> - 🔧 **Fix C:** `UpdateCurrentZeroTimestamp(0, currentTime)` zamiast `(0, 0)` — patrz niżej
+> - 🔧 **Fix D:** guard przed double-start w `StartDevice` — patrz niżej
+> - ⏳ **Czeka na test:** Cmd+B → otwórz apkę → puść muzykę → sprawdź czy IO trwa >5s
 
-### Stan po sesji 4
+### Odkrycia sesji 6 (2026-05-26)
+
+**Jak poprawnie czytać logi drivera (ważne!):**
+`log` w zsh to wbudowana funkcja matematyczna — **zawsze używaj pełnej ścieżki:**
+```bash
+/usr/bin/log show --last 10m --debug --info --predicate 'process == "coreaudiod"' 2>/dev/null | grep -iE "(ASFW|StartIO|StartDevice|consecutive|error)"
+```
+
+**Fix C — UpdateCurrentZeroTimestamp(0, 0) → (0, currentTime):**
+`AudioClockEngine.cpp` `PrepareClockEngineForStart()` ustawiał anchor na `(sampleTime=0, hostTime=0)`.
+CoreAudio interpretuje to jako "sample 0 był w chwili 0" (dawn of time, wiele godzin temu).
+Natychmiast liczy ile IO cycles "zaległych" → próbuje dogonić → chaos → "not consecutive" → IO stop po ~5s.
+Fix: `UpdateCurrentZeroTimestamp(0, mach_absolute_time())` — anchor jest teraz.
+
+**Fix D — double-start guard w StartDevice:**
+Jeśli CoreAudio ma dwa klientów używających urządzenia jednocześnie (np. Spotify + inny proces),
+wywołuje `StartDevice` dwa razy. Drugie wywołanie resetowało anchor do `(0,0)` podczas gdy
+sample time był na ~1,7M → skok wstecz = "not consecutive". Fix: early return gdy `isRunning == true`.
+
+### Odkrycia sesji 5 (2026-05-25)
+
+**Fix A — FETCH_PCM_FRAMES przed StartTransmit:**
+MOTU V3 wymaga **obu** operacji zanim zacznie wysyłać IR:
+1. `ISOC_COMM_CONTROL` — które kanały isoch
+2. `CLOCK_STATUS | FETCH_PCM_FRAMES` — **to wyzwala nadawanie IR przez MOTU**
+Linux robi `begin_session()` + `switch_fetching_mode(true)` oba przed startem DMA.
+
+**Fix B — zamiana kanałów w ISOC_COMM_CONTROL:**
+Rejestr 0x0b00 używa nazewnictwa z perspektywy MOTU (device-centric):
+- bity [29:24] = "RX" = MOTU **odbiera** = host→device = nasz **IT** kanał
+- bity [21:16] = "TX" = MOTU **nadaje** = device→host = nasz **IR** kanał
+
+Poprzedni błąd: `irCh` w polu RX, `itCh` w polu TX — MOTU nadawało IR na kanale 1,
+nasze IR DMA słuchało kanału 0 → zero pakietów. Fix: zamieniono miejscami.
+Poprawna wartość (irCh=0, itCh=1): `0xC1C00000`.
+
+### Stan po sesji 5
 
 | Krok | Status |
 |------|--------|
@@ -25,7 +61,9 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 | StartDevice wywoływane przez CoreAudio | ✅ **POTWIERDZONE** |
 | IRM alokacja (local-IRM shadow bypass) | ✅ **POTWIERDZONE** |
 | IR DMA startuje | ✅ **POTWIERDZONE** |
-| ISOC_COMM_CONTROL pisany przed StartTransmit | ✅ Fix wdrożony — **wymaga testu** |
+| ISOC_COMM_CONTROL + FETCH_PCM_FRAMES przed StartTransmit | ✅ Fix wdrożony — **wymaga testu** |
+| AudioClockEngine timestamp anchor | ✅ Fix C+D wdrożony (2026-05-26) |
+| IO trwa >5s bez "not consecutive" | ⏳ Czeka na test (build gotowy) |
 | StartTransmit (IT DMA) startuje | ⏳ Czeka na test po fixie |
 | Słyszysz dźwięk z Maca przez MOTU (TX) | ⏳ Czeka na test |
 | Pełny duplex (TX + RX) | ⏳ Kolejny etap |
@@ -59,10 +97,12 @@ ioreg -l -r -c ASFWAudioNub
 ```
 AudioCoordinator: Injecting MOTU V3 config ... in=14 out=18  ← config wstrzyknięty
 AudioCoordinator: StartStreaming backend=MOTU-V3              ← routing działa
-MOTUAudioBackend: CLOCK_STATUS=0x... rateCode=0x02            ← quadlet read OK
+MOTUAudioBackend: CLOCK_STATUS=0x... rateCode=0x01            ← quadlet read OK (0x01=48kHz)
 MOTUAudioBackend: IRM allocated IR ch=X IT ch=Y               ← IRM OK
 MOTUAudioBackend: PACKET_FORMAT=0x000000c2 written            ← quadlet write OK
-MOTUAudioBackend: Streaming started GUID=0x...                ← V3 sekwencja kompletna
+MOTUAudioBackend: ISOC_COMM_CONTROL=0x... (irCh=X itCh=Y)    ← MOTU dostaje kanały
+MOTUAudioBackend: FETCH_PCM_FRAMES set (clockStatus=0x...)    ← MOTU zaczyna nadawać IR!
+MOTUAudioBackend: Streaming started GUID=0x...                ← V3 sekwencja kompletna 🎯
 ```
 
 Jeśli **brak "Injecting MOTU V3 config"** → `OnDeviceAdded` nie widzi rekordu
