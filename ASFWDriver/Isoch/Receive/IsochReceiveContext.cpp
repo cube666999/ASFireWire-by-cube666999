@@ -97,7 +97,10 @@ kern_return_t IsochReceiveContext::Start() {
     hardware_->Write(registers_.CommandPtr, cmdPtr);
 
     hardware_->Write(registers_.ContextControlClear, 0xFFFFFFFFu);
-    const uint32_t ctlValue = ContextControl::kRun | ContextControl::kIsochHeader;
+    // kRun (bit 15) | kWake (bit 12) = 0x9000, matching Linux CONTEXT_RUN | CONTEXT_WAKE.
+    // ⚠️ Do NOT set kCycleMatchEnable (bit 30) here: that would block reception until a
+    //    specific cycle counter value is matched, causing zero packets received.
+    const uint32_t ctlValue = ContextControl::kRun | ContextControl::kWake;
     hardware_->Write(registers_.ContextControlSet, ctlValue);
 
     const uint32_t contextMask = 1u << contextIndex_;

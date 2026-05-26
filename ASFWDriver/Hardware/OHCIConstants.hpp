@@ -108,8 +108,17 @@ struct ContextControl {
     static constexpr uint32_t kActive = kContextControlActiveBit;
     static constexpr uint32_t kEventCodeMask = kContextControlEventMask;
     static constexpr uint32_t kEventCodeShift = 0;
-    static constexpr uint32_t kIsochHeader = 1u << 30;     // IR: includes isoch header (OHCI §10.2.2)
-    static constexpr uint32_t kCycleMatchEnable = 1u << 30; // IT: stall until cycle match (OHCI §9.2)
+    // ⚠️ BIT 30 IS cycleMatchEnable FOR BOTH IR AND IT:
+    //   IR: setting this bit prevents reception until a specific cycle counter is matched
+    //       → NEVER set bit 30 when starting IR for immediate reception!
+    //   IT: setting this bit stalls transmit until the cycle counter matches ContextMatch[31:16]
+    //       → Set only when starting IT aligned to a specific cycle (StartTransmit with SYT gate)
+    //
+    // There is NO separate "isoch header enable" bit in ContextControlSet.
+    // The OHCI isoch header in the receive buffer (OHCI §10.2.2 Table 54) is enabled via
+    // context-descriptor flags (INPUT_MORE/INPUT_LAST descriptor control field bit 16 "i"),
+    // not via ContextControl bits.
+    static constexpr uint32_t kCycleMatchEnable = 1u << 30; // bit 30: cycleMatchEnable (§9.2 IT / §10.2.2 IR)
     // Mask of all writable bits (for safe clearing without hitting reserved bits)
     static constexpr uint32_t kWritableBits = kRun | kWake | kCycleMatchEnable;
 };
