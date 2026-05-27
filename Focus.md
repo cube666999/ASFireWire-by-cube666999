@@ -8,17 +8,52 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ SESJA NA MAC STUDIO — Przeczytaj to na starcie
 
-> **Stan na 2026-05-27 (sesja 8) — v12 gotowy do deploy:**
-> - ✅ v11 (IR cycleMatchEnable fix `935d3ff`) **przetestowany** — IR DMA active=1, Ctl=0x9400
-> - ✅ IR context startuje poprawnie, ale MOTU nie nadaje IR packets
-> - 🔍 **Diagnoza v11:** `ISOC_COMM_CONTROL` i `FETCH_PCM_FRAMES` były nieobecne w logach
->   → working tree na dev machine miał niezacommitowany bug: `StartTransmit` przed ISOC/FETCH_PCM
->   → deadlock: StartTransmit czekał 500ms na SYT, MOTU czekało na ISOC_COMM_CONTROL → timeout
-> - ✅ **Fix I** (`662ca0d`): przywrócono prawidłową kolejność + cleanup error paths
-> - 🔨 **Do zrobienia: zbuduj v12 i przetestuj**
-> - ⏳ **Oczekiwany wynik v12:** `ISOC_COMM_CONTROL=0xC1C00000`, `FETCH_PCM_FRAMES set`, `seq>0`
+> **Stan na 2026-05-27 (sesja 9) — v15 zainstalowany, czeka na test streamingu:**
+> - ✅ **Fix I** (`662ca0d`): ISOC_COMM_CONTROL + FETCH_PCM_FRAMES PRZED StartTransmit — potwierdzone w logach
+> - ✅ **Fix II** (`2dc6600`): IT DMA deadlock — SYT wait przeniesiony z PRZED na PO `isochTransmitContext_->Start()`
+> - ✅ v15 zainstalowany (UUID aktualny), "IT is running but MOTU not responding" w binarium potwierdzone
+> - 🔍 **Stan v14 (poprzedni test):** MOTU wciąż `seq=0` mimo Fix I — IT DMA nigdy nie startowało!
+>   → `IsochService::StartTransmit` czekało 500ms na IR SYT **przed** uruchomieniem IT OHCI context
+>   → IT nie nadawało pakietów → MOTU nie odpowiadało IR → deadlock
+> - ⏳ **Wymagany test v15:** Czy po Fix II MOTU zaczyna wysyłać IR (seq>0)?
+>   Oczekiwane w logach: `✅ Started IT Context for Channel 1!` + `seq>0 syt!=0x0000`
 
-### Fix I — ISOC_COMM_CONTROL i FETCH_PCM_FRAMES przed StartTransmit (v12, `662ca0d`)
+### Fix II — IT DMA deadlock w IsochService::StartTransmit (v15, `2dc6600`)
+
+**Objaw v13/v14:** `StartTransmit timeout: seq=0 syt=0x0000 active=1 established=0`
+Brak logu `✅ Started IT Context` — IT OHCI context nigdy nie startowało.
+
+**Przyczyna:** `IsochService::StartTransmit` miało strukturę:
+```
+1. Provision IT context
+2. ⛔ WAIT 500ms for IR SYT  ← bug — IT jeszcze nie startuje!
+3. Configure IT context
+4. Wait for TX fill
+5. Start IT context           ← za późno, timeout już nastąpił
+```
+SYT wait był PRZED `isochTransmitContext_->Start()`. IT DMA nigdy nie uruchamiało OHCI
+rejestrów, MOTU nie dostało IT pakietów, nie odpowiedziało IR → permanentny timeout.
+
+**Fix:** SYT wait przeniesiony na PO `isochTransmitContext_->Start()`:
+```
+1. Provision IT context
+2. Configure IT context
+3. Wait for TX fill
+4. Start IT context           ← IT DMA aktywne, OHCI nadaje
+5. ✅ WAIT 500ms for IR SYT  ← teraz MOTU może odpowiedzieć
+6. Jeśli SYT timeout → Stop IT, return kIOReturnTimeout
+```
+
+**Dowód:** `strings` na nowym binarium pokazuje nowy komunikat:
+`"StartTransmit SYT timeout: IT is running but MOTU not responding"`
+(Stary: `"missing established IR SYT clock"` → już nieobecny w binarium)
+
+Commit: `2dc6600`. Wersja: `0.2.15-audio`.
+
+> ⚠️ **Uwaga Xcode cache:** v14 był zbudowany ze stale cache'owanym `IsochService.o` — binarium
+> miało stary kod. Zawsze po zmianie `.cpp` w isoch: `rm -rf /tmp/ASFWBuild && ./build.sh --derived /tmp/ASFWBuild --no-bump`
+
+### Fix I — ISOC_COMM_CONTROL i FETCH_PCM_FRAMES przed StartTransmit (v13, `662ca0d`)
 
 **Objaw v11:** `StartTransmit timeout: seq=0 syt=0x0000 ageMs=0 active=1 established=0`
 Logi MOTU backend kończyły się na `PACKET_FORMAT=0x000000c2 written` — ani `ISOC_COMM_CONTROL`,
@@ -114,7 +149,7 @@ Poprzedni błąd: `irCh` w polu RX, `itCh` w polu TX — MOTU nadawało IR na ka
 nasze IR DMA słuchało kanału 0 → zero pakietów. Fix: zamieniono miejscami.
 Poprawna wartość (irCh=0, itCh=1): `0xC1C00000`.
 
-### Stan po sesji 5
+### Stan po sesji 9 (2026-05-27)
 
 | Krok | Status |
 |------|--------|
@@ -124,12 +159,13 @@ Poprawna wartość (irCh=0, itCh=1): `0xC1C00000`.
 | IR DMA startuje | ✅ **POTWIERDZONE** |
 | ISOC_COMM_CONTROL + FETCH_PCM_FRAMES przed StartTransmit | ✅ Fix wdrożony + potwierdzone (sesja 5) |
 | AudioClockEngine timestamp anchor | ✅ Fix C+D wdrożony (sesja 6) |
-| IR cycleMatchEnable bit 30 usunięty | ✅ Fix E (935d3ff) — IR active=1 Ctl=0x9400 potwierdzono v11 |
-| Work queue deadlock naprawiony | ✅ Fix F (5554280) — rejestry OK, StartDevice wywoływane |
-| ISOC_COMM_CONTROL + FETCH_PCM_FRAMES przed StartTransmit | ✅ Fix I (`662ca0d`) — v12 gotowy do testu |
-| IR odbiera pakiety (seq>0, syt!=0) | ⏳ **Test z v12** |
+| IR cycleMatchEnable bit 30 usunięty | ✅ Fix E (`935d3ff`) — IR active=1 Ctl=0x9400 potwierdzone v11 |
+| Work queue deadlock naprawiony | ✅ Fix F (`5554280`) — rejestry OK, StartDevice wywoływane |
+| ISOC_COMM_CONTROL + FETCH_PCM_FRAMES przed StartTransmit | ✅ Fix I (`662ca0d`) — v13 potwierdzone (sesja 8) |
+| IT DMA deadlock usunięty (SYT wait po Start()) | ✅ Fix II (`2dc6600`) — v15 zainstalowany (sesja 9) |
+| IR odbiera pakiety (seq>0, syt!=0) | ⏳ **Test z v15** |
+| IT DMA startuje i nadaje | ⏳ Czeka na IR SYT clock (teraz IT wystartuje pierwsze → MOTU odpisze) |
 | IO trwa >5s bez "not consecutive" | ⏳ Czeka na test |
-| StartTransmit (IT DMA) startuje | ⏳ Czeka na IR packets + SYT clock |
 | Słyszysz dźwięk z Maca przez MOTU (TX) | ⏳ Kolejny krok po IT start |
 | Pełny duplex (TX + RX) | ⏳ Kolejny etap |
 
@@ -170,15 +206,16 @@ MOTUAudioBackend: FETCH_PCM_FRAMES set (clockStatus=0x...)    ← MOTU zaczyna n
 MOTUAudioBackend: Streaming started GUID=0x...                ← V3 sekwencja kompletna 🎯
 
 Start: Wrote Match=0xf000000X Cmd=0x801f0001 Ctl=0x00009000   ← IR startuje (kRun|kWake)
-ExternalSyncBridge: seq=X syt=0x.... ageMs=Y                  ← IR odbiera pakiety!  (⬅️ to jest cel testu v11)
-ExternalSyncBridge: SYT clock established                     ← IT może startować
+✅ Started IT Context for Channel 1!                          ← IT DMA uruchomione (Fix II)
+ExternalSyncBridge: seq=X syt=0x.... ageMs=Y                  ← IR odbiera pakiety!  (⬅️ cel testu v15)
+ExternalSyncBridge: SYT clock established                     ← IT może nadawać zsynchronizowane ramki
 ```
 
-**Po v11 — pierwsze co sprawdzić:**
+**Po v15 — pierwsze co sprawdzić:**
 ```bash
-log show --last 5m --debug --info 2>/dev/null | grep -E "(ASFWDriver\.dext)" | grep -E "(Isoch|IR|syt|seq|SYT|Streaming)"
+log show --last 5m --debug --info 2>/dev/null | grep -E "(ASFWDriver\.dext)" | grep -E "(Isoch|IR|IT|syt|seq|SYT|Streaming|Started)"
 ```
-Szukaj linii `Start: Ctl=0x00009000` (dowód że bit 30 nie jest ustawiony) i `seq>0` (pakiety odebrane).
+Szukaj: `Started IT Context` (IT DMA uruchomione), `seq>0` (IR pakiety odebrane), `SYT clock established`.
 
 Jeśli **brak "Injecting MOTU V3 config"** → `OnDeviceAdded` nie widzi rekordu
 w `DeviceRegistry` (race condition: Config ROM scan niegotowy). W logu szukaj:
@@ -245,22 +282,24 @@ MOTU nie implementuje FCP mimo deklarowania AV/C units w Config ROM.
 - `ASFWDriver/Audio/AudioCoordinator.hpp/.cpp` — dodano `motuV3_`, `SetBusOps`, routing
 - `ASFWDriver/ASFWDriver.cpp` — `audioCoordinator->SetBusOps(&ctx.controller->Bus())`
 
-### Sekwencja StartStreaming (MOTUAudioBackend)
+### Sekwencja StartStreaming (MOTUAudioBackend) — aktualna po Fix I + Fix II
 
 ```
 1. ReadRegister(0x0b14)         → odczyt CLOCK_STATUS (log sample rate)
 2. IRM AllocateResources        → kanały irCh + itCh + bandwidth
 3. WriteRegister(0x0b10, fmt)   → PACKET_FORMAT: speed S400 + exclude differed
 4. isoch_.StartReceive(irCh)    → start IR OHCI DMA
-5. WriteRegister(0x0b00, ctrl)  → ISOC_COMM_CONTROL: aktywuj oba kanały (PRZED StartTransmit!)
-6. isoch_.StartTransmit(itCh)   → start IT OHCI DMA  ← SYT gate teraz przechodzi (MOTU nadaje)
-7. ReadModifyWrite(0x0b14)      → CLOCK_STATUS: ustaw FETCH_PCM_FRAMES
+5. WriteRegister(0x0b00, ctrl)  → ISOC_COMM_CONTROL: aktywuj oba kanały    ← Fix I: PRZED StartTransmit!
+6. ReadModifyWrite(0x0b14)      → CLOCK_STATUS: ustaw FETCH_PCM_FRAMES      ← Fix I: PRZED StartTransmit!
+7. isoch_.StartTransmit(itCh)   → start IT OHCI DMA  ← Fix II: SYT wait jest WEWNĄTRZ StartTransmit, PO uruchomieniu IT DMA
 ```
 
-> ⚠️ **Ważne:** ISOC_COMM_CONTROL musi być zapisany PRZED `StartTransmit`. `IsochService::StartTransmit`
-> czeka 500ms na IR SYT clock — ale MOTU nie zacznie wysyłać pakietów IR dopóki nie dostanie
-> ISOC_COMM_CONTROL. Deadlock: StartTransmit czeka na IR, IR czeka na ISOC_COMM_CONTROL.
-> Fix: pisz ISOC_COMM_CONTROL po starcie IR, przed startem IT.
+> ⚠️ **Ważne (Fix I):** ISOC_COMM_CONTROL i FETCH_PCM_FRAMES muszą być zapisane PRZED `StartTransmit`.
+> MOTU nie zacznie wysyłać IR dopóki nie dostanie obu tych rejestrów.
+>
+> ⚠️ **Ważne (Fix II):** `IsochService::StartTransmit` czeka 500ms na IR SYT clock, ale robi to
+> dopiero PO uruchomieniu IT OHCI DMA (`isochTransmitContext_->Start()`). Poprzednia kolejność
+> (SYT wait PRZED Start()) powodowała deadlock: IT nigdy nie nadawało → MOTU nie odpowiadało IR → timeout.
 
 **Kluczowe:** Wszystkie operacje to **quadlet write (tCode=0x0)** — inny code path niż zepsuty FCP block write (tCode=0x1). `WriteQuad(length=4)` → `WriteCommand` automatycznie wybiera tCode=0x0.
 

@@ -331,12 +331,14 @@ Sequoia diagnostic (2026-05-25) potwierdził:
 - MOTU kext używa `FireWireBlockRWCommand` (potwierdza Fix 10)
 - Bus reset recovery działa tak samo jak nasz `AudioCoordinator`
 
-### Następne kroki
+### Następne kroki (stan 2026-05-27, v15)
 
-1. **Hardware test na Tahoe** — podłączyć MOTU 828 MK3, sprawdzić `Streaming started` w logach
-2. **`HALC_ShellObject: "nope"`** — błąd rejestracji `IOUserAudioDevice` w AudioDriverKit HAL, przyczyna nieznana, debug na Tahoe
-3. **ASFWAudioNub w IORegistry** — czy pojawia się urządzenie audio w systemie po Fix 13
-4. **IR Receive** — kod istnieje, nigdy nie testowany na sprzęcie; MOTU V3 może nie używać standardowych nagłówków CIP
+1. **Hardware test v15** — uruchomić streaming z MOTU 828 MK3 z zainstalowanym v15 (Fix II)
+   - Oczekiwane: `✅ Started IT Context for Channel 1!` → `ExternalSyncBridge: seq>0` → `SYT clock established`
+   - Pełny sukces: `MOTUAudioBackend: Streaming started GUID=0x0001F20000087236`
+2. **Jeśli IR seq=0 mimo Fix II** — MOTU nie odpowiada IT pakietami; sprawdź format ISOC_COMM_CONTROL (kanały)
+3. **IR CIP format** — MOTU V3 może nie używać standardowych nagłówków CIP; AM824Decoder może odrzucać pakiety
+4. **Disable FCP spam dla MOTU V3** — AVCDiscovery wysyła FCP co ~2s do MOTU który ignoruje AVC
 
 ### Znany problem: OSSystemExtensionErrorDomain error 4 przy re-launch
 

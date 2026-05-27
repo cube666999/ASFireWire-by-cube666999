@@ -54,6 +54,98 @@ Szczegóły w `MOTU_828_MK3_BringUp.md`. Zidentyfikowane 2 krytyczne gapy (GAP 1
 
 ---
 
+## Sesja 9 — 2026-05-27 (IT DMA deadlock — Fix II)
+
+### Fix II — SYT wait przeniesiony po Start() w IsochService (`2dc6600`)
+
+**Objaw v13/v14:** `StartTransmit timeout: missing established IR SYT clock`
+`seq=0 syt=0x0000 active=1 established=0` — IT OHCI DMA nigdy nie startowało.
+Brak logu `✅ Started IT Context` mimo że IR i ISOC_COMM_CONTROL + FETCH_PCM_FRAMES były OK.
+
+**Przyczyna:** `IsochService::StartTransmit` miało SYT wait PRZED `isochTransmitContext_->Start()`:
+```
+1. Provision IT context
+2. ⛔ WAIT 500ms for IR SYT  ← bug! IT jeszcze nie startuje
+3. Configure IT context
+4. Wait for TX fill
+5. Start IT context          ← za późno, timeout już nastąpił
+```
+IT DMA nigdy nie uruchamiało rejestrów OHCI → MOTU nie dostało IT pakietów → nie odpowiadało IR
+→ permanentny 500ms timeout. Deadlock niezależny od Fix I.
+
+**Dowód z logów (09:41:35 — test historyczny na v13 / Fix I):**
+```
+09:41:35.405: ✅ provisioned IT Context with Dedicated Memory
+09:41:35.810: FETCH_PCM_FRAMES set ✅
+              (brak: "✅ Started IT Context")
+09:41:36.377: ❌ StartTransmit timeout: seq=0 syt=0x0000 active=1 established=0
+```
+Przerwa 555ms = 500ms SYT timeout + overhead. IT context nigdy nie startowało.
+
+**Fix:** SYT wait przeniesiony na PO `isochTransmitContext_->Start()`:
+```
+1. Provision IT context
+2. Configure IT context
+3. Wait for TX fill
+4. Start IT context           ← IT DMA aktywne, OHCI nadaje
+5. ✅ WAIT 500ms for IR SYT  ← MOTU dostaje IT pakiety i odpowiada IR
+6. Jeśli SYT timeout → Stop IT, return kIOReturnTimeout
+```
+
+Nowy komunikat błędu (potwierdzony przez `strings` na binarium):
+`"StartTransmit SYT timeout: IT is running but MOTU not responding"`
+Stary (`"missing established IR SYT clock"`) nieobecny w v15 binarium.
+
+Commit: `2dc6600`. Wersja: `0.2.15-audio`.
+
+### Xcode cache gotcha — zawsze czyść przed rebuildem IsochService
+
+v14 zbudowany ze stale cache'owanym `IsochService.o` — plik źródłowy zmieniony (Fix II),
+ale incremental build Xcode użył starego obiektu. Binarium v14 zawierało stary komunikat
+`"missing established IR SYT clock"` mimo prawidłowego kodu źródłowego.
+
+**Fix:** zawsze przed rebuildem po zmianach w isoch:
+```bash
+rm -rf /tmp/ASFWBuild && ./build.sh --derived /tmp/ASFWBuild --no-bump
+```
+
+### Zombie dext — cleanup przy upgrade
+
+v14 zainstalowany, ale procesy `_driverkit` z UUID A001CEB4 (PIDs 10907/10908) utkwiły
+w `[terminating for upgrade via delegate]`. Nowy v15 nie mógł się zainstalować.
+
+Cleanup:
+```bash
+sudo kill -9 10907
+sudo kill -9 10908
+```
+Po kill: UUID 9EB26C49 (v13) uruchomił się ponownie jako PIDs 16324/16326 — v15 mógł się zainstalować.
+
+### Stan po sesji 9
+
+| Element | Wersja | Stan |
+|---------|--------|------|
+| Fix I (ISOC_COMM_CONTROL + FETCH_PCM_FRAMES przed StartTransmit) | v13 (`662ca0d`) | ✅ potwierdzone w logach |
+| Fix II (SYT wait po Start() w IsochService) | v15 (`2dc6600`) | ✅ deployed, binary zweryfikowany |
+| v15 aktywny | v15 | ✅ `[activated enabled]` |
+| Test streamingu (IR seq>0) | v15 | ⏳ wymagany test hardware |
+
+---
+
+## Sesja 8 — 2026-05-27 (Fix I potwierdzony — FETCH_PCM_FRAMES)
+
+### Fix I potwierdzony na logach (`662ca0d`)
+
+Logi z v13 (UUID 9EB26C49 / "v13" po `systemextensionsctl`) pokazały:
+- `FETCH_PCM_FRAMES set ✅` — MOTU dostaje sygnał do nadawania
+- `ISOC_COMM_CONTROL=0xC1C00000 (irCh=0 itCh=1)` — kanały prawidłowe
+- Mimo to `seq=0 syt=0x0000` — IT DMA nie startowało (→ zidentyfikowane jako Fix II)
+
+Working tree na dev machine miał uncommitted modyfikację zamieniającą kolejność kroków.
+Commit `662ca0d` porządkuje zmiany i przywraca cleanup error paths.
+
+---
+
 ## Sesja 7 — 2026-05-26 (IR cycleMatchEnable + work queue deadlock)
 
 ### Fix E — IR cycleMatchEnable bug (`935d3ff`)
@@ -107,9 +199,9 @@ Lekcja: dext z aktywnym AudioDriverKit wymaga restartu systemu przy każdym upgr
 | Element | Wersja | Stan |
 |---------|--------|------|
 | work queue deadlock | v10 (`5554280`) | ✅ potwierdzone — rejestry OK |
-| IR cycleMatchEnable | v11 (`935d3ff`) | ⏳ deployed, czeka na test |
+| IR cycleMatchEnable | v11 (`935d3ff`) | ✅ potwierdzone — IR active=1 Ctl=0x9400 |
 | MOTU StartStreaming | v11 | ✅ wywoływane przez CoreAudio |
-| IR odbiera pakiety | v11 | ⏳ do weryfikacji |
+| IR odbiera pakiety | v11 | ✅ IR DMA startuje; seq=0 → Fix II (sesja 9) |
 
 ---
 
