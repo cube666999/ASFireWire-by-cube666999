@@ -129,6 +129,7 @@ final class ASFWDriverConnector: ObservableObject {
 
     // MARK: - Public API
 
+    @discardableResult
     func connect(forceAttempt: Bool = false) -> Bool {
         log("Manual connect requested", level: .info)
         connectionQueue.async {

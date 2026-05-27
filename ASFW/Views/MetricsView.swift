@@ -29,8 +29,11 @@ class MetricsViewModel: ObservableObject {
     
     func startPolling() {
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.fetchMetrics()
+            guard let self else { return }
+            // Capture the resolved strong reference before entering the Task to avoid
+            // "reference to captured var 'self'" warning in Swift 6 concurrency mode.
+            Task { @MainActor [self] in
+                self.fetchMetrics()
             }
         }
     }
@@ -321,7 +324,6 @@ struct PacketTypePie: View {
     var body: some View {
         let total = max(1, dataPackets + emptyPackets)
         let dataRatio = Double(dataPackets) / Double(total)
-        let emptyRatio = Double(emptyPackets) / Double(total)
         
         VStack {
             ZStack {

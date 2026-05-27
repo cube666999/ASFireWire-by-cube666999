@@ -52,7 +52,7 @@ struct AVCDebugView: View {
                 refreshAVCUnits()
             }
         }
-        .onChange(of: viewModel.isConnected) { connected in
+        .onChange(of: viewModel.isConnected) { _, connected in
             if connected {
                 refreshAVCUnits()
             }

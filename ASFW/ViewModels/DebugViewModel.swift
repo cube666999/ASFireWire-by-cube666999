@@ -154,9 +154,9 @@ class DebugViewModel: ObservableObject {
     }
     
     func getSubunitCapabilities(guid: UInt64, type: UInt8, id: UInt8) async -> ASFWDriverConnector.AVCMusicCapabilities? {
-        return await Task.detached {
-            return self.connector.getSubunitCapabilities(guid: guid, type: type, id: id)
-        }.value
+        // DebugViewModel is @MainActor; connector.getSubunitCapabilities is also @MainActor-isolated,
+        // so we call it directly — Task.detached would escape the actor and cause a Swift 6 error.
+        return connector.getSubunitCapabilities(guid: guid, type: type, id: id)
     }
 
 
