@@ -54,6 +54,90 @@ Szczegóły w `MOTU_828_MK3_BringUp.md`. Zidentyfikowane 2 krytyczne gapy (GAP 1
 
 ---
 
+## Sesja 10 — 2026-05-27 (Fix III + hipoteza workQueue deadlock)
+
+### Fix III — Allow requestedChannels > queueChannels w IsochAudioTxPipeline (`3241bd2`)
+
+**Objaw v15 (po Fix II):** IT configure nadal failowało:
+```
+IT: Configure failed - requestedChannels=18 queueChannels=2 mismatch
+```
+MOTU 828 MK3 wymaga `DBS=18` w CIP (18 quadletów na blok danych), ale CoreAudio
+dostarcza stereo (2 kanały PCM). Poprzedni kod sprawdzał `requestedChannels != queueChannels`
+→ fail za każdym razem.
+
+**Fix:** Zmieniono `!=` na `<` — extra AM824 sloty są silence-padded.
+Fail tylko gdy `requestedChannels < queueChannels` (audio byłoby obcięte).
+
+```cpp
+// PRZED (commit 3241bd2):
+if (requestedChannels != 0 && requestedChannels != queueChannels) { ... fail }
+
+// PO:
+// Allow requestedChannels > queueChannels: extra AM824 slots are silence-padded.
+if (requestedChannels != 0 && requestedChannels < queueChannels) { ... fail }
+```
+
+**Wynik:** IT poprawnie skonfigurowane — DBS=18, pcm=2, midiSlots=16:
+```
+IT: Channel geometry resolved pcm=2 dbs=18 midiSlots=16 framesPerData=8 payloadBytes=576
+IT: Cadence resolved mode=blocking dbs=18 framesPerData=8 cadence=NDDD
+✅ Started IT Context for Channel 1!
+IT: Stopped. Stats: 4644 pkts (3483D/1161N) IRQs=556
+```
+
+Commit: `3241bd2`. Wersja: `0.2.15-audio` (ten sam build co Fix II).
+
+### .mcp.json w katalogu projektu (`0d56712`)
+
+CodeGraph nie ładował się w sesjach Claude Code CLI — `.mcp.json` był tylko w katalogu
+nadrzędnym `FireWire/` (CWD serwera MCP). Claude Code CLI ładuje `.mcp.json` z katalogu
+projektu. Stworzono `/ASFireWire/.mcp.json` z tą samą konfiguracją.
+
+### Analiza: MOTU wciąż seq=0 mimo Fix II + Fix III
+
+**Stan:** IT nadaje 4644 pakietów w ~580ms, ISOC_COMM_CONTROL=0xC1C00000 ✅,
+FETCH_PCM_FRAMES set ✅, IR DMA aktywne (active=1) — ale `seq=0 ageMs=0`.
+
+**Wykluczone:**
+- Z=1 w IR CommandPtr — poprawne dla INPUT_LAST (Linux i Apple używają Z=1)
+- IR cycleMatchEnable — już naprawione w Fix E (`935d3ff`)
+- Kolejność MOTUAudioBackend — ISOC_COMM_CONTROL + FETCH_PCM_FRAMES są przed StartTransmit ✅
+- Błędne kanały — ISOC_COMM_CONTROL=0xC1C00000 (MOTU TX=ch0=nasz IR, MOTU RX=ch1=nasz IT) ✅
+
+**Hipoteza workQueue deadlock (niezweryfikowana):**
+
+`Poll()` jest wywoływany z dwóch miejsc:
+1. `InterruptDispatcher.cpp:32` — `workQueue.DispatchAsync(^{ isoch.ReceiveContext()->Poll(); })`
+2. `WatchdogCoordinator.cpp:110` — `isochReceiveContext->Poll()` (co 1ms)
+
+`workQueue` = "Default" dispatch queue (serial), uzyskiwany przez `DriverWiring::PrepareQueue`
+→ `CopyDispatchQueue("Default")`.
+
+`StartTransmit` blokuje workQueue przez do 600ms (100ms fill wait + 500ms SYT gate) używając
+`IOSleep`. Jeśli workQueue jest serial i `IOSleep` nie zwalnia kolejki, to `DispatchAsync(Poll)`
+z IR interrupt jest kolejkowane za blokującym `StartTransmit` → Poll() nie uruchamia się
+podczas okna SYT gate → bridge nigdy nie dostaje aktualizacji → `seq=0` → timeout.
+
+**Kontrargument:** WatchdogCoordinator też wywołuje Poll(). Jeśli watchdog działa na
+osobnej kolejce (nie workQueue), Poll() jest wywołane co 1ms niezależnie od blokady workQueue.
+
+**Następny krok:** Czytać `WatchdogCoordinator.cpp` — na jakiej kolejce działa?
+Jeśli watchdog = workQueue → deadlock hipoteza potwierdzona → fix potrzebny.
+Jeśli watchdog = osobna kolejka → Poll() działa, problem jest gdzie indziej.
+
+### Stan po sesji 10
+
+| Element | Stan |
+|---------|------|
+| Fix III (requestedChannels > queueChannels) | ✅ `3241bd2` |
+| .mcp.json w katalogu projektu | ✅ `0d56712` (aktywny od następnej sesji) |
+| IT nadaje 4644 pakietów | ✅ potwierdzone |
+| MOTU seq=0 (brak IR) | 🔍 hipoteza: workQueue deadlock z IOSleep w SYT gate |
+| WatchdogCoordinator — kolejka? | ⏳ do zbadania w następnej sesji |
+
+---
+
 ## Sesja 9 — 2026-05-27 (IT DMA deadlock — Fix II)
 
 ### Fix II — SYT wait przeniesiony po Start() w IsochService (`2dc6600`)

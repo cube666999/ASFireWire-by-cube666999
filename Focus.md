@@ -8,15 +8,13 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ SESJA NA MAC STUDIO — Przeczytaj to na starcie
 
-> **Stan na 2026-05-27 (sesja 9) — v15 zainstalowany, czeka na test streamingu:**
-> - ✅ **Fix I** (`662ca0d`): ISOC_COMM_CONTROL + FETCH_PCM_FRAMES PRZED StartTransmit — potwierdzone w logach
-> - ✅ **Fix II** (`2dc6600`): IT DMA deadlock — SYT wait przeniesiony z PRZED na PO `isochTransmitContext_->Start()`
-> - ✅ v15 zainstalowany (UUID aktualny), "IT is running but MOTU not responding" w binarium potwierdzone
-> - 🔍 **Stan v14 (poprzedni test):** MOTU wciąż `seq=0` mimo Fix I — IT DMA nigdy nie startowało!
->   → `IsochService::StartTransmit` czekało 500ms na IR SYT **przed** uruchomieniem IT OHCI context
->   → IT nie nadawało pakietów → MOTU nie odpowiadało IR → deadlock
-> - ⏳ **Wymagany test v15:** Czy po Fix II MOTU zaczyna wysyłać IR (seq>0)?
->   Oczekiwane w logach: `✅ Started IT Context for Channel 1!` + `seq>0 syt!=0x0000`
+> **Stan na 2026-05-27 (sesja 10) — v15 działa (IT 4644 pkts), MOTU wciąż seq=0:**
+> - ✅ **Fix I** (`662ca0d`): ISOC_COMM_CONTROL + FETCH_PCM_FRAMES PRZED StartTransmit
+> - ✅ **Fix II** (`2dc6600`): IT DMA deadlock — SYT wait po `Start()`; IT nadaje 4644 pkts ✅
+> - ✅ **Fix III** (`3241bd2`): Allow DBS=18 z pcm=2 (silence-padding); IT geometry OK ✅
+> - 🔍 **Aktualny problem:** MOTU wciąż `seq=0` mimo IT działającego — hipoteza workQueue deadlock
+>   → `Poll()` może być blokowane przez `IOSleep` w SYT gate na tym samym serial workQueue
+>   → **Następny krok: zbadać `WatchdogCoordinator.cpp`** — czy watchdog używa workQueue czy osobnej kolejki?
 
 ### Fix II — IT DMA deadlock w IsochService::StartTransmit (v15, `2dc6600`)
 
@@ -163,13 +161,29 @@ Poprawna wartość (irCh=0, itCh=1): `0xC1C00000`.
 | Work queue deadlock naprawiony | ✅ Fix F (`5554280`) — rejestry OK, StartDevice wywoływane |
 | ISOC_COMM_CONTROL + FETCH_PCM_FRAMES przed StartTransmit | ✅ Fix I (`662ca0d`) — v13 potwierdzone (sesja 8) |
 | IT DMA deadlock usunięty (SYT wait po Start()) | ✅ Fix II (`2dc6600`) — v15 zainstalowany (sesja 9) |
-| IR odbiera pakiety (seq>0, syt!=0) | ⏳ **Test z v15** |
-| IT DMA startuje i nadaje | ⏳ Czeka na IR SYT clock (teraz IT wystartuje pierwsze → MOTU odpisze) |
+| IT DBS=18 z pcm=2 (silence-padding) | ✅ Fix III (`3241bd2`) — IT nadaje 4644 pkts (sesja 10) |
+| IR odbiera pakiety (seq>0, syt!=0) | 🔍 **seq=0 po 500ms** — hipoteza: workQueue deadlock (sesja 10) |
+| Zbadać WatchdogCoordinator kolejkę | ⏳ **Następny krok** — czy watchdog = workQueue? |
+| IT DMA startuje i nadaje | ✅ IT: 4644 pkts (3483D/1161N) — ale MOTU nie odpowiada IR |
 | IO trwa >5s bez "not consecutive" | ⏳ Czeka na test |
 | Słyszysz dźwięk z Maca przez MOTU (TX) | ⏳ Kolejny krok po IT start |
 | Pełny duplex (TX + RX) | ⏳ Kolejny etap |
 
 ### Największe ryzyko które pozostało
+
+**⚠️ Aktualny bloker (sesja 10): workQueue deadlock — `Poll()` nie uruchamia się podczas SYT gate**
+
+Hipoteza: `StartTransmit` blokuje serial `workQueue` przez 600ms (`IOSleep` w fill wait + SYT gate).
+`InterruptDispatcher` dispatchu-je `Poll()` na ten sam workQueue → `Poll()` jest kolejkowane za
+blokującym `StartTransmit` → bridge nigdy nie dostaje aktualizacji → `seq=0` → timeout.
+
+Kontrargument: `WatchdogCoordinator` też wywołuje `Poll()` co 1ms — jeśli watchdog = osobna kolejka,
+problem jest gdzie indziej.
+
+**Następny krok:** Czytaj `ASFWDriver/Scheduling/WatchdogCoordinator.cpp` — która kolejka?
+- Jeśli watchdog = workQueue → deadlock potwierdzony → fix: IR interrupt aktualizuje bridge atomowo
+  bezpośrednio z `HandleSnapshot` (bez DispatchAsync), lub SYT gate na osobnym wątku
+- Jeśli watchdog = osobna kolejka → Poll() działa, szukaj przyczyny gdzie indziej
 
 **Isoch IR — format CIP** — MOTU V3 może nie używać standardowych nagłówków CIP (IEC 61883-1).
 `StreamProcessor`/`AM824Decoder` są napisane dla zgodnych strumieni. Jeśli MOTU pomija
