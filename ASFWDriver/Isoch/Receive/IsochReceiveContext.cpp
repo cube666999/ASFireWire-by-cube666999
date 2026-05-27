@@ -155,6 +155,15 @@ void IsochReceiveContext::Stop() {
 }
 
 uint32_t IsochReceiveContext::Poll() {
+    // Pre-lock raw call counter: incremented unconditionally to confirm Poll()
+    // is being reached by the watchdog, regardless of lock contention or state.
+    // Fires at call #1 (first ever), #10, #100, and every 500 after that.
+    const uint32_t raw = ++rawPollCount_;
+    if (raw == 1 || raw == 10 || raw == 100 || (raw % 500 == 0)) {
+        ASFW_LOG(Isoch, "IR Poll raw#%u ctx=%u ch=%u state=%{public}s",
+                 raw, contextIndex_, channel_, IRPolicy::ToStr(GetState()));
+    }
+
     if (rxLock_.test_and_set(std::memory_order_acquire)) {
         return 0;
     }
@@ -177,6 +186,22 @@ uint32_t IsochReceiveContext::Poll() {
         }
     });
 
+    totalProcessedSinceLast_ += processed;
+    ++pollCount_;
+
+    // Every 100 polls (~100 ms at 1 kHz watchdog cadence): report receive activity.
+    // If nothing arrived, also dump OHCI context register state to distinguish
+    // "MOTU not sending IR" from "context silently dead".
+    if (pollCount_ >= 100) {
+        ASFW_LOG(Isoch, "IR Poll[%u] ch=%u: %u pkts in last 100 polls (raw=%u)",
+                 contextIndex_, channel_, totalProcessedSinceLast_, raw);
+        if (totalProcessedSinceLast_ == 0) {
+            LogHardwareState();
+        }
+        pollCount_ = 0;
+        totalProcessedSinceLast_ = 0;
+    }
+
     audio_.OnPollEnd(*hardware_, processed, start);
 
     rxLock_.clear(std::memory_order_release);
@@ -196,9 +221,20 @@ void IsochReceiveContext::SetCallback(IsochReceiveCallback callback) {
 }
 
 void IsochReceiveContext::LogHardwareState() {
-#if 0
-    // Keep disabled unless troubleshooting; should be reimplemented using rxRing_ accessors.
-#endif
+    if (!hardware_) return;
+
+    const uint32_t ctl = hardware_->Read(registers_.ContextControlSet);
+    const uint32_t cmd = hardware_->Read(registers_.CommandPtr);
+
+    const bool running = (ctl & ContextControl::kRun)    != 0;
+    const bool active  = (ctl & ContextControl::kActive) != 0;
+    const bool dead    = (ctl & ContextControl::kDead)   != 0;
+    const uint8_t evt  = static_cast<uint8_t>(ctl & ContextControl::kEventCodeMask);
+
+    ASFW_LOG(Isoch, "IR HW[%u] ch=%u: ctl=0x%08x run=%d active=%d dead=%d evt=0x%02x cmdPtr=0x%08x",
+             contextIndex_, channel_, ctl,
+             static_cast<int>(running), static_cast<int>(active), static_cast<int>(dead),
+             evt, cmd);
 }
 
 } // namespace ASFW::Isoch

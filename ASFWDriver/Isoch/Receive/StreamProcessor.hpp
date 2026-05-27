@@ -45,7 +45,11 @@ public:
         RxCipSummary summary{};
         // Need at least isoch header (8) + CIP header (8)
         if (length < kIsochHeaderSize + 8) {
-            // ASFW_LOG(Isoch, "Short packet: %zu bytes", length);
+            const uint64_t ec = errorCount_.load(std::memory_order_relaxed);
+            if (ec == 0 || ec % 100 == 0) {
+                ASFW_LOG(Isoch, "IR short packet: %zu bytes (min %zu) [err#%llu]",
+                         length, kIsochHeaderSize + 8u, ec);
+            }
             errorCount_++;
             return summary;
         }
@@ -59,7 +63,13 @@ public:
         
         auto header = CIPHeader::Decode(quadlets[0], quadlets[1]);
         if (!header) {
-            // ASFW_LOG(Isoch, "Invalid CIP header");
+            const uint64_t ec = errorCount_.load(std::memory_order_relaxed);
+            if (ec == 0 || ec % 100 == 0) {
+                // Log raw Q0/Q1 (in memory byte order) to aid CIP layout debugging.
+                // Q0 EOH must be 0 (bit 31), Q1 EOH must be 1 (bit 31) per IEC 61883-1.
+                ASFW_LOG(Isoch, "IR CIP decode failed: q0=0x%08x q1=0x%08x len=%zu [err#%llu]",
+                         quadlets[0], quadlets[1], length, ec);
+            }
             errorCount_++;
             return summary;
         }
@@ -148,7 +158,7 @@ public:
                     }
                 }
                 if (extraSlotIndex != UINT32_MAX && extraSlotIndex < header->dataBlockSize) {
-                        const uint32_t q = SwapBigToHost(dataPtr[extraSlotIndex]);
+                        const uint32_t q = dataPtr[extraSlotIndex]; // OHCI pre-swapped; no further swap needed
                         const uint8_t label = static_cast<uint8_t>((q >> 24) & 0xFF);
                         ASFW_LOG(Isoch,
                                  "IR RX DICE diag: first extra slot[%u] label=0x%02x (%{public}s)",

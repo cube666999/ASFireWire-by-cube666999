@@ -3,7 +3,8 @@
 Fork: https://github.com/cube666999/ASFireWire-by-cube666999  
 Base: https://github.com/mrmidi/ASFireWire  
 Test device: MOTU 828 MK3 (target), developed with Claude Code  
-Tests: 493/493 passing
+Tests: 493/493 passing  
+Version: 0.2.17-audio (build 17)
 
 ---
 
@@ -23,7 +24,7 @@ Tests: 493/493 passing
 
 ---
 
-## Fixes (41 commits)
+## Fixes (43 commits)
 
 ### Fix 1 — ConnectOPCR: channel not written to oPCR register (critical)
 **File:** `ASFWDriver/Protocols/AVC/CMP/CMPClient.cpp`
@@ -247,6 +248,47 @@ Na maszynie developerskiej z zainstalowanym certyfikatem skrypt działa jak wcze
 
 ---
 
+### Fix 18 — CIPHeader OHCI double-swap (IR receive: every packet rejected)
+**Files:** `ASFWDriver/Isoch/Core/CIPHeader.hpp`,
+`ASFWDriver/Isoch/Audio/AM824Decoder.hpp`,
+`ASFWDriver/Isoch/Receive/StreamProcessor.hpp`
+
+`CIPHeader::Decode` called `SwapBigToHost` (`__builtin_bswap32` on LE/ARM64) on the two
+CIP quadlets before checking EOH bits and extracting fields.
+
+**Root cause:** On a LE host the OHCI controller already byte-swaps each received quadlet
+when writing to the DMA buffer, so the values read via `reinterpret_cast<uint32_t*>`
+are already in big-endian semantic order — no further swap is needed.
+Calling `SwapBigToHost` a second time reversed the bytes back to a scrambled value:
+
+```
+SwapBigToHost(0x80000000) = 0x00000080   // Q1 EOH bit was at bit 31, now at bit 7
+(0x00000080 >> 31) & 1 = 0 ≠ 1          // EOH1 check fails for every packet
+```
+
+Hardware test (v17) confirmed MOTU sends ~2300 IR packets/500 ms; all were silently
+discarded by the broken EOH check.  Same double-swap bug affected `AM824Decoder::DecodeSample`,
+`AM824Decoder::IsMIDI`, and the label-check in `StreamProcessor::ProcessPacket`.
+
+**Fix:** removed `SwapBigToHost` from all four sites; fields extracted directly from the
+OHCI-pre-swapped values.  The Python `analyze_isoch.py` tool already used this correct
+approach (`struct.unpack('>II', ...)` + direct shifts — no additional swap).
+
+---
+
+### Fix 17 — Pre-lock rawPollCount_ diagnostic in IsochReceiveContext::Poll()
+**Files:** `ASFWDriver/Isoch/Receive/IsochReceiveContext.hpp/.cpp`
+
+`Poll()` acquired `rxLock_` before any logging, so if the lock was contended the call
+was invisible — impossible to distinguish "Poll() never called" from "spinlock always busy".
+
+**Fix:** added `rawPollCount_` incremented unconditionally **before** the lock attempt,
+with sparse logging at calls #1, #10, #100, and every 500 thereafter.
+This proved Poll() was being called at ~1 kHz as expected, eliminating the watchdog
+scheduling and spinlock-contention hypotheses.
+
+---
+
 ### Fix 16 — CI: opt-in Node.js 24 dla GitHub Actions
 **Plik:** `.github/workflows/build-and-test.yml`  
 **Commit:** `2e21b0d`
@@ -300,8 +342,8 @@ All register constants verified against `MOTUFireWireAudio.kext` — see `MOTU_8
 | IR/TX queue wiring | ✅ | Fix 7 + Fix 8 |
 | `ASFWAudioNub` published → CoreAudio device | ⏳ | needs Tahoe hardware test |
 | `HALC_ShellObject: "nope"` AudioDriverKit error | 🐛 | to debug on Tahoe |
-| IR Receive hardware validation | 🚧 | code exists, untested |
-| **Hardware validation on Tahoe** | ⏳ | **next step** |
+| IR Receive hardware validation | 🔍 | CIPHeader fix applied (Fix 18) — pending test after restart |
+| **Hardware validation on Tahoe** | 🔍 | **next: restart + test IR SYT ESTABLISHED** |
 
 ---
 

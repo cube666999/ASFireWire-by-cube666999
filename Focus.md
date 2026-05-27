@@ -8,13 +8,18 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ SESJA NA MAC STUDIO — Przeczytaj to na starcie
 
-> **Stan na 2026-05-27 (sesja 10) — v15 działa (IT 4644 pkts), MOTU wciąż seq=0:**
+> **Stan na 2026-05-27 (sesja 12) — CIPHeader double-swap bug znaleziony i naprawiony:**
 > - ✅ **Fix I** (`662ca0d`): ISOC_COMM_CONTROL + FETCH_PCM_FRAMES PRZED StartTransmit
 > - ✅ **Fix II** (`2dc6600`): IT DMA deadlock — SYT wait po `Start()`; IT nadaje 4644 pkts ✅
 > - ✅ **Fix III** (`3241bd2`): Allow DBS=18 z pcm=2 (silence-padding); IT geometry OK ✅
-> - 🔍 **Aktualny problem:** MOTU wciąż `seq=0` mimo IT działającego — hipoteza workQueue deadlock
->   → `Poll()` może być blokowane przez `IOSleep` w SYT gate na tym samym serial workQueue
->   → **Następny krok: zbadać `WatchdogCoordinator.cpp`** — czy watchdog używa workQueue czy osobnej kolejki?
+> - ✅ **Diagnostyka (sesja 11):** `rawPollCount_` pre-lock + logi co 100 polls — potwierdziły ~2300 IR pkts/500ms
+> - ✅ **Fix IV (sesja 12):** CIPHeader OHCI double-swap — `CIPHeader::Decode` wywoływał `SwapBigToHost`
+>   (= `bswap32`) na wartościach już zamienionych przez hardware OHCI dla LE hosta.
+>   `SwapBigToHost(0x80000000)` = `0x00000080` → `bit31=0` → każdy pakiet odrzucany przez EOH1 check.
+>   Fix: usunięto `SwapBigToHost` z `Decode`, `AM824Decoder::DecodeSample`, `AM824Decoder::IsMIDI`
+>   i `StreamProcessor` label check. Dotyczy też `AM824Decoder`.
+> - 🔍 **Aktualny stan:** v18 (build 17) zainstalowany. Czeka na **restart komputera** + hardware test.
+>   Po restarcie: oczekiwane `IR SYT CLOCK ESTABLISHED` zamiast `IR CIP decode failed`.
 
 ### Fix II — IT DMA deadlock w IsochService::StartTransmit (v15, `2dc6600`)
 
@@ -162,33 +167,40 @@ Poprawna wartość (irCh=0, itCh=1): `0xC1C00000`.
 | ISOC_COMM_CONTROL + FETCH_PCM_FRAMES przed StartTransmit | ✅ Fix I (`662ca0d`) — v13 potwierdzone (sesja 8) |
 | IT DMA deadlock usunięty (SYT wait po Start()) | ✅ Fix II (`2dc6600`) — v15 zainstalowany (sesja 9) |
 | IT DBS=18 z pcm=2 (silence-padding) | ✅ Fix III (`3241bd2`) — IT nadaje 4644 pkts (sesja 10) |
-| IR odbiera pakiety (seq>0, syt!=0) | 🔍 **seq=0 po 500ms** — hipoteza: workQueue deadlock (sesja 10) |
-| Zbadać WatchdogCoordinator kolejkę | ⏳ **Następny krok** — czy watchdog = workQueue? |
-| IT DMA startuje i nadaje | ✅ IT: 4644 pkts (3483D/1161N) — ale MOTU nie odpowiada IR |
+| IR odbiera pakiety (seq>0, syt!=0) | 🔍 **Czeka na test po restarcie** — Fix IV (CIPHeader) wdrożony w v18 |
+| CIPHeader OHCI double-swap | ✅ **Fix IV** (sesja 12) — `SwapBigToHost` usunięty z decode path |
+| IT DMA startuje i nadaje | ✅ IT: 4644 pkts (3483D/1161N) — MOTU wysyła IR (~2300 pkts/500ms), Fix IV odblokuje |
 | IO trwa >5s bez "not consecutive" | ⏳ Czeka na test |
 | Słyszysz dźwięk z Maca przez MOTU (TX) | ⏳ Kolejny krok po IT start |
 | Pełny duplex (TX + RX) | ⏳ Kolejny etap |
 
 ### Największe ryzyko które pozostało
 
-**⚠️ Aktualny bloker (sesja 10): workQueue deadlock — `Poll()` nie uruchamia się podczas SYT gate**
+**⚠️ Aktualny bloker (sesja 11): nie wiadomo czy MOTU wysyła IR — dwie hipotezy:**
 
-Hipoteza: `StartTransmit` blokuje serial `workQueue` przez 600ms (`IOSleep` w fill wait + SYT gate).
-`InterruptDispatcher` dispatchu-je `Poll()` na ten sam workQueue → `Poll()` jest kolejkowane za
-blokującym `StartTransmit` → bridge nigdy nie dostaje aktualizacji → `seq=0` → timeout.
+**Scenariusz A — MOTU nie wysyła IR wcale:**
+Szukaj w logach po teście v15:
+```
+IR Poll[0] ch=0: 0 pkts in last 500 polls          ← 0 przez kilka kolejnych raportów = MOTU milczy
+IR HW[0] ch=0: ctl=0x00009400 run=1 active=1 dead=0  ← context żywy, ale nic nie przychodzi
+```
+Jeśli OHCI context `active=1` (HW przetwarza deskryptory) ale pakiety=0, MOTU nie wysyła na
+tym kanale. Sprawdź: czy `ISOC_COMM_CONTROL` ma właściwy IR channel (bity [21:16])?
 
-Kontrargument: `WatchdogCoordinator` też wywołuje `Poll()` co 1ms — jeśli watchdog = osobna kolejka,
-problem jest gdzie indziej.
+**Scenariusz B — MOTU wysyła IR, CIPHeader::Decode zwraca null:**
+Szukaj w logach:
+```
+IR CIP decode failed: q0=0x... q1=0x... len=... [err#0]    ← pierwsze CIP failure
+IR Poll[0] ch=0: 123 pkts in last 500 polls                ← pakiety przychodzą!
+```
+Jeśli `Decode` failuje, przejrzyj Q0/Q1: `eoh0=(q0>>31)&1` musi być 0, `eoh1=(q1>>31)&1` musi być 1.
+MOTU V3 używa standardowych nagłówków CIP per IEC 61883-6 (potwierdzone przez Linux driver).
 
-**Następny krok:** Czytaj `ASFWDriver/Scheduling/WatchdogCoordinator.cpp` — która kolejka?
-- Jeśli watchdog = workQueue → deadlock potwierdzony → fix: IR interrupt aktualizuje bridge atomowo
-  bezpośrednio z `HandleSnapshot` (bez DispatchAsync), lub SYT gate na osobnym wątku
-- Jeśli watchdog = osobna kolejka → Poll() działa, szukaj przyczyny gdzie indziej
-
-**Isoch IR — format CIP** — MOTU V3 może nie używać standardowych nagłówków CIP (IEC 61883-1).
-`StreamProcessor`/`AM824Decoder` są napisane dla zgodnych strumieni. Jeśli MOTU pomija
-nagłówki CIP lub używa własnego formatu, dekodowanie PCM nie zadziała.
-Objaw: IR DMA odbiera pakiety (Total Packets > 0), ale `AM824Decoder` odrzuca je z błędem DBC/CIP.
+**Scenariusz C — IR context staje się DEAD:**
+```
+IR HW[0] ch=0: ctl=0x00000800 run=0 active=0 dead=1 evt=0x...
+```
+→ Problem z deskryptorem DMA. Sprawdź `IsochRxDmaRing::SetupRings` — bit 27 (isoch header include).
 
 ### Uruchom to zanim podłączysz MOTU
 
@@ -227,9 +239,19 @@ ExternalSyncBridge: SYT clock established                     ← IT może nadaw
 
 **Po v15 — pierwsze co sprawdzić:**
 ```bash
-log show --last 5m --debug --info 2>/dev/null | grep -E "(ASFWDriver\.dext)" | grep -E "(Isoch|IR|IT|syt|seq|SYT|Streaming|Started)"
+log show --last 5m --debug --info 2>/dev/null | grep -E "(ASFWDriver\.dext)" | grep -E "(Isoch|IR|IT|syt|seq|SYT|Streaming|Started|Poll|CIP)"
 ```
 Szukaj: `Started IT Context` (IT DMA uruchomione), `seq>0` (IR pakiety odebrane), `SYT clock established`.
+
+**Nowe logi diagnostyczne (sesja 11) — co oznaczają:**
+```
+IR Poll[0] ch=0: 0 pkts in last 500 polls        ← zero pakietów przez ~500ms = MOTU milczy (scenariusz A)
+IR Poll[0] ch=0: 47 pkts in last 500 polls       ← MOTU wysyła! Szukaj dalej CIP errors
+IR HW[0] ch=0: ctl=0x9400 run=1 active=1 dead=0 ← context żywy i aktywny (dobry stan)
+IR HW[0] ch=0: ctl=0x0800 run=0 active=0 dead=1 ← context DEAD — problem z deskryptorami (scenariusz C)
+IR CIP decode failed: q0=... q1=... [err#0]      ← CIP header nie przechodzi EOH check (scenariusz B)
+IR short packet: N bytes (min 16) [err#0]         ← MOTU wysyła za krótkie pakiety
+```
 
 Jeśli **brak "Injecting MOTU V3 config"** → `OnDeviceAdded` nie widzi rekordu
 w `DeviceRegistry` (race condition: Config ROM scan niegotowy). W logu szukaj:

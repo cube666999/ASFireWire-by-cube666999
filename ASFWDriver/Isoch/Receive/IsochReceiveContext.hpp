@@ -105,6 +105,15 @@ private:
     IsochReceiveCallback callback_{nullptr};
     std::atomic_flag rxLock_ = ATOMIC_FLAG_INIT;
 
+    // rawPollCount_: incremented BEFORE the lock check on every Poll() call.
+    // Used to confirm Poll() is being called at all, independent of lock state.
+    // Only written on the work queue (single-threaded access via serial dispatch).
+    uint32_t rawPollCount_{0};
+
+    // Diagnostic counters — accessed only inside rxLock_, no atomics needed.
+    uint32_t pollCount_{0};
+    uint32_t totalProcessedSinceLast_{0};
+
     Registers GetRegisters(uint8_t index) const;
 };
 
