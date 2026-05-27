@@ -102,11 +102,18 @@ Odpowiednik Linux `begin_session` + `switch_fetching_mode` (obie wywołane **prz
 
 ### ISOC_COMM_CONTROL — odczyt zwraca niezerową wartość
 
-MOTU zwraca `0x3000` z odczytu 0x0b00 w stanie idle (bity dolne [15:0]).
-Kod wykonuje read-modify-write: `ctrl &= ~kIsocMask; ctrl |= nasze_bity`.
-Bity `0x3000` z odczytu są zachowywane — MOTU je ustawił, niech pozostaną.
+MOTU zwraca `0x3000` z odczytu 0x0b00 **w stanie idle** (bity dolne [15:0]).
+Jeśli MOTU było wcześniej w trybie streaming (poprzednia sesja), odczyt może zwrócić
+inne wartości, np. `0x1900` (potwierdzone sesja 14, 2026-05-28).
 
-Poprawna wartość zapisu (irCh=0, itCh=1): `0xC1C00000`
+Kod wykonuje dwuetapowe write (Fix 19, commit `68823bf`):
+1. **Deactivate**: `Change=1, Activated=0` (+ 20ms IOSleep)
+2. **Activate**: `Change=1, Activated=1, channels=X`
+
+Dwuetapowe podejście jest konieczne gdy MOTU jest w stale state — bezpośredni activate
+może być zignorowany bez prior deactivate.
+
+Poprawna wartość activate (irCh=0, itCh=1): `0xC1C00000 | (lowerBits & 0xFFFF)`
 - bity[31:24]=0xC1 → Change=1, Activated=1, RX-channel=1 (IT=1, host→device)
 - bity[23:16]=0xC0 → Change=1, Activated=1, TX-channel=0 (IR=0, device→host)
 
@@ -116,6 +123,17 @@ a nasze IR DMA słuchało kanału 0 → zero pakietów odebranych.
 
 **Wszystkie operacje = quadlet write (tCode=0x0)** — inny code path niż FCP block write
 (tCode=0x1). `WriteQuad(length=4)` → `WriteCommand` automatycznie wybiera tCode=0x0.
+
+### SYT gate — czas oczekiwania na IR clock
+
+`IsochService::StartTransmit` po uruchomieniu IT DMA czeka na `externalSyncBridge_.clockEstablished`.
+Wartość jest ustawiana przez `StreamProcessor` gdy zobaczy poprawny SYT z IR pakietów MOTU.
+
+- **500ms było za krótkie** (sesja 14): MOTU nie odpowiadało IR w ciągu 500ms mimo
+  poprawnego ISOC_COMM_CONTROL i FETCH_PCM_FRAMES.
+- **Fix 19**: timeout podniesiony do **3000ms**. Bramka wychodzi natychmiast gdy MOTU odpowie.
+- Jeśli przy SYT timeout `seq=0` → MOTU nie nadaje w ogóle (problem rejestrowy)
+- Jeśli `seq>0` ale `established=0` → MOTU nadaje ale CIP header odrzucony przez StreamProcessor
 
 ---
 

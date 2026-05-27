@@ -178,34 +178,46 @@ Poprawna wartość (irCh=0, itCh=1): `0xC1C00000`.
 | ISOC_COMM_CONTROL + FETCH_PCM_FRAMES przed StartTransmit | ✅ Fix I (`662ca0d`) — v13 potwierdzone (sesja 8) |
 | IT DMA deadlock usunięty (SYT wait po Start()) | ✅ Fix II (`2dc6600`) — v15 zainstalowany (sesja 9) |
 | IT DBS=18 z pcm=2 (silence-padding) | ✅ Fix III (`3241bd2`) — IT nadaje 4644 pkts (sesja 10) |
-| IR odbiera pakiety (seq>0, syt!=0) | 🔍 **Test w toku** — Fix 18 (CIPHeader) wdrożony, MOTU wykryty |
+| IR odbiera pakiety (seq>0, syt!=0) | 🔍 **Test w toku** — Fix 18+19 wdrożone, czeka na rebuild+test |
 | CIPHeader OHCI double-swap | ✅ **Fix 18** (sesja 12/13) — `SwapBigToHost` usunięty z decode path |
-| IT DMA startuje i nadaje | ✅ IT: 4644 pkts (3483D/1161N) — MOTU wysyła IR (~2300 pkts/500ms), Fix 18 odblokuje |
+| ISOC_COMM_CONTROL stale state | ✅ **Fix 19** (`68823bf`) — deactivate+20ms przed activate |
+| SYT gate 500ms→3000ms | ✅ **Fix 19** (`68823bf`) — MOTU ma więcej czasu na lock PLL |
+| IT DMA startuje i nadaje | ✅ IT: 4644 pkts (3483D/1161N) — MOTU wysyła IR (~2300 pkts/500ms), Fix 18+19 odblokowują |
 | IO trwa >5s bez "not consecutive" | ⏳ Czeka na streaming test |
 | Słyszysz dźwięk z Maca przez MOTU (TX) | ⏳ Kolejny krok po IR walidacji |
 | Pełny duplex (TX + RX) | ⏳ Kolejny etap |
 
-### Największe ryzyko które pozostało
+### Aktualny bloker (sesja 14, Fix 19) — SYT gate timeout
 
-**⚠️ Aktualny bloker (sesja 11): nie wiadomo czy MOTU wysyła IR — dwie hipotezy:**
+**Potwierdzony objaw (log sesja 14):** `Streaming stopped` ale nigdy `Streaming started`.
+→ `StartTransmit` zwraca `kIOReturnTimeout` (SYT gate) bo MOTU nie nadaje IR na ch=0.
 
-**Scenariusz A — MOTU nie wysyła IR wcale:**
-Szukaj w logach po teście v15:
-```
-IR Poll[0] ch=0: 0 pkts in last 500 polls          ← 0 przez kilka kolejnych raportów = MOTU milczy
-IR HW[0] ch=0: ctl=0x00009400 run=1 active=1 dead=0  ← context żywy, ale nic nie przychodzi
-```
-Jeśli OHCI context `active=1` (HW przetwarza deskryptory) ale pakiety=0, MOTU nie wysyła na
-tym kanale. Sprawdź: czy `ISOC_COMM_CONTROL` ma właściwy IR channel (bity [21:16])?
+**Zaimplementowane fixy (Fix 19, commit `68823bf`):**
 
-**Scenariusz B — MOTU wysyła IR, CIPHeader::Decode zwraca null:**
-Szukaj w logach:
+1. **Deactivate przed activate** — jeśli MOTU jest w stale state (lower bits `0x1900` zamiast idle `0x3000`),
+   bezpośredni activate może być zignorowany. Two-step: deactivate (20ms) → activate.
+
+2. **SYT gate: 500ms → 3000ms** — MOTU może potrzebować więcej czasu na lock PLL po odebraniu
+   pierwszych IT pakietów.
+
+**Po rebuildzie, szukaj w logach:**
 ```
-IR CIP decode failed: q0=0x... q1=0x... len=... [err#0]    ← pierwsze CIP failure
-IR Poll[0] ch=0: 123 pkts in last 500 polls                ← pakiety przychodzą!
+MOTUAudioBackend: ISOC_COMM_CONTROL deactivate=0x808019xx    ← deactivate wysłany
+MOTUAudioBackend: ISOC_COMM_CONTROL activate=0xC1C019xx      ← activate z kanałami
 ```
-Jeśli `Decode` failuje, przejrzyj Q0/Q1: `eoh0=(q0>>31)&1` musi być 0, `eoh1=(q1>>31)&1` musi być 1.
-MOTU V3 używa standardowych nagłówków CIP per IEC 61883-6 (potwierdzone przez Linux driver).
+Brak `SYT timeout` w logach = **sukces** ✅ (MOTU zaczął nadawać IR w <3s).
+
+Jeśli dalej `SYT timeout`:
+- `seq=0` → MOTU NIE nadaje IR wcale (problem rejestrowy lub hardware)
+- `seq>0, established=0` → MOTU nadaje IR, ale CIPHeader::Decode odrzuca (format CIP)
+
+**Scenariusz po naprawie SYT — CIPHeader format:**
+Gdy IR cmdPtr zacznie się ruszać (MOTU nadaje), sprawdź:
+```
+IR CIP decode failed: q0=0x... q1=0x... len=...    ← CIP parsing failure
+IR Poll[0] ch=0: N pkts in last 100 polls           ← N>0 = MOTU nadaje
+```
+`eoh0=(q0>>31)&1` musi być 0 (bez OHCI swap — Fix 18), `eoh1=(q1>>31)&1` musi być 1.
 
 **Scenariusz C — IR context staje się DEAD:**
 ```
@@ -230,17 +242,19 @@ ioreg -l -r -c ASFWAudioNub
 - Brak wpisu → problem po stronie `AudioCoordinator`/`MOTUAudioBackend` (protokół)
 - Wpis jest, ale brak urządzenia audio → problem po stronie `ASFWAudioDriver`/HAL (HALC error)
 
-### Czego szukać w logach — sukces
+### Czego szukać w logach — sukces (Fix 19 markery)
 
 ```
-AudioCoordinator: Injecting MOTU V3 config ... in=14 out=18  ← config wstrzyknięty
-AudioCoordinator: StartStreaming backend=MOTU-V3              ← routing działa
-MOTUAudioBackend: CLOCK_STATUS=0x... rateCode=0x01            ← quadlet read OK (0x01=48kHz)
-MOTUAudioBackend: IRM allocated IR ch=X IT ch=Y               ← IRM OK
-MOTUAudioBackend: PACKET_FORMAT=0x000000c2 written            ← quadlet write OK
-MOTUAudioBackend: ISOC_COMM_CONTROL=0x... (irCh=X itCh=Y)    ← MOTU dostaje kanały
-MOTUAudioBackend: FETCH_PCM_FRAMES set (clockStatus=0x...)    ← MOTU zaczyna nadawać IR!
-MOTUAudioBackend: Streaming started GUID=0x...                ← V3 sekwencja kompletna 🎯
+AudioCoordinator: Injecting MOTU V3 config ... in=14 out=18   ← config wstrzyknięty
+AudioCoordinator: StartStreaming backend=MOTU-V3               ← routing działa
+MOTUAudioBackend: CLOCK_STATUS=0x... rateCode=0x01             ← quadlet read OK (0x01=48kHz)
+MOTUAudioBackend: IRM allocated IR ch=X IT ch=Y                ← IRM OK
+MOTUAudioBackend: PACKET_FORMAT=0x000000c2 written             ← quadlet write OK
+MOTUAudioBackend: ISOC_COMM_CONTROL deactivate=0x808019xx      ← Fix 19: deactivate (NEW)
+MOTUAudioBackend: ISOC_COMM_CONTROL activate=0xC1C019xx (irCh=0 itCh=1)  ← MOTU dostaje kanały
+MOTUAudioBackend: FETCH_PCM_FRAMES set (clockStatus=0x0a000100)← MOTU zaczyna nadawać IR!
+[Isoch] ✅ Started IT Context for Channel 1!                   ← IT DMA aktywne
+MOTUAudioBackend: Streaming started GUID=0x...                 ← V3 sekwencja kompletna 🎯
 
 Start: Wrote Match=0xf000000X Cmd=0x801f0001 Ctl=0x00009000   ← IR startuje (kRun|kWake)
 ✅ Started IT Context for Channel 1!                          ← IT DMA uruchomione (Fix II)
