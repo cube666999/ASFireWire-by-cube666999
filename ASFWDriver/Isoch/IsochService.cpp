@@ -274,10 +274,15 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
     ASFW_LOG(Controller, "[Isoch] ✅ Started IT Context for Channel %u!", channel);
 
     // Now that IT DMA is running, MOTU V3 will receive IT packets and begin sending IR.
-    // Wait up to 500 ms for the IR SYT clock to be established — this confirms MOTU is
-    // actively transmitting isochronous data. (Previously this wait was before Start(),
-    // which prevented IT from ever starting and caused a permanent 500 ms timeout.)
-    constexpr uint32_t kSytGateTimeoutMs = 500;
+    // Wait up to 3000 ms for the IR SYT clock to be established — this confirms MOTU is
+    // actively transmitting isochronous data.
+    // 500ms was too short: MOTU V3 needs time to lock its PLL to the isochronous bus
+    // cycle and start its own isoch transmission after receiving the first IT packets.
+    // Hardware tests showed IR cmdPtr never advanced in 500ms; extending to 3000ms gives
+    // MOTU enough startup time without blocking the driver thread excessively.
+    // (Previously this wait was before Start(), which prevented IT from ever starting and
+    // caused a permanent 500ms timeout — that deadlock is gone since session 5.)
+    constexpr uint32_t kSytGateTimeoutMs = 3000;
     constexpr uint32_t kSytGatePollMs = 5;
     bool sytClockEstablished = false;
     for (uint32_t waitedMs = 0; waitedMs < kSytGateTimeoutMs; waitedMs += kSytGatePollMs) {
@@ -300,6 +305,11 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
             if (nowTicks >= lastTicks) {
                 ageMs = ASFW::Timing::hostTicksToNanos(nowTicks - lastTicks) / 1'000'000ULL;
             }
+        }
+        // Dump IR hardware state for diagnostics: cmdPtr static = MOTU not sending at all;
+        // cmdPtr advanced but seq=0 = IR packets arriving but StreamProcessor not processing.
+        if (isochReceiveContext_) {
+            isochReceiveContext_->LogHardwareState();
         }
         ASFW_LOG(Controller,
                  "[Isoch] ❌ StartTransmit SYT timeout: IT is running but MOTU not responding"

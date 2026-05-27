@@ -300,37 +300,48 @@ IOReturn MOTUAudioBackend::StartStreaming(uint64_t guid) noexcept {
     }
 
     // Step 6 — ISOC_COMM_CONTROL: activate both RX and TX channels on MOTU.
-    // ⚠️ MUST happen BEFORE StartTransmit. StartTransmit blocks up to 500ms waiting for
-    // the IR SYT clock. MOTU will not send any IR packets until this register is written —
-    // it tells MOTU which isochronous channels to use. Calling this after StartTransmit
-    // creates a deadlock: StartTransmit waits for SYT, MOTU waits for ISOC_COMM_CONTROL.
+    // ⚠️ MUST happen BEFORE StartTransmit. StartTransmit blocks waiting for the IR SYT
+    // clock. MOTU will not send any IR packets until this register is written — it tells
+    // MOTU which isochronous channels to use.
     // Linux equivalent: begin_session() called before start_streams().
     //
     // Channel mapping is MOTU-centric (device perspective, opposite of host perspective):
     //   bits [29:24]  kRxChannelShift=24  MOTU "RX" = host→device = itChannel (IT)
     //   bits [21:16]  kTxChannelShift=16  MOTU "TX" = device→host = irChannel (IR)
-    // MOTU may return non-zero current state from read (observed: 0x3000 in lower bits);
-    // kIsocMask clears only the bits we control.
+    // MOTU may return non-zero lower-word state from read (observed: 0x3000 in idle,
+    // 0x1900 in stale-streaming state); kIsocMask clears only the bits we control.
+    //
+    // ⚠️ Two-step approach: first send deactivate, then activate.
+    // If MOTU is in a stale streaming state from a previous session, a direct activate
+    // write may be ignored. A prior deactivate (Change bits set, Activated bits CLEAR)
+    // forces MOTU through a known "stopped" transition before the activate write.
+    // This handles the case where CLOCK_STATUS already had FETCH_PCM_FRAMES set on entry.
     {
-        uint32_t ctrl = 0;
-        if (!ReadRegister(nodeId, gen, kIsocCtrlOff, ctrl)) {
-            ASFW_LOG_WARNING(Audio, "MOTUAudioBackend: ISOC_COMM_CONTROL read failed, using 0");
-            ctrl = 0;
-        }
-        ctrl &= ~kIsocMask;
-        ctrl |= kChangeRxIsocState | kRxIsocActivated |
+        uint32_t lowerBits = 0;
+        (void)ReadRegister(nodeId, gen, kIsocCtrlOff, lowerBits);
+        lowerBits &= ~kIsocMask; // keep only MOTU's lower-word status bits
+
+        // 6a — Deactivate: tell MOTU to stop both channels (Change=1, Activated=0).
+        const uint32_t deactCtrl = lowerBits | kChangeRxIsocState | kChangeTxIsocState;
+        (void)WriteRegister(nodeId, gen, kIsocCtrlOff, deactCtrl);
+        ASFW_LOG(Audio, "MOTUAudioBackend: ISOC_COMM_CONTROL deactivate=0x%08x", deactCtrl);
+        IOSleep(20); // allow MOTU state machine to settle
+
+        // 6b — Activate: set channels and activate both TX and RX.
+        const uint32_t actCtrl = lowerBits |
+                kChangeRxIsocState | kRxIsocActivated |
                 (static_cast<uint32_t>(itChannel) << kRxChannelShift) |
                 kChangeTxIsocState | kTxIsocActivated |
                 (static_cast<uint32_t>(irChannel) << kTxChannelShift);
 
-        if (!WriteRegister(nodeId, gen, kIsocCtrlOff, ctrl)) {
+        if (!WriteRegister(nodeId, gen, kIsocCtrlOff, actCtrl)) {
             ASFW_LOG_ERROR(Audio, "MOTUAudioBackend: ISOC_COMM_CONTROL write failed");
             (void)isoch_.StopReceive();
             ReleaseIRMResources();
             return kIOReturnError;
         }
-        ASFW_LOG(Audio, "MOTUAudioBackend: ISOC_COMM_CONTROL=0x%08x (irCh=%u itCh=%u)",
-                 ctrl, irChannel, itChannel);
+        ASFW_LOG(Audio, "MOTUAudioBackend: ISOC_COMM_CONTROL activate=0x%08x (irCh=%u itCh=%u)",
+                 actCtrl, irChannel, itChannel);
     }
 
     // Step 7 — CLOCK_STATUS: set V3_FETCH_PCM_FRAMES to trigger MOTU to begin IR transmission.
