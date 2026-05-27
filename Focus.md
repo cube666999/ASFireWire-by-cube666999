@@ -8,13 +8,39 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ SESJA NA MAC STUDIO — Przeczytaj to na starcie
 
-> **Stan na 2026-05-26 (sesja 7) — po restarcie:**
-> - ✅ v10 (work queue deadlock fix `5554280`) potwierdzony: MOTU rejestry czytelne, `StartStreaming` wywoływane
-> - ✅ v11 (IR cycleMatchEnable fix `935d3ff`) wdrożony po restarcie — **wymaga testu**
-> - ✅ `kRun|kWake = 0x9000` w IR ContextControlSet (usunięto błędny bit 30 = `kCycleMatchEnable`)
-> - ✅ Auto-aktywacja dextu przy starcie apki (`ModernContentView.onAppear → installDriver()`)
-> - ⏳ **Do testu IR:** `seq > 0`, `syt != 0x0000`, `ageMs > 0` w logach ExternalSyncBridge
-> - ⏳ **Do testu IO:** IO trwa >5s bez "not consecutive" (Fix C+D z sesji 6, patrz niżej)
+> **Stan na 2026-05-27 (sesja 8) — v12 gotowy do deploy:**
+> - ✅ v11 (IR cycleMatchEnable fix `935d3ff`) **przetestowany** — IR DMA active=1, Ctl=0x9400
+> - ✅ IR context startuje poprawnie, ale MOTU nie nadaje IR packets
+> - 🔍 **Diagnoza v11:** `ISOC_COMM_CONTROL` i `FETCH_PCM_FRAMES` były nieobecne w logach
+>   → working tree na dev machine miał niezacommitowany bug: `StartTransmit` przed ISOC/FETCH_PCM
+>   → deadlock: StartTransmit czekał 500ms na SYT, MOTU czekało na ISOC_COMM_CONTROL → timeout
+> - ✅ **Fix I** (`662ca0d`): przywrócono prawidłową kolejność + cleanup error paths
+> - 🔨 **Do zrobienia: zbuduj v12 i przetestuj**
+> - ⏳ **Oczekiwany wynik v12:** `ISOC_COMM_CONTROL=0xC1C00000`, `FETCH_PCM_FRAMES set`, `seq>0`
+
+### Fix I — ISOC_COMM_CONTROL i FETCH_PCM_FRAMES przed StartTransmit (v12, `662ca0d`)
+
+**Objaw v11:** `StartTransmit timeout: seq=0 syt=0x0000 ageMs=0 active=1 established=0`
+Logi MOTU backend kończyły się na `PACKET_FORMAT=0x000000c2 written` — ani `ISOC_COMM_CONTROL`,
+ani `FETCH_PCM_FRAMES` nie były zapisywane.
+
+**Przyczyna:** Working tree na dev machine miał uncommitted modyfikację, która zamieniała
+kolejność Steps 6-8 w `StartStreaming`. `StartTransmit` (Step 6) blokował 500ms czekając na
+IR SYT clock. MOTU nie wysyłało IR dopóki nie dostanie ISOC_COMM_CONTROL + FETCH_PCM_FRAMES
+(które były Steps 7-8) → klasyczny deadlock.
+
+**Commit `f543fcc`** (na Mac Studio) już miał poprawną kolejność. Commit **`662ca0d`** (dev)
+porządkuje zmiany, przywraca cleanup error paths i poprawia komentarze.
+
+**Prawidłowa kolejność (`MOTUAudioBackend::StartStreaming`):**
+```
+Step 5: isoch_.StartReceive(irCh)           ← IR DMA
+Step 6: WriteRegister(ISOC_COMM_CONTROL)    ← MOTU dostaje kanały  ← PRZED StartTransmit!
+Step 7: WriteRegister(FETCH_PCM_FRAMES)     ← MOTU zaczyna nadawać ← PRZED StartTransmit!
+Step 8: isoch_.StartTransmit(itCh)          ← IT DMA (SYT gate już przejdzie)
+```
+
+Commit: `662ca0d`
 
 ### Odkrycia sesji 7 (2026-05-26) — IR bit 30 bug
 
@@ -98,9 +124,10 @@ Poprawna wartość (irCh=0, itCh=1): `0xC1C00000`.
 | IR DMA startuje | ✅ **POTWIERDZONE** |
 | ISOC_COMM_CONTROL + FETCH_PCM_FRAMES przed StartTransmit | ✅ Fix wdrożony + potwierdzone (sesja 5) |
 | AudioClockEngine timestamp anchor | ✅ Fix C+D wdrożony (sesja 6) |
-| IR cycleMatchEnable bit 30 usunięty | ✅ Fix E wdrożony v11 (935d3ff) — **wymaga testu** |
-| Work queue deadlock naprawiony | ✅ Fix F wdrożony v10 (5554280) — potwierdzone rejestry OK |
-| IR odbiera pakiety (seq>0, syt!=0) | ⏳ **Test po restarcie z v11** |
+| IR cycleMatchEnable bit 30 usunięty | ✅ Fix E (935d3ff) — IR active=1 Ctl=0x9400 potwierdzono v11 |
+| Work queue deadlock naprawiony | ✅ Fix F (5554280) — rejestry OK, StartDevice wywoływane |
+| ISOC_COMM_CONTROL + FETCH_PCM_FRAMES przed StartTransmit | ✅ Fix I (`662ca0d`) — v12 gotowy do testu |
+| IR odbiera pakiety (seq>0, syt!=0) | ⏳ **Test z v12** |
 | IO trwa >5s bez "not consecutive" | ⏳ Czeka na test |
 | StartTransmit (IT DMA) startuje | ⏳ Czeka na IR packets + SYT clock |
 | Słyszysz dźwięk z Maca przez MOTU (TX) | ⏳ Kolejny krok po IT start |
