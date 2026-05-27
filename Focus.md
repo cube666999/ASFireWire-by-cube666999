@@ -8,17 +8,29 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ SESJA NA MAC STUDIO — Przeczytaj to na starcie
 
-> **Stan na 2026-05-27 (sesja 13) — v18 wdrożony, MOTU wykryty, test streamingu w toku:**
+> **Stan na 2026-05-28 (sesja 14) — Fix 19 wdrożony, czeka na hardware test:**
 > - ✅ **Fix I** (`662ca0d`): ISOC_COMM_CONTROL + FETCH_PCM_FRAMES PRZED StartTransmit
 > - ✅ **Fix II** (`2dc6600`): IT DMA deadlock — SYT wait po `Start()`; IT nadaje 4644 pkts ✅
 > - ✅ **Fix III** (`3241bd2`): Allow DBS=18 z pcm=2 (silence-padding); IT geometry OK ✅
 > - ✅ **Fix 17** (`c13132b`): `rawPollCount_` pre-lock — potwierdził ~2300 IR pkts/500ms od MOTU
 > - ✅ **Fix 18** (`c13132b`): CIPHeader OHCI double-swap usunięty — IR pakiety mogą teraz przejść dekoder
 > - ✅ **Test fixes** (`5f4108b`): StreamProcessorTests + IsochTransmitContextTests naprawione po Fix 18; 493/493 ✅
+> - ✅ **Fix 19** (`68823bf`): Deactivate-before-activate ISOC_COMM_CONTROL + SYT gate 500ms→3000ms
 > - ✅ **Reboot** (2026-05-27 ~23:05): czysta instalacja, extension `[activated enabled]`, UUID `D6804E2F`
 > - ✅ **MOTU wykryty**: Node 0, Gen 3, Ready — GUID 0x0001F20000087236, Spec 0x0001F2, SW 0x000015
-> - 🔍 **Aktualny stan:** AV/C Units → Connected. Następny krok: uruchomić streaming przez CoreAudio
->   (MOTU jako wyjście audio) i obserwować logi pod kątem `IR SYT CLOCK ESTABLISHED`.
+>
+> **Diagnoza IR=0 (sesja 14):**
+> - Log: `Streaming stopped` ale NIE `Streaming started` → StartTransmit zwraca `kIOReturnTimeout`
+> - MOTU ISOC_COMM_CONTROL lower bits = `0x1900` (nie idle `0x3000`) → stale state z poprzedniej sesji
+> - Hipoteza A: MOTU ignoruje activate gdy jest w stale state (fix: deactivate before activate)
+> - Hipoteza B: MOTU potrzebuje >500ms na lock PLL (fix: 3000ms SYT gate)
+>
+> **Następny krok: rebuild → install → play audio through MOTU → check logs:**
+> ```bash
+> log show --last 2m --debug --info 2>/dev/null | grep "ASFWDriver.dext"
+> ```
+> Szukamy: `ISOC_COMM_CONTROL deactivate=...` + `activate=...` + brak SYT timeout LUB
+> `SYT timeout` z `seq>0` (MOTU zaczął ale za wolno).
 
 ### Fix II — IT DMA deadlock w IsochService::StartTransmit (v15, `2dc6600`)
 

@@ -5,7 +5,7 @@ Base: https://github.com/mrmidi/ASFireWire
 Test device: MOTU 828 MK3 (target), developed with Claude Code  
 Tests: 493/493 passing  
 Version: 0.2.17-audio (build 17)  
-Hardware status: MOTU 828 MK3 detected (Ready), v18 deployed — streaming test in progress
+Hardware status: MOTU 828 MK3 detected (Ready), v18+Fix19 — SYT gate 3000ms, deactivate-before-activate
 
 ---
 
@@ -19,13 +19,37 @@ Hardware status: MOTU 828 MK3 detected (Ready), v18 deployed — streaming test 
 | AV/C / FCP | ✅ Working | Music Subunit, PCR space, `SendSampleRateCommand` (0x19) — for non-MOTU devices |
 | IRM | ✅ Working | Election, channel + bandwidth allocation |
 | Isoch Transmit (IT) | ✅ Working | AM824 + SYT + cadence |
-| Isoch Receive (IR) | 🚧 WIP | CIPHeader double-swap fixed (Fix 18) — streaming test in progress |
+| Isoch Receive (IR) | 🚧 WIP | CIPHeader double-swap fixed (Fix 18) · deactivate+3s SYT gate (Fix 19) |
 | AudioDriverKit | 🚧 In progress | `ASFWAudioDriver` + `ASFWAudioNub` wired; `HandleChangeSampleRate` implemented |
 | **MOTU V3 Backend** | ✅ Implemented | `MOTUAudioBackend` — V3 register protocol, awaiting hardware test |
 
 ---
 
-## Fixes (45 commits)
+## Fixes (47 commits)
+
+### Fix 19 — MOTU deactivate-before-activate + SYT gate 3000ms (IR=0 debug)
+**Files:** `ASFWDriver/Audio/Backends/MOTUAudioBackend.cpp`, `ASFWDriver/Isoch/IsochService.cpp`  
+**Commit:** `68823bf` · **Tests:** 493/493 ✅
+
+Root cause analysis of IR=0 (MOTU not sending isochronous packets):
+- Log confirmed `Streaming stopped` but never `Streaming started` → `StartTransmit` returned
+  `kIOReturnTimeout` after 500ms SYT gate (MOTU not responding)
+- MOTU's ISOC_COMM_CONTROL lower bits read `0x1900` (not idle `0x3000`) → stale streaming
+  state from previous session not fully cleared by `StopStreaming`
+- IR cmdPtr `0x80218001` static across 400+ polls → OHCI received zero IR packets
+
+**Fix 1 — Two-step ISOC_COMM_CONTROL:**  
+Before activating MOTU (Change=1, Activated=1), first write deactivate (Change=1, Activated=0)
+plus 20ms `IOSleep`. Forces MOTU through a deactivated state before re-activation, preventing
+the active command from being silently ignored on a stale state.
+
+**Fix 2 — SYT gate timeout: 500ms → 3000ms:**  
+MOTU V3 needs time to lock PLL and begin isoch TX after receiving first IT packets. 500ms was
+insufficient. On success the gate exits immediately (no 3s penalty when MOTU responds normally).
+
+Also logs IR hardware state (cmdPtr) at SYT timeout for diagnostics.
+
+---
 
 ### Fix 18 — CIPHeader OHCI double-swap (critical — all IR packets rejected)
 **Files:** `ASFWDriver/Isoch/Core/CIPHeader.hpp`, `ASFWDriver/Isoch/Audio/AM824Decoder.hpp`,  
