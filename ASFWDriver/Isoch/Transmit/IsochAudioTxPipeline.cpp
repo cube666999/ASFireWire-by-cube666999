@@ -115,8 +115,11 @@ kern_return_t IsochAudioTxPipeline::Configure(uint8_t sid,
         ASFW_LOG(Isoch, "IT: Configure failed - invalid queueChannels=%u", queueChannels);
         return kIOReturnBadArgument;
     }
-    if (requestedChannels != 0 && requestedChannels != queueChannels) {
-        ASFW_LOG(Isoch, "IT: Configure failed - requestedChannels=%u queueChannels=%u mismatch",
+    // Allow requestedChannels > queueChannels: extra AM824 slots are silence-padded.
+    // This handles MOTU V3 which requires DBS=18 even when CoreAudio provides stereo (2ch).
+    // Fail only if requestedChannels < queueChannels (would silently discard audio).
+    if (requestedChannels != 0 && requestedChannels < queueChannels) {
+        ASFW_LOG(Isoch, "IT: Configure failed - requestedChannels=%u < queueChannels=%u (audio would be discarded)",
                  requestedChannels, queueChannels);
         return kIOReturnBadArgument;
     }
