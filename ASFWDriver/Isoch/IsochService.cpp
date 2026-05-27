@@ -210,45 +210,11 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
         return kIOReturnNotReady;
     }
 
-    constexpr uint32_t kSytGateTimeoutMs = 500;
-    constexpr uint32_t kSytGatePollMs = 5;
-    bool sytClockEstablished = false;
-    for (uint32_t waitedMs = 0; waitedMs < kSytGateTimeoutMs; waitedMs += kSytGatePollMs) {
-        if (externalSyncBridge_.clockEstablished.load(std::memory_order_acquire)) {
-            sytClockEstablished = true;
-            break;
-        }
-        IOSleep(kSytGatePollMs);
-    }
-    if (!sytClockEstablished) {
-        const uint32_t seq = externalSyncBridge_.updateSeq.load(std::memory_order_acquire);
-        const uint32_t packed = externalSyncBridge_.lastPackedRx.load(std::memory_order_acquire);
-        const uint16_t lastSyt = ASFW::Isoch::Core::ExternalSyncBridge::UnpackSYT(packed);
-        const uint8_t lastFdf = ASFW::Isoch::Core::ExternalSyncBridge::UnpackFDF(packed);
-        const uint8_t lastDbs = ASFW::Isoch::Core::ExternalSyncBridge::UnpackDBS(packed);
-        const uint64_t lastTicks = externalSyncBridge_.lastUpdateHostTicks.load(std::memory_order_acquire);
-        uint64_t ageMs = 0;
-        if (lastTicks != 0) {
-            const uint64_t nowTicks = mach_absolute_time();
-            if (nowTicks >= lastTicks) {
-                ageMs = ASFW::Timing::hostTicksToNanos(nowTicks - lastTicks) / 1'000'000ULL;
-            }
-        }
-        ASFW_LOG(Controller,
-                 "[Isoch] ❌ StartTransmit timeout: missing established IR SYT clock (waited %ums seq=%u syt=0x%04x fdf=0x%02x dbs=%u ageMs=%llu active=%d established=%d)",
-                 kSytGateTimeoutMs,
-                 seq,
-                 lastSyt,
-                 lastFdf,
-                 lastDbs,
-                 ageMs,
-                 externalSyncBridge_.active.load(std::memory_order_acquire),
-                 externalSyncBridge_.clockEstablished.load(std::memory_order_acquire));
-        isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
-        isochTransmitContext_->SetSharedTxQueue(nullptr, 0);
-        txQueue_.Reset();
-        return kIOReturnTimeout;
-    }
+    // ⚠️  SYT-gate moved to AFTER isochTransmitContext_->Start() (see below).
+    // Waiting here creates a MOTU V3 deadlock:
+    //   host waits for IR SYT  →  but MOTU V3 won't send IR until it receives IT packets
+    //   →  IT DMA never starts (Start() is gated on SYT)  →  timeout every time.
+    // Fix: start IT DMA first so MOTU sees IT packets and begins sending IR, then gate.
 
     isochTransmitContext_->SetExternalSyncBridge(&externalSyncBridge_);
 
@@ -306,6 +272,52 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
     }
 
     ASFW_LOG(Controller, "[Isoch] ✅ Started IT Context for Channel %u!", channel);
+
+    // Now that IT DMA is running, MOTU V3 will receive IT packets and begin sending IR.
+    // Wait up to 500 ms for the IR SYT clock to be established — this confirms MOTU is
+    // actively transmitting isochronous data. (Previously this wait was before Start(),
+    // which prevented IT from ever starting and caused a permanent 500 ms timeout.)
+    constexpr uint32_t kSytGateTimeoutMs = 500;
+    constexpr uint32_t kSytGatePollMs = 5;
+    bool sytClockEstablished = false;
+    for (uint32_t waitedMs = 0; waitedMs < kSytGateTimeoutMs; waitedMs += kSytGatePollMs) {
+        if (externalSyncBridge_.clockEstablished.load(std::memory_order_acquire)) {
+            sytClockEstablished = true;
+            break;
+        }
+        IOSleep(kSytGatePollMs);
+    }
+    if (!sytClockEstablished) {
+        const uint32_t seq = externalSyncBridge_.updateSeq.load(std::memory_order_acquire);
+        const uint32_t packed = externalSyncBridge_.lastPackedRx.load(std::memory_order_acquire);
+        const uint16_t lastSyt = ASFW::Isoch::Core::ExternalSyncBridge::UnpackSYT(packed);
+        const uint8_t lastFdf = ASFW::Isoch::Core::ExternalSyncBridge::UnpackFDF(packed);
+        const uint8_t lastDbs = ASFW::Isoch::Core::ExternalSyncBridge::UnpackDBS(packed);
+        const uint64_t lastTicks = externalSyncBridge_.lastUpdateHostTicks.load(std::memory_order_acquire);
+        uint64_t ageMs = 0;
+        if (lastTicks != 0) {
+            const uint64_t nowTicks = mach_absolute_time();
+            if (nowTicks >= lastTicks) {
+                ageMs = ASFW::Timing::hostTicksToNanos(nowTicks - lastTicks) / 1'000'000ULL;
+            }
+        }
+        ASFW_LOG(Controller,
+                 "[Isoch] ❌ StartTransmit SYT timeout: IT is running but MOTU not responding"
+                 " (waited %ums seq=%u syt=0x%04x fdf=0x%02x dbs=%u ageMs=%llu active=%d established=%d)",
+                 kSytGateTimeoutMs,
+                 seq,
+                 lastSyt,
+                 lastFdf,
+                 lastDbs,
+                 ageMs,
+                 externalSyncBridge_.active.load(std::memory_order_acquire),
+                 externalSyncBridge_.clockEstablished.load(std::memory_order_acquire));
+        isochTransmitContext_->Stop();
+        isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
+        isochTransmitContext_->SetSharedTxQueue(nullptr, 0);
+        txQueue_.Reset();
+        return kIOReturnTimeout;
+    }
 
     return kIOReturnSuccess;
 }

@@ -201,6 +201,20 @@ EOF
   echo "   Commit:  ${GIT_COMMIT_SHORT} (${GIT_BRANCH})"
   echo "   Dirty:   ${GIT_DIRTY}"
   echo "   Time:    ${BUILD_TIMESTAMP}"
+
+  # Sync CURRENT_PROJECT_VERSION in project.pbxproj to the patch component of
+  # SEMANTIC_VERSION.  This ensures CFBundleVersion in the built dext and app
+  # always matches the patch number so systemextensionsctl can detect upgrades.
+  local PBXPROJ="${PROJECT_ROOT}/ASFW.xcodeproj/project.pbxproj"
+  if [[ -f "$PBXPROJ" ]]; then
+    local base_ver="${SEMANTIC_VERSION%%-*}"   # strip any -alpha/-audio suffix
+    local build_number
+    build_number=$(echo "$base_ver" | cut -d. -f3)
+    if [[ "$build_number" =~ ^[0-9]+$ ]]; then
+      sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9]*/CURRENT_PROJECT_VERSION = ${build_number}/g" "$PBXPROJ"
+      ok "Synced CURRENT_PROJECT_VERSION = ${build_number} in project.pbxproj"
+    fi
+  fi
 }
 
 # Main logic
