@@ -4,7 +4,8 @@ Fork: https://github.com/cube666999/ASFireWire-by-cube666999
 Base: https://github.com/mrmidi/ASFireWire  
 Test device: MOTU 828 MK3 (target), developed with Claude Code  
 Tests: 493/493 passing  
-Version: 0.2.17-audio (build 17)
+Version: 0.2.17-audio (build 17)  
+Hardware status: MOTU 828 MK3 detected (Ready), v18 deployed — streaming test in progress
 
 ---
 
@@ -18,13 +19,49 @@ Version: 0.2.17-audio (build 17)
 | AV/C / FCP | ✅ Working | Music Subunit, PCR space, `SendSampleRateCommand` (0x19) — for non-MOTU devices |
 | IRM | ✅ Working | Election, channel + bandwidth allocation |
 | Isoch Transmit (IT) | ✅ Working | AM824 + SYT + cadence |
-| Isoch Receive (IR) | 🚧 WIP | Pipeline exists, needs hardware validation |
+| Isoch Receive (IR) | 🚧 WIP | CIPHeader double-swap fixed (Fix 18) — streaming test in progress |
 | AudioDriverKit | 🚧 In progress | `ASFWAudioDriver` + `ASFWAudioNub` wired; `HandleChangeSampleRate` implemented |
 | **MOTU V3 Backend** | ✅ Implemented | `MOTUAudioBackend` — V3 register protocol, awaiting hardware test |
 
 ---
 
-## Fixes (43 commits)
+## Fixes (45 commits)
+
+### Fix 18 — CIPHeader OHCI double-swap (critical — all IR packets rejected)
+**Files:** `ASFWDriver/Isoch/Core/CIPHeader.hpp`, `ASFWDriver/Isoch/Audio/AM824Decoder.hpp`,  
+`ASFWDriver/Isoch/Receive/StreamProcessor.hpp`  
+**Commit:** `c13132b` · **Tests:** `5f4108b` (493/493 ✅)
+
+On LE (ARM64) hosts, OHCI hardware byte-swaps every received quadlet as it writes to the DMA
+buffer. Values read from DMA memory are therefore already in semantic big-endian form — no
+further swap is needed.
+
+`CIPHeader::Decode` was calling `SwapBigToHost` (= `__builtin_bswap32` on ARM64) on the
+pre-swapped values. Effect: `SwapBigToHost(0x80000000)` = `0x00000080` → `bit31=0` → EOH1
+check fails → every IR packet silently rejected. Confirmed by `rawPollCount_` diagnostic
+(~2300 pkts/500ms arriving, 0 decoded).
+
+**Fix:** Removed `SwapBigToHost` from `CIPHeader::Decode`, `AM824Decoder::DecodeSample`,
+`AM824Decoder::IsMIDI`, and `StreamProcessor` label check. Decoders now read DMA values
+directly as semantic big-endian uint32.
+
+**Test fix:** `StreamProcessorTests` and `IsochTransmitContextTests` updated to store test
+vectors in LE/host byte order (simulating OHCI pre-swap). `ConfigureFailsOnRequestedChannelMismatch`
+updated: `requestedChannels < queueChannels` fails (discards audio); `> queueChannels` is
+allowed (MOTU V3 DBS=18 silence-padding, commit `3241bd2`).
+
+---
+
+### Fix 17 — IR rawPollCount_ pre-lock diagnostic counter (sesja 11)
+**File:** `ASFWDriver/Isoch/Receive/IsochReceiveContext.hpp/.cpp`  
+**Commit:** `c13132b` (included with Fix 18)
+
+Added `rawPollCount_` atomic counter incremented before the IOLock in `Poll()`, plus periodic
+log every 100 polls reporting packet count. This confirmed MOTU IS sending ~2300 IR packets
+per 500ms window — ruling out the "MOTU silent" hypothesis and pinpointing Fix 18 as the
+root cause of seq=0.
+
+---
 
 ### Fix 1 — ConnectOPCR: channel not written to oPCR register (critical)
 **File:** `ASFWDriver/Protocols/AVC/CMP/CMPClient.cpp`

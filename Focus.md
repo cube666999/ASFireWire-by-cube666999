@@ -8,18 +8,17 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ SESJA NA MAC STUDIO — Przeczytaj to na starcie
 
-> **Stan na 2026-05-27 (sesja 12) — CIPHeader double-swap bug znaleziony i naprawiony:**
+> **Stan na 2026-05-27 (sesja 13) — v18 wdrożony, MOTU wykryty, test streamingu w toku:**
 > - ✅ **Fix I** (`662ca0d`): ISOC_COMM_CONTROL + FETCH_PCM_FRAMES PRZED StartTransmit
 > - ✅ **Fix II** (`2dc6600`): IT DMA deadlock — SYT wait po `Start()`; IT nadaje 4644 pkts ✅
 > - ✅ **Fix III** (`3241bd2`): Allow DBS=18 z pcm=2 (silence-padding); IT geometry OK ✅
-> - ✅ **Diagnostyka (sesja 11):** `rawPollCount_` pre-lock + logi co 100 polls — potwierdziły ~2300 IR pkts/500ms
-> - ✅ **Fix IV (sesja 12):** CIPHeader OHCI double-swap — `CIPHeader::Decode` wywoływał `SwapBigToHost`
->   (= `bswap32`) na wartościach już zamienionych przez hardware OHCI dla LE hosta.
->   `SwapBigToHost(0x80000000)` = `0x00000080` → `bit31=0` → każdy pakiet odrzucany przez EOH1 check.
->   Fix: usunięto `SwapBigToHost` z `Decode`, `AM824Decoder::DecodeSample`, `AM824Decoder::IsMIDI`
->   i `StreamProcessor` label check. Dotyczy też `AM824Decoder`.
-> - 🔍 **Aktualny stan:** v18 (build 17) zainstalowany. Czeka na **restart komputera** + hardware test.
->   Po restarcie: oczekiwane `IR SYT CLOCK ESTABLISHED` zamiast `IR CIP decode failed`.
+> - ✅ **Fix 17** (`c13132b`): `rawPollCount_` pre-lock — potwierdził ~2300 IR pkts/500ms od MOTU
+> - ✅ **Fix 18** (`c13132b`): CIPHeader OHCI double-swap usunięty — IR pakiety mogą teraz przejść dekoder
+> - ✅ **Test fixes** (`5f4108b`): StreamProcessorTests + IsochTransmitContextTests naprawione po Fix 18; 493/493 ✅
+> - ✅ **Reboot** (2026-05-27 ~23:05): czysta instalacja, extension `[activated enabled]`, UUID `D6804E2F`
+> - ✅ **MOTU wykryty**: Node 0, Gen 3, Ready — GUID 0x0001F20000087236, Spec 0x0001F2, SW 0x000015
+> - 🔍 **Aktualny stan:** AV/C Units → Connected. Następny krok: uruchomić streaming przez CoreAudio
+>   (MOTU jako wyjście audio) i obserwować logi pod kątem `IR SYT CLOCK ESTABLISHED`.
 
 ### Fix II — IT DMA deadlock w IsochService::StartTransmit (v15, `2dc6600`)
 
@@ -167,11 +166,11 @@ Poprawna wartość (irCh=0, itCh=1): `0xC1C00000`.
 | ISOC_COMM_CONTROL + FETCH_PCM_FRAMES przed StartTransmit | ✅ Fix I (`662ca0d`) — v13 potwierdzone (sesja 8) |
 | IT DMA deadlock usunięty (SYT wait po Start()) | ✅ Fix II (`2dc6600`) — v15 zainstalowany (sesja 9) |
 | IT DBS=18 z pcm=2 (silence-padding) | ✅ Fix III (`3241bd2`) — IT nadaje 4644 pkts (sesja 10) |
-| IR odbiera pakiety (seq>0, syt!=0) | 🔍 **Czeka na test po restarcie** — Fix IV (CIPHeader) wdrożony w v18 |
-| CIPHeader OHCI double-swap | ✅ **Fix IV** (sesja 12) — `SwapBigToHost` usunięty z decode path |
-| IT DMA startuje i nadaje | ✅ IT: 4644 pkts (3483D/1161N) — MOTU wysyła IR (~2300 pkts/500ms), Fix IV odblokuje |
-| IO trwa >5s bez "not consecutive" | ⏳ Czeka na test |
-| Słyszysz dźwięk z Maca przez MOTU (TX) | ⏳ Kolejny krok po IT start |
+| IR odbiera pakiety (seq>0, syt!=0) | 🔍 **Test w toku** — Fix 18 (CIPHeader) wdrożony, MOTU wykryty |
+| CIPHeader OHCI double-swap | ✅ **Fix 18** (sesja 12/13) — `SwapBigToHost` usunięty z decode path |
+| IT DMA startuje i nadaje | ✅ IT: 4644 pkts (3483D/1161N) — MOTU wysyła IR (~2300 pkts/500ms), Fix 18 odblokuje |
+| IO trwa >5s bez "not consecutive" | ⏳ Czeka na streaming test |
+| Słyszysz dźwięk z Maca przez MOTU (TX) | ⏳ Kolejny krok po IR walidacji |
 | Pełny duplex (TX + RX) | ⏳ Kolejny etap |
 
 ### Największe ryzyko które pozostało
