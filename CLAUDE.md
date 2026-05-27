@@ -234,10 +234,10 @@ projectPath: "/Users/cube666/Library/Mobile Documents/com~apple~CloudDocs/FireWi
 **Re-index after adding/moving files:**
 ```bash
 export PATH="$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:$PATH"
-NODE_OPTIONS="--max-old-space-size=4096" codegraph index -f -q .
+NODE_OPTIONS="--max-old-space-size=4096" codegraph build --no-incremental .
 ```
 
-**Current index stats:** 603 files · 11 209 nodes · 20 570 edges (497 C++, 66 Swift).
+**Current index stats:** 624 files · 18 300 nodes · 26 342 edges (codegraph 3.10.0, graph.db).
 
 
 Wytyczne Behawioralne

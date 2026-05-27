@@ -55,8 +55,10 @@ TEST(TxSharedQueueSPSC, SupportsMaxPcmChannels) {
 }
 
 TEST(IsochTransmitContext, ConfigureFailsOnRequestedChannelMismatch) {
+    // requestedChannels < queueChannels must fail: that would silently discard audio.
+    // requestedChannels > queueChannels is allowed (MOTU V3 DBS=18 silence-padding).
     constexpr uint32_t kQueueChannels = 4;
-    constexpr uint32_t kRequestedChannels = 6;
+    constexpr uint32_t kRequestedChannels = 2;   // 2 < 4: too few — should be rejected
     constexpr uint32_t kCapacityFrames = 256;
     const uint64_t bytes = ASFW::Shared::TxSharedQueueSPSC::RequiredBytes(kCapacityFrames, kQueueChannels);
     std::vector<uint8_t> storage(bytes);

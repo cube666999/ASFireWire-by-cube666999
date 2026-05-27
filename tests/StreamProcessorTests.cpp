@@ -8,9 +8,14 @@
  *
  * Packet memory layout expected by StreamProcessor::ProcessPacket():
  *   [0..7]   Isoch prefix (8 bytes: timestamp + isoch header, may be zero)
- *   [8..11]  CIP quadlet-0 (big-endian)
- *   [12..15] CIP quadlet-1 (big-endian)
- *   [16+]    AM824 data quadlets (big-endian, DBS quadlets per event)
+ *   [8..11]  CIP quadlet-0  — stored in host (LE) byte order, simulating OHCI pre-swap
+ *   [12..15] CIP quadlet-1  — stored in host (LE) byte order, simulating OHCI pre-swap
+ *   [16+]    AM824 data quadlets — stored in host (LE) byte order, simulating OHCI pre-swap
+ *
+ * Rationale: on LE (ARM64) hosts the OHCI hardware byte-swaps every received quadlet
+ * as it writes it into the DMA buffer.  The decoders therefore read the semantic
+ * big-endian value directly, with no further SwapBigToHost call.  Tests must mirror
+ * this by storing values in LE/host byte order.
  */
 
 #include <gtest/gtest.h>
@@ -32,39 +37,38 @@ using namespace ASFW::Isoch;
 
 namespace {
 
-/// Write a host-order uint32 as 4 big-endian bytes at dst.
-void PutBE32(uint8_t* dst, uint32_t hostVal) {
-    dst[0] = static_cast<uint8_t>((hostVal >> 24) & 0xFF);
-    dst[1] = static_cast<uint8_t>((hostVal >> 16) & 0xFF);
-    dst[2] = static_cast<uint8_t>((hostVal >>  8) & 0xFF);
-    dst[3] = static_cast<uint8_t>((hostVal >>  0) & 0xFF);
+/// Write a host-order uint32 as 4 host-endian (LE) bytes at dst.
+/// This simulates the OHCI pre-swap: the hardware writes each received wire
+/// quadlet byte-reversed into the DMA buffer, so what we read back is the
+/// semantic big-endian value in host byte order.
+void PutLE32(uint8_t* dst, uint32_t hostVal) {
+    memcpy(dst, &hostVal, 4);
 }
 
-/// Build a uint32_t whose bytes, when stored in memory and then interpreted
-/// as a big-endian quadlet by SwapBigToHost, yield (label<<24 | sample24).
-/// Pass the result directly to AM824Decoder::DecodeSample() or IsMIDI().
+/// Build a uint32_t representing an AM824 quadlet in OHCI-pre-swapped form.
+/// The returned value is the semantic big-endian value as a host uint32_t
+/// (i.e. label occupies bits 31:24, sample24 occupies bits 23:0).
+/// Pass directly to AM824Decoder::DecodeSample() / IsMIDI(), or store via
+/// PutLE32() into a packet buffer to simulate what OHCI writes to DMA memory.
 uint32_t MakeBEQuad(uint8_t label, uint32_t sample24 = 0) {
-    uint32_t hostVal = (static_cast<uint32_t>(label) << 24) | (sample24 & 0x00FF'FFFFu);
-    // SwapBigToHost is its own inverse, so applying it gives the "wire" value
-    // that SwapBigToHost will decode back to hostVal.
-    return SwapBigToHost(hostVal);
+    return (static_cast<uint32_t>(label) << 24) | (sample24 & 0x00FF'FFFFu);
 }
 
 /**
- * Build a synthetic IEC 61883-6 packet.
+ * Build a synthetic IEC 61883-6 packet with OHCI-pre-swapped byte layout.
  *
  * Layout:
  *   [0..7]   8-byte isoch prefix (zeroed)
- *   [8..11]  CIP Q0 big-endian: EOH=0 | SID<<24 | DBS<<16 | DBC
- *   [12..15] CIP Q1 big-endian: EOH=1 | FMT(0x10)<<24 | fdf<<16 | syt
- *   [16+]    am824Quadlets stored as big-endian (use MakeBEQuad() to build each)
+ *   [8..11]  CIP Q0 in host (LE) byte order: EOH=0 | SID<<24 | DBS<<16 | DBC
+ *   [12..15] CIP Q1 in host (LE) byte order: EOH=1 | FMT(0x10)<<24 | fdf<<16 | syt
+ *   [16+]    am824Quadlets in host (LE) byte order (use MakeBEQuad() to build each)
  *
  * @param sid  Source node ID (6 bits)
  * @param dbs  Data Block Size — quadlets per data block (e.g. 2 = stereo)
  * @param dbc  Data Block Counter
  * @param fdf  Format Dependent Field
  * @param syt  SYT timestamp (0xFFFF = no info)
- * @param am824Quadlets  Pre-encoded BE quadlets (each built with MakeBEQuad)
+ * @param am824Quadlets  Pre-encoded quadlets (each built with MakeBEQuad)
  */
 std::vector<uint8_t> MakePacket(
     uint8_t sid, uint8_t dbs, uint8_t dbc,
@@ -74,26 +78,26 @@ std::vector<uint8_t> MakePacket(
     const size_t payloadBytes = am824Quadlets.size() * 4u;
     std::vector<uint8_t> pkt(8u + 8u + payloadBytes, 0x00u);
 
-    // CIP Q0: EOH=0, SID, DBS, DBC
+    // CIP Q0: EOH=0, SID, DBS, DBC  — store as LE to simulate OHCI pre-swap
     const uint32_t q0Host =
         (static_cast<uint32_t>(sid) << 24) |
         (static_cast<uint32_t>(dbs) << 16) |
         static_cast<uint32_t>(dbc);
-    PutBE32(pkt.data() + 8, q0Host);
+    PutLE32(pkt.data() + 8, q0Host);
 
-    // CIP Q1: EOH=1, FMT=0x10 (AM824), fdf, syt
+    // CIP Q1: EOH=1, FMT=0x10 (AM824), fdf, syt  — store as LE
     const uint32_t q1Host =
         (1u << 31) |
         (0x10u << 24) |
         (static_cast<uint32_t>(fdf) << 16) |
         static_cast<uint32_t>(syt);
-    PutBE32(pkt.data() + 12, q1Host);
+    PutLE32(pkt.data() + 12, q1Host);
 
-    // AM824 payload
+    // AM824 payload — store as LE to simulate OHCI pre-swap
     for (size_t i = 0; i < am824Quadlets.size(); ++i) {
-        // am824Quadlets[i] is already a BE-encoded value (from MakeBEQuad),
-        // stored as a uint32 in host byte order — write its 4 bytes in order.
-        PutBE32(pkt.data() + 16u + i * 4u, SwapBigToHost(am824Quadlets[i]));
+        // am824Quadlets[i] is the semantic value (label in bits 31:24);
+        // store in host byte order so ProcessPacket reads it back correctly.
+        PutLE32(pkt.data() + 16u + i * 4u, am824Quadlets[i]);
     }
 
     return pkt;
@@ -148,10 +152,10 @@ TEST(StreamProcessor, InvalidCIPQ0_EOH1_ReturnsNoValidCip) {
     StreamProcessor sp;
     auto pkt = MakePacket(0x3F, 2, 0, 0x00, 0xFFFF);
 
-    // Overwrite Q0 bytes: set bit 31 of host value → EOH=1 → invalid
-    // Host value with EOH=1: 0x80000000 | (SID=0x3F<<24) = 0xBF000000
-    // But we only need the MSbit set; write 0x80 as first BE byte.
-    pkt[8] = 0x80;
+    // Overwrite Q0: set bit 31 → EOH=1 → invalid.
+    // With LE storage Q0 starts at byte 8; bit 31 lives in the most-significant
+    // byte which is at offset +3 (byte 11) on a little-endian machine.
+    pkt[11] |= 0x80;
 
     const auto summary = sp.ProcessPacket(pkt.data(), pkt.size());
 
@@ -164,8 +168,9 @@ TEST(StreamProcessor, InvalidCIPQ1_EOH0_ReturnsNoValidCip) {
     StreamProcessor sp;
     auto pkt = MakePacket(0x3F, 2, 0, 0x00, 0xFFFF);
 
-    // Q1 starts at byte 12. Clear bit 31 of host value → byte[12] must be 0x00 (was 0x90).
-    pkt[12] = 0x00;
+    // Q1 starts at byte 12. Clear bit 31 of host value → EOH=0 → invalid.
+    // With LE storage bit 31 lives at offset +3 from Q1 start, i.e. byte 15.
+    pkt[15] &= 0x7F;
 
     const auto summary = sp.ProcessPacket(pkt.data(), pkt.size());
 
