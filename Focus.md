@@ -8,7 +8,7 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ SESJA NA MAC STUDIO — Przeczytaj to na starcie
 
-> **Stan na 2026-05-28 (sesja 14) — Fix 19 wdrożony, czeka na hardware test:**
+> **Stan na 2026-05-28 (sesja 15) — Fix 20 wdrożony (v19), czeka na hardware test:**
 > - ✅ **Fix I** (`662ca0d`): ISOC_COMM_CONTROL + FETCH_PCM_FRAMES PRZED StartTransmit
 > - ✅ **Fix II** (`2dc6600`): IT DMA deadlock — SYT wait po `Start()`; IT nadaje 4644 pkts ✅
 > - ✅ **Fix III** (`3241bd2`): Allow DBS=18 z pcm=2 (silence-padding); IT geometry OK ✅
@@ -16,21 +16,34 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 > - ✅ **Fix 18** (`c13132b`): CIPHeader OHCI double-swap usunięty — IR pakiety mogą teraz przejść dekoder
 > - ✅ **Test fixes** (`5f4108b`): StreamProcessorTests + IsochTransmitContextTests naprawione po Fix 18; 493/493 ✅
 > - ✅ **Fix 19** (`68823bf`): Deactivate-before-activate ISOC_COMM_CONTROL + SYT gate 500ms→3000ms
-> - ✅ **Reboot** (2026-05-27 ~23:05): czysta instalacja, extension `[activated enabled]`, UUID `D6804E2F`
-> - ✅ **MOTU wykryty**: Node 0, Gen 3, Ready — GUID 0x0001F20000087236, Spec 0x0001F2, SW 0x000015
+> - ✅ **Fix 20** (`597f3c8`): override wire DBS=21 dla MOTU V3 — naprawia "Unsupported wire DBS" i eventCount=1→6
 >
-> **Diagnoza IR=0 (sesja 14):**
-> - Log: `Streaming stopped` ale NIE `Streaming started` → StartTransmit zwraca `kIOReturnTimeout`
-> - MOTU ISOC_COMM_CONTROL lower bits = `0x1900` (nie idle `0x3000`) → stale state z poprzedniej sesji
-> - Hipoteza A: MOTU ignoruje activate gdy jest w stale state (fix: deactivate before activate)
-> - Hipoteza B: MOTU potrzebuje >500ms na lock PLL (fix: 3000ms SYT gate)
+> **✅ Potwierdzone (sesja 15, Fix 19 hardware test):**
+> - `ISOC_COMM_CONTROL deactivate=0x80800000` + `activate=0xC1C00000` ✅
+> - `Started IR Context 0 for Channel 0!` ✅
+> - `Started IT Context for Channel 1!` ✅
+> - `IR Poll[0] ch=0: 456 pkts in last 100 polls` ✅ MOTU nadaje!
+> - Brak SYT timeout ✅
 >
-> **Następny krok: rebuild → install → play audio through MOTU → check logs:**
+> **Problem wykryty (sesja 15):** `IR RX: Unsupported wire DBS=117 (max AM824 slots=32) - skipping decode`
+> - MOTU V3 CIP header: pole DBS (bits[23:16] Q0) to cycling counter (9,33,53...245), nie prawdziwy DBS
+> - Prawdziwy DBS dla 828 MK3 IR @ 48kHz = **21** (math: 504B / (21×4) = 6 events × 8kHz = 48kHz)
+> - Fix 20: `overrideWireDbs_=21` w StreamProcessor → 6 events/packet, brak błędów DBS
+>
+> **Następny krok: zainstaluj v19 → odtwórz audio → check logs:**
 > ```bash
+> # Instalacja
+> cp -R /tmp/ASFWBuild/Build/Products/Debug/ASFW.app ~/Desktop/ASFW_v19_Fix20.app
+> open ~/Desktop/ASFW_v19_Fix20.app
+>
+> # Logi (po odtworzeniu przez CoreAudio):
 > log show --last 2m --debug --info 2>/dev/null | grep "ASFWDriver.dext"
 > ```
-> Szukamy: `ISOC_COMM_CONTROL deactivate=...` + `activate=...` + brak SYT timeout LUB
-> `SYT timeout` z `seq>0` (MOTU zaczął ale za wolno).
+> Szukamy:
+> - `IR override wire DBS set to 21` ✅
+> - BRAK `Unsupported wire DBS` ✅
+> - `RxStats: Pkts=N Data=M` z rosnącym M ✅ (samplePacketCount > 0)
+> - Ewentualnie słyszalny dźwięk 🎵 (2 kanały PCM przez ADK ring buffer)
 
 ### Fix II — IT DMA deadlock w IsochService::StartTransmit (v15, `2dc6600`)
 
