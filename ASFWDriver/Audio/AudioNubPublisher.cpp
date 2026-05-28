@@ -113,6 +113,12 @@ bool AudioNubPublisher::EnsureNub(uint64_t guid,
     // Stream mode and GUID are LOCALONLY helpers; channel topology is derived from nub properties.
     audioNub->SetStreamMode(static_cast<uint32_t>(config.streamMode));
     audioNub->SetGuid(config.guid);
+    // Fix: IOService::Create() invokes Start() synchronously, which reads properties via
+    // CopyProperties() — but SetProperties() hasn't been called yet, so ivars stay at the
+    // init() defaults (channelCount=2).  Explicitly push the correct counts into ivars now
+    // so that CreateRxQueue / CreateTxQueue use the right channel count when the audio driver
+    // opens the nub for the first time.
+    audioNub->SetChannelCount(config.channelCount);
 
     IOLockLock(lock_);
     nubsByGuid_[guid] = audioNub;

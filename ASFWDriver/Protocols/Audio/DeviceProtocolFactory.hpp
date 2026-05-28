@@ -115,9 +115,11 @@ public:
         switch (modelId) {
             case kMOTU828MK3FWModel:    // unitSwVersion 0x15
             case kMOTU828MK3HybModel:   // unitSwVersion 0x35
-                // Confirmed from Sequoia diagnostic with MOTU kext:
-                // fNumFWOutputChannels=14 (device→host=IR), fNumFWInputChannels=18 (host→device=IT)
-                return {14u, 18u};
+                // Wire DBS=21 confirmed from IR payload math (504 bytes / 6 events / 4 = 21 quadlets).
+                // MOTU kext reports 14 IR / 18 IT active audio channels but packs them into 21-slot
+                // AM824 frames (extra slots carry MIDI/control/padding).  Use 21 for both directions
+                // so the shared queues are sized to the actual wire DBS and avoid 99.9% drop rate.
+                return {21u, 21u};
             case kMOTU896MK3Model:      // unitSwVersion 0x16 — 28 input / 24 output physical
                 return {20u, 16u};
             case kMOTUTravelerMK3Model: // unitSwVersion 0x17
