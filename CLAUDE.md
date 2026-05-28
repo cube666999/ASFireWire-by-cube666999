@@ -331,13 +331,38 @@ Sequoia diagnostic (2026-05-25) potwierdził:
 - MOTU kext używa `FireWireBlockRWCommand` (potwierdza Fix 10)
 - Bus reset recovery działa tak samo jak nasz `AudioCoordinator`
 
-### Następne kroki (stan 2026-05-27, v15)
+### Następne kroki (stan 2026-05-28, sesja 17 — Fix 22 wdrożony)
 
-1. **Hardware test v15** — uruchomić streaming z MOTU 828 MK3 z zainstalowanym v15 (Fix II)
-   - Oczekiwane: `✅ Started IT Context for Channel 1!` → `ExternalSyncBridge: seq>0` → `SYT clock established`
-   - Pełny sukces: `MOTUAudioBackend: Streaming started GUID=0x0001F20000087236`
-2. **Jeśli IR seq=0 mimo Fix II** — MOTU nie odpowiada IT pakietami; sprawdź format ISOC_COMM_CONTROL (kanały)
-3. **IR CIP format** — MOTU V3 może nie używać standardowych nagłówków CIP; AM824Decoder może odrzucać pakiety
+**✅ Osiągnięte (sesja 16):**
+- `AudioDeviceStart (err 0)` potwierdzony ✅
+- IO aktywne 3+ minuty bez crashu ✅
+- IR: 11 965 pkts/s od MOTU ✅
+- IT: DBS=21 na wire (Fix 21) ✅
+- CoreAudio: `HALS_IORawClock` re-anchoring adaptuje się (system działa) ✅
+
+**✅ Osiągnięte (sesja 17):**
+- Zidentyfikowana przyczyna "piszczenia przez 3s → cisza": SYT gate timeout ✅
+- Fix 22 (SYT gate bypass dla MOTU V3) — built 2026-05-28, uncommitted ✅
+- Logi potwierdziły: IT nadawało **20 181 data packets** (Spotify dotarło do MOTU!) ✅
+- Brama SYT zabijała IT po dokładnie 3000ms (MOTU V3 zawsze `syt=0x0000`) ✅
+
+**Priorytet 1 — Test audio z Fix 22:**
+- Wymagany **restart komputera** (dext upgrade z aktywnym AudioDriverKit)
+- Uruchomić ASFW.app z pulpitu (lub DerivedData)
+- Odtworzyć Spotify z MOTU 828mk3 jako wyjściem
+- W logach szukać `[Isoch] SYT gate bypassed` (nie `❌ StartTransmit SYT timeout`)
+- Jeśli słyszysz dźwięk → sukces → commit Fix 21 + Fix 22 razem → DevLog archiwum
+
+**Priorytet 2 — Fix HALS_IORawClock re-anchoring:**
+- Zastąpić `mach_absolute_time()` w `PerformIO` czytaniem OHCI `CurrentIsochronousCycleTime`
+- OHCI register offset `0x1E8`: bits[25:12]=cycleCount (0-7999), bits[11:0]=cycleOffset
+- Przeliczenie: `cycleCount/8000 × timebaseFreq` → hostTime zsynchronizowany z 1394 bus
+
+**Priorytet 3 (po audio) — Rozszerzyć do 18 kanałów IT / 14 IR:**
+- Teraz `ASFWAudioNub` publikuje tylko "2 In / 2 Out"
+- MOTU 828 MK3 ma 18ch IT (host→device) i 14ch IR (device→host)
+- Zmiana: `outputChannelCount=18`, `inputChannelCount=14` w konfiguracji nuba
+
 4. **Disable FCP spam dla MOTU V3** — AVCDiscovery wysyła FCP co ~2s do MOTU który ignoruje AVC
 
 ### Znany problem: OSSystemExtensionErrorDomain error 4 przy re-launch

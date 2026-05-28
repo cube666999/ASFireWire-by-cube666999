@@ -70,7 +70,8 @@ public:
                                 uint64_t txQueueBytes,
                                 void* zeroCopyBase,
                                 uint64_t zeroCopyBytes,
-                                uint32_t zeroCopyFrames);
+                                uint32_t zeroCopyFrames,
+                                bool skipSYTGate = false);
 
     kern_return_t StopTransmit();
 

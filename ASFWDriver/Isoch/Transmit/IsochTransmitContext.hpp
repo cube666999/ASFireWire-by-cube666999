@@ -116,6 +116,14 @@ public:
     uint64_t NoDataPackets() const noexcept { return noDataPackets_; }
     uint64_t UnderrunCount() const noexcept { return audio_.UnderrunCount(); }
     uint32_t BufferFillLevel() const noexcept { return audio_.BufferFillLevel(); }
+
+    // Latency histogram accessors (used by GetIsochTxMetrics user client handler)
+    uint64_t LatencyBucket0() const noexcept { return latencyBucket0_.load(); }
+    uint64_t LatencyBucket1() const noexcept { return latencyBucket1_.load(); }
+    uint64_t LatencyBucket2() const noexcept { return latencyBucket2_.load(); }
+    uint64_t LatencyBucket3() const noexcept { return latencyBucket3_.load(); }
+    uint32_t MaxRefillLatencyUs() const noexcept { return maxRefillLatencyUs_.load(); }
+    uint64_t IrqWatchdogKicks() const noexcept { return irqWatchdogKicks_.load(); }
     
     void LogStatistics() const noexcept;
     void DumpPayloadBuffers(uint32_t numPackets = 4) const noexcept;

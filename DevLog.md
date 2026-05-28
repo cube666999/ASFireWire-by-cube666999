@@ -138,6 +138,83 @@ Jeśli watchdog = osobna kolejka → Poll() działa, problem jest gdzie indziej.
 
 ---
 
+## Sesja 15 — 2026-05-28 (Fix 19 hardware test + Fix 20 — override wire DBS)
+
+### Hardware test v18 / Fix 19 — wyniki (potwierdzone)
+
+Fix 19 (dwuetapowy ISOC_COMM_CONTROL + SYT gate 3000ms) **potwierdził się na sprzęcie**.
+IR pakiety zaczęły płynąć:
+
+```
+RxStats: Data=0 IRQ=0 Polls=100 (raw=100)   ← startowa próbka
+RxStats: Data=456 IRQ=234 Polls=100 (raw=200)  ← pakiety napływają ✅
+ExternalSyncBridge: seq>0 syt_established=1   ← SYT clock locked ✅
+MOTUAudioBackend: Streaming started GUID=0x0001F20000087236 ✅
+```
+
+SYT gate przeszedł w ciągu 3s. Stary timeout 500ms był za krótki na lock PLL MOTU.
+Deactivate-before-activate wyeliminował problem stale state z poprzedniej sesji.
+
+### Nowy problem odkryty: cycling CIP DBS
+
+Mimo że IR pakiety napływały, `StreamProcessor` odrzucał każdy:
+
+```
+Unsupported wire DBS=117 (max AM824 slots=32, queueCh=2) - skipping decode
+Unsupported wire DBS=33  (max AM824 slots=32, queueCh=2) - skipping decode
+Unsupported wire DBS=245 (max AM824 slots=32, queueCh=2) - skipping decode
+```
+
+Obserwacja: wartości DBS (9, 33, 53, 117, 245…) są **cyklicznym licznikiem urządzenia** —
+MOTU V3 używa pola DBS w nagłówku CIP jako własnego counter-a, zamiast faktycznego rozmiaru
+bloku danych. To naruszenie IEC 61883-1.
+
+### Wyprowadzenie prawdziwego DBS=21
+
+Znane dane z diagnostyki Sequoia:
+- Pakiet IR = 504 bajty payload
+- 8000 cykli/s (1394 isochronous rate)
+- Target: 48 000 Hz
+
+```
+DBS × 4B × eventCount × 8000 = 48000 Hz
+504B / (DBS × 4B) = eventCount
+504 / (21 × 4) = 6 ✓   → 6 × 8000 = 48000 ✅
+```
+
+Jedyna liczba całkowita dająca standardową częstotliwość próbkowania to DBS=21.
+Potwierdzone przez: tabelę danych kext MOTU (Box828mk3 format word) i Linux
+`sound/firewire/motu/motu-stream.c` (motu_stream_get_pcm_channels, 14 PCM + MIDI + overhead).
+
+### Fix 20 — override wire DBS=21 (`597f3c8`)
+
+Dodano pole `overrideWireDbs_` w `StreamProcessor`. Gdy != 0:
+- zastępuje pole DBS z nagłówka CIP dla `dbsBytes`, `wireSlotsPerEvent`, `summary.dbs`
+- check `kMaxAmdtpDbs` jest **całkowicie pomijany** (MOTU osiąga wartości do 245)
+- pole jest konfiguracyjne — `Reset()` go nie czyści
+
+Łańcuch propagacji: `StreamProcessor → IsochAudioRxPipeline → IsochReceiveContext → IsochService`
+
+W `MOTUAudioBackend::StartStreaming` po `StartReceive`:
+```cpp
+isoch_.SetRxOverrideWireDbs(kMOTUV3WireDbs48k);  // = 21
+```
+
+### Stan po sesji 15
+
+| Element | Stan |
+|---------|------|
+| Fix 19 (deactivate+3s SYT gate) | ✅ hardware potwierdzone |
+| IR pakiety napływają | ✅ ~456/100 polls |
+| Fix 20 (override wire DBS=21) | ✅ `597f3c8` — zbudowane, nie testowane na HW |
+| AM824 decode z DBS=21 | ⏳ hardware test v19 |
+| IR decode z 2 kanalami PCM | ⏳ queueChannels=2, MOTU ma 14 — cisza dla kanałów 3–14 |
+
+Następny hardware test: zainstalować `ASFW_v19_Fix20.app` na Mac Studio.
+Oczekiwane: brak `Unsupported wire DBS`, `RxStats.Data` rosnące z sensownymi wartościami.
+
+---
+
 ## Sesja 9 — 2026-05-27 (IT DMA deadlock — Fix II)
 
 ### Fix II — SYT wait przeniesiony po Start() w IsochService (`2dc6600`)

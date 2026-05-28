@@ -44,6 +44,7 @@ final class ASFWDriverConnector: ObservableObject {
         case startIsochReceive = 32
         case stopIsochReceive = 33
         case getIsochRxMetrics = 34
+        case resetIsochRxMetrics = 35
         // IT DMA Allocation (no CMP)
         case startIsochTransmit = 36
         case stopIsochTransmit = 37
@@ -54,6 +55,8 @@ final class ASFWDriverConnector: ObservableObject {
         case setIsochTxVerifier = 41
         case asyncBlockRead = 44
         case asyncBlockWrite = 45
+        // IT Metrics (read-only, works for CoreAudio-managed IT)
+        case getIsochTxMetrics = 50
     }
 
     // MARK: - Re-exported Models

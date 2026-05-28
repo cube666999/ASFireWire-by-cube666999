@@ -2,7 +2,7 @@
 //  DriverConnector+Isoch.swift
 //  ASFW
 //
-//  Isoch Receive control and metrics
+//  Isoch Receive and Transmit control and metrics
 //
 
 import Foundation
@@ -42,6 +42,46 @@ struct IsochRxMetrics {
         guard totalPackets > 0 else { return 0 }
         return Double(dataPackets) / Double(totalPackets)
     }
+}
+
+// MARK: - Isoch TX Metrics Model
+
+/// Isoch Transmit metrics snapshot (matches C++ IsochTxSnapshot exactly: 88 bytes)
+struct IsochTxMetrics {
+    var packetsAssembled: UInt64 = 0  // Total assembled (data + no-data)
+    var dataPackets: UInt64 = 0       // Packets with PCM audio frames
+    var noDataPackets: UInt64 = 0     // Packets with silence/empty payload
+    var underrunCount: UInt64 = 0     // Ring buffer underruns (0 = data flowing OK)
+
+    var bufferFillLevel: UInt32 = 0   // Ring buffer fill % (0-100)
+    var zeroCopyEnabled: UInt32 = 0   // 1=zero-copy from CoreAudio, 0=ring-buffer path
+
+    var state: UInt32 = 0             // ITState: 0=Unconfigured 1=Configured 2=Running 3=Stopped
+    var maxRefillLatencyUs: UInt32 = 0 // Peak DMA refill latency in µs
+
+    // Refill latency histogram [<50µs, 50-200µs, 200-500µs, >500µs]
+    var latencyHist: (UInt64, UInt64, UInt64, UInt64) = (0, 0, 0, 0)
+
+    var irqWatchdogKicks: UInt64 = 0  // IRQ stall recovery kicks
+
+    // Computed
+    var stateDescription: String {
+        switch state {
+        case 0: return "Unconfigured"
+        case 1: return "Configured"
+        case 2: return "Running"
+        case 3: return "Stopped"
+        default: return "Unknown(\(state))"
+        }
+    }
+
+    var dataRatio: Double {
+        guard packetsAssembled > 0 else { return 0 }
+        return Double(dataPackets) / Double(packetsAssembled)
+    }
+
+    var isRunning: Bool { state == 2 }
+    var isHealthy: Bool { isRunning && underrunCount == 0 }
 }
 
 // MARK: - Driver Connector Extension
@@ -138,15 +178,54 @@ extension ASFWDriverConnector {
         }
     }
     
+    // MARK: - Isoch TX Metrics
+
+    /// Fetch current isoch transmit metrics from driver.
+    /// Works regardless of whether IT was started manually or by CoreAudio.
+    func getIsochTxMetrics() -> IsochTxMetrics? {
+        guard isConnected, connection != 0 else { return nil }
+
+        guard let data = callStruct(.getIsochTxMetrics, initialCap: 128) else {
+            log("getIsochTxMetrics: callStruct failed", level: .warning)
+            return nil
+        }
+
+        guard data.count >= 88 else {
+            log("getIsochTxMetrics: Invalid data size \(data.count)", level: .warning)
+            return nil
+        }
+
+        return data.withUnsafeBytes { ptr -> IsochTxMetrics in
+            var m = IsochTxMetrics()
+            let base = ptr.baseAddress!
+
+            m.packetsAssembled   = base.load(fromByteOffset:  0, as: UInt64.self)
+            m.dataPackets        = base.load(fromByteOffset:  8, as: UInt64.self)
+            m.noDataPackets      = base.load(fromByteOffset: 16, as: UInt64.self)
+            m.underrunCount      = base.load(fromByteOffset: 24, as: UInt64.self)
+            m.bufferFillLevel    = base.load(fromByteOffset: 32, as: UInt32.self)
+            m.zeroCopyEnabled    = base.load(fromByteOffset: 36, as: UInt32.self)
+            m.state              = base.load(fromByteOffset: 40, as: UInt32.self)
+            m.maxRefillLatencyUs = base.load(fromByteOffset: 44, as: UInt32.self)
+            m.latencyHist = (
+                base.load(fromByteOffset: 48, as: UInt64.self),
+                base.load(fromByteOffset: 56, as: UInt64.self),
+                base.load(fromByteOffset: 64, as: UInt64.self),
+                base.load(fromByteOffset: 72, as: UInt64.self)
+            )
+            m.irqWatchdogKicks   = base.load(fromByteOffset: 80, as: UInt64.self)
+
+            return m
+        }
+    }
+
     /// Reset isochronous receive metrics
     func resetIsochRxMetrics() -> Bool {
         guard isConnected, connection != 0 else { return false }
         
-        // Use a new selector for reset (need to add to Method enum first)
-        // See: kMethodResetIsochRxMetrics = 35
         let kr = IOConnectCallScalarMethod(
             connection,
-            35, // Hardcoded for now until Method enum updated
+            Method.resetIsochRxMetrics.rawValue,
             nil, 0,
             nil, nil
         )

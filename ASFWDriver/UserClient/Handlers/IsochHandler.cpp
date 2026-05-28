@@ -9,6 +9,7 @@
 #include "../../Controller/ControllerCore.hpp"
 #include "../../IRM/IRMClient.hpp"
 #include "../../Isoch/IsochReceiveContext.hpp"
+#include "../../Isoch/Transmit/IsochTransmitContext.hpp"
 #include "../../Logging/LogConfig.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Protocols/AVC/AVCDiscovery.hpp"
@@ -380,6 +381,42 @@ kern_return_t IsochHandler::StartIsochTransmit(IOUserClientMethodArguments* args
 kern_return_t IsochHandler::StopIsochTransmit(IOUserClientMethodArguments* args) {
     ASFW_LOG(UserClient, "StopIsochTransmit called");
     return driver_->StopIsochTransmit();
+}
+
+// ============================================================================
+// IT Metrics
+// ============================================================================
+
+kern_return_t IsochHandler::GetIsochTxMetrics(IOUserClientMethodArguments* args) {
+    ASFW_LOG_V3(UserClient, "GetIsochTxMetrics called");
+
+    auto* context =
+        static_cast<ASFW::Isoch::IsochTransmitContext*>(driver_->GetIsochTransmitContext());
+
+    // Always return a snapshot — zeroed if context not active yet
+    ASFW::Metrics::IsochTxSnapshot snapshot{};
+
+    if (context) {
+        snapshot.packetsAssembled   = context->PacketsAssembled();
+        snapshot.dataPackets        = context->DataPackets();
+        snapshot.noDataPackets      = context->NoDataPackets();
+        snapshot.underrunCount      = context->UnderrunCount();
+        snapshot.bufferFillLevel    = context->BufferFillLevel();
+        snapshot.zeroCopyEnabled    = context->IsZeroCopyEnabled() ? 1u : 0u;
+        snapshot.state              = static_cast<uint32_t>(context->GetState());
+        snapshot.maxRefillLatencyUs = context->MaxRefillLatencyUs();
+        snapshot.latencyHist[0]     = context->LatencyBucket0();
+        snapshot.latencyHist[1]     = context->LatencyBucket1();
+        snapshot.latencyHist[2]     = context->LatencyBucket2();
+        snapshot.latencyHist[3]     = context->LatencyBucket3();
+        snapshot.irqWatchdogKicks   = context->IrqWatchdogKicks();
+    }
+
+    OSData* data = OSData::withBytes(&snapshot, sizeof(snapshot));
+    if (!data)
+        return kIOReturnNoMemory;
+    args->structureOutput = data;
+    return kIOReturnSuccess;
 }
 
 } // namespace ASFW::UserClient

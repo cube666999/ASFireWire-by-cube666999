@@ -8,7 +8,7 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ SESJA NA MAC STUDIO — Przeczytaj to na starcie
 
-> **Stan na 2026-05-28 (sesja 15) — Fix 20 wdrożony (v19), czeka na hardware test:**
+> **Stan na 2026-05-28 (sesja 18) — Fix 21+22+23 gotowe (uncommitted), rebuild wymagany:**
 > - ✅ **Fix I** (`662ca0d`): ISOC_COMM_CONTROL + FETCH_PCM_FRAMES PRZED StartTransmit
 > - ✅ **Fix II** (`2dc6600`): IT DMA deadlock — SYT wait po `Start()`; IT nadaje 4644 pkts ✅
 > - ✅ **Fix III** (`3241bd2`): Allow DBS=18 z pcm=2 (silence-padding); IT geometry OK ✅
@@ -17,33 +17,53 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 > - ✅ **Test fixes** (`5f4108b`): StreamProcessorTests + IsochTransmitContextTests naprawione po Fix 18; 493/493 ✅
 > - ✅ **Fix 19** (`68823bf`): Deactivate-before-activate ISOC_COMM_CONTROL + SYT gate 500ms→3000ms
 > - ✅ **Fix 20** (`597f3c8`): override wire DBS=21 dla MOTU V3 — naprawia "Unsupported wire DBS" i eventCount=1→6
+> - ✅ **Fix 21** (uncommitted): IT DBS=21 override — `requestedAm824Slots = kMOTUV3WireDbs48k` zamiast `config.outputChannelCount` → CIP DBS=21 na wire
+> - ✅ **Fix 22** (uncommitted): SYT gate bypass — `skipSYTGate=true` w `StartTransmit`; MOTU V3 zawsze `syt=0x0000`, brama nigdy się nie otwierała → IT zabijane po 3s
+> - ✅ **Fix 23** (uncommitted, sesja 18): TX Profile B — `kTxTuningProfileRaw = 1` w `AudioTxProfiles.hpp`; ring buffer target 512→1024, max 768→1536 frames; pre-prime unbounded
 >
-> **✅ Potwierdzone (sesja 15, Fix 19 hardware test):**
+> **Diagnoza sesji 18 — przyczyna pisku:**
+> - Sesja 17: IT nadało 20 181 data packets w 3s → pisk to był **prawdziwy dźwięk** (Fix 21 poprawny)
+> - Fix 22 pozwolił nadawać przez 56s → **49 632 underrunów** = 14,77% data packets dostaje ciszę zamiast audio
+> - Underrun rate: 886/s → co ~1ms ring buffer pusty → 14.77% ciszy moduluje dźwięk → pisk
+> - **Przyczyna:** Profile A target=512 frames = 10,67ms (równy IO period CoreAudio) → zerowy margines jittera
+> - **Fix 23:** Profile B target=1024, max=1536 frames = ~21ms marginu na jitter CoreAudio
+> - AM824 encoding ✅ (MIDI slots 0x80-0x82, audio 0x40), DBS=21 ✅ (504B/event/6events×8000=48kHz)
+>
+> **✅ Potwierdzone (sesja 15, Fix 19):**
 > - `ISOC_COMM_CONTROL deactivate=0x80800000` + `activate=0xC1C00000` ✅
-> - `Started IR Context 0 for Channel 0!` ✅
-> - `Started IT Context for Channel 1!` ✅
+> - `Started IR Context 0 for Channel 0!` ✅ / `Started IT Context for Channel 1!` ✅
 > - `IR Poll[0] ch=0: 456 pkts in last 100 polls` ✅ MOTU nadaje!
 > - Brak SYT timeout ✅
 >
-> **Problem wykryty (sesja 15):** `IR RX: Unsupported wire DBS=117 (max AM824 slots=32) - skipping decode`
-> - MOTU V3 CIP header: pole DBS (bits[23:16] Q0) to cycling counter (9,33,53...245), nie prawdziwy DBS
-> - Prawdziwy DBS dla 828 MK3 IR @ 48kHz = **21** (math: 504B / (21×4) = 6 events × 8kHz = 48kHz)
-> - Fix 20: `overrideWireDbs_=21` w StreamProcessor → 6 events/packet, brak błędów DBS
+> **✅ Potwierdzone (sesja 16, Fix 21):**
+> - `AudioDeviceStart (err 0)` — CoreAudio HAL uruchamia urządzenie ✅
+> - IO aktywne przez **3+ minuty** bez `AudioDeviceStop` ✅
+> - IR pakiety: **11 965 pkts/s** (Isoch Receive metrics) ✅
+> - CIP DBS cycling: SID=25, DBS=113 (cycling counter, nie prawdziwy DBS — Fix 20 override) ✅
 >
-> **Następny krok: zainstaluj v19 → odtwórz audio → check logs:**
+> **Problem znaleziony (sesja 16):** `HALS_IORawClock: Re-anchoring IO timeline`
+> - **Przyczyna:** `mach_absolute_time()` zamiast OHCI `CurrentIsochronousCycleTime` jako hostTime
+> - **Fix (TODO):** rejestr OHCI offset `0x1E8`, bits[25:12]=cycleCount (0-7999), bits[11:0]=cycleOffset
+> - System nie crashuje, re-anchoring adapts — na razie akceptowalne
+>
+> **Następny krok — rebuild + test audio (sesja 18, po restarcie):**
 > ```bash
-> # Instalacja
-> cp -R /tmp/ASFWBuild/Build/Products/Debug/ASFW.app ~/Desktop/ASFW_v19_Fix20.app
-> open ~/Desktop/ASFW_v19_Fix20.app
+> # ⚠️ WYMAGANY REBUILD na dev machine (Fix 23 zmienił AudioTxProfiles.hpp)
+> # Potem: instalacja na Mac Studio + restart + test
 >
-> # Logi (po odtworzeniu przez CoreAudio):
-> log show --last 2m --debug --info 2>/dev/null | grep "ASFWDriver.dext"
+> # Szukaj w logach:
+> log stream --debug --info 2>/dev/null | grep "ASFWDriver.dext"
 > ```
-> Szukamy:
-> - `IR override wire DBS set to 21` ✅
-> - BRAK `Unsupported wire DBS` ✅
-> - `RxStats: Pkts=N Data=M` z rosnącym M ✅ (samplePacketCount > 0)
-> - Ewentualnie słyszalny dźwięk 🎵 (2 kanały PCM przez ADK ring buffer)
+> Szukamy po Fix 22+23:
+> - `[Isoch] SYT gate bypassed` — Fix 22 aktywny ✅
+> - **Brak** `❌ StartTransmit SYT timeout` ✅
+> - `IT: Pre-prime transferred` — pre-prime działa (Profile B = unbounded) ✅
+> - Brak/mało `IT: ADAPTIVE FILL ESCALATE` — ring buffer trzyma poziom ✅
+> - `UnderrunCount` bliski zeru (w logach co 30s) ✅
+> - Dźwięk na słuchawkach (PHONES jack) 🎵 — to jest cel
+>
+> Jeśli pisk nadal: sprawdź logi IT underrun count. Jeśli < 100/min → przyczyna inna (SYT timing).
+> Jeśli > 1000/min → Profile B nie pomógł → zbadaj czy WriteEnd poprawnie pisze do SharedTxQueue.
 
 ### Fix II — IT DMA deadlock w IsochService::StartTransmit (v15, `2dc6600`)
 
@@ -191,14 +211,142 @@ Poprawna wartość (irCh=0, itCh=1): `0xC1C00000`.
 | ISOC_COMM_CONTROL + FETCH_PCM_FRAMES przed StartTransmit | ✅ Fix I (`662ca0d`) — v13 potwierdzone (sesja 8) |
 | IT DMA deadlock usunięty (SYT wait po Start()) | ✅ Fix II (`2dc6600`) — v15 zainstalowany (sesja 9) |
 | IT DBS=18 z pcm=2 (silence-padding) | ✅ Fix III (`3241bd2`) — IT nadaje 4644 pkts (sesja 10) |
-| IR odbiera pakiety (seq>0, syt!=0) | 🔍 **Test w toku** — Fix 18+19 wdrożone, czeka na rebuild+test |
+| IR odbiera pakiety (seq>0, syt!=0) | ✅ **POTWIERDZONE** — 11 965 pkts/s (sesja 16), override DBS=21 (Fix 20) |
 | CIPHeader OHCI double-swap | ✅ **Fix 18** (sesja 12/13) — `SwapBigToHost` usunięty z decode path |
 | ISOC_COMM_CONTROL stale state | ✅ **Fix 19** (`68823bf`) — deactivate+20ms przed activate |
 | SYT gate 500ms→3000ms | ✅ **Fix 19** (`68823bf`) — MOTU ma więcej czasu na lock PLL |
 | IT DMA startuje i nadaje | ✅ IT: 4644 pkts (3483D/1161N) — MOTU wysyła IR (~2300 pkts/500ms), Fix 18+19 odblokowują |
-| IO trwa >5s bez "not consecutive" | ⏳ Czeka na streaming test |
-| Słyszysz dźwięk z Maca przez MOTU (TX) | ⏳ Kolejny krok po IR walidacji |
+| IT DBS=21 na wire (AM824 frame format) | ✅ **Fix 21** (uncommitted) — `requestedAm824Slots=kMOTUV3WireDbs48k` zamiast pcm=2 |
+| IO trwa >5s bez "not consecutive" | ✅ **POTWIERDZONE** — 3+ minuty aktywne IO, re-anchoring adaptuje się (sesja 16) |
+| SYT gate bypass dla MOTU V3 | ✅ **Fix 22** (uncommitted, sesja 17) — `skipSYTGate=true`; MOTU zawsze `syt=0x0000`; IT nie będzie zabijane po 3s |
+| HALS_IORawClock re-anchoring (jitter) | ⚠️ Znany — watchdog timing nieregularny; CoreAudio adaptuje się; fix: OHCI cycle counter |
+| Słyszysz dźwięk z Maca przez MOTU (TX) | ⏳ **Test słuchawkowy po restarcie** — Fix 22 zainstalowany, restart → Spotify → PHONES jack |
 | Pełny duplex (TX + RX) | ⏳ Kolejny etap |
+| Pełne 18ch IT / 14ch IR w CoreAudio | ⏳ Teraz tylko "2 In / 2 Out" — rozszerzenie do pełnych kanałów po potwierdzeniu audio |
+
+### Odkrycia sesji 17 (2026-05-28) — Fix 22: SYT gate bypass dla MOTU V3
+
+#### Fix 22 — SYT gate bypass (`IsochService.cpp` + `MOTUAudioBackend.cpp`)
+
+**Objaw:** Chwilowy pisk na słuchawkach przez ~3 sekundy, potem cisza. Logi:
+```
+IT: run=1 active=1 pkts=26644
+❌ StartTransmit SYT timeout: IT is running but MOTU not responding
+   (waited 3000ms seq=10 syt=0x0000 fdf=0x02 dbs=21 ageMs=2046 active=1 established=0)
+IT: Stopped. Stats: 26908 pkts (20181D/6727N)
+MOTUAudioBackend: StartTransmit failed kr=0xe00002d6
+```
+
+**Analiza:** IT wysłało **20 181 data packets** z prawdziwym dźwiękiem Spotify — pisk to był
+prawdziwy dźwięk dotykający MOTU. Ale `IsochService::StartTransmit` po uruchomieniu IT DMA
+czekało 3000ms na `externalSyncBridge_.clockEstablished`. Ta flaga jest ustawiana przez
+`ExternalSyncClockState::ObserveSample`, który wymaga **16 kolejnych pakietów IR** z:
+```
+fdf == 0x02  AND  syt != 0x0000  AND  syt != 0xFFFF
+```
+MOTU 828 MK3 **zawsze wysyła `syt=0x0000`** w swoich nagłówkach CIP — nigdy nie osadza
+IEEE 1394 SYT timestamps. Linux `snd-firewire-motu` w ogóle nie sprawdza SYT.
+Flaga `clockEstablished` nigdy nie mogła zostać ustawiona → timeout → IT zatrzymane.
+
+**Rozwiązanie:** Dodano `bool skipSYTGate = false` do `IsochService::StartTransmit`.
+Pętla SYT jest opakowana w `if (!skipSYTGate)`. `MOTUAudioBackend::StartStreaming` przekazuje `true`.
+
+```cpp
+// IsochService.hpp
+kern_return_t StartTransmit(..., bool skipSYTGate = false);
+
+// IsochService.cpp
+if (skipSYTGate) {
+    ASFW_LOG(Controller, "[Isoch] SYT gate bypassed (device uses syt=0x0000 — MOTU V3 mode)");
+} else {
+    // polling loop 3000ms ...
+}
+
+// MOTUAudioBackend.cpp
+const kern_return_t kr = isoch_.StartTransmit(
+    itChannel, hardware_, sid, streamModeRaw,
+    config.outputChannelCount, kMOTUV3WireDbs48k,
+    txMem, txBytes, nullptr, 0, 0,
+    /*skipSYTGate=*/true);  // ← Fix 22
+```
+
+**Inne callers** (`StartDuplex`, `IsochHandler::StartIsochTransmit`) używają domyślnego `false`
+— SYT gate zachowany dla urządzeń standardowych.
+
+**Status:** Uncommitted, built 2026-05-28, app wgrana na pulpit Mac Studio.
+Commit razem z Fix 21 po potwierdzeniu dźwięku na słuchawkach.
+
+---
+
+### Odkrycia sesji 16 (2026-05-28) — Fix 21, AudioDeviceStart ✅, HALS_IORawClock
+
+#### Fix 21 — IT wire DBS override (MOTUAudioBackend.cpp)
+
+**Objaw:** Brak audio mimo że IT DMA nadaje, IR DMA odbiera. MOTU 828 MK3 milczy.
+
+**Przyczyna:** `StartTransmit` w `MOTUAudioBackend::StartStreaming` (linia ~397) używał
+`config.outputChannelCount` (=2) dla parametru `requestedAm824Slots`. Oznaczało to że CIP header
+miał `DBS=2` — 2 quadlety na event. MOTU 828 MK3 oczekuje `DBS=21` (14 PCM + overhead = 21
+quadlety/event, 504 bajty payload na packet przy 6 events × 8kHz = 48kHz). Pakiety z DBS=2
+były ignorowane przez MOTU jako nieprawidłowe.
+
+**Rozwiązanie:** `requestedAm824Slots` zmieniony na `kMOTUV3WireDbs48k` (=21):
+```cpp
+// MOTUAudioBackend.cpp ~linia 397
+// MOTU V3: wire DBS must be 21 quadlets/event (14 PCM + overhead) regardless
+// of how many PCM channels CoreAudio exposes.  Same constant as the RX-side
+// kMOTUV3WireDbs48k override in StreamProcessor (Fix20).
+// PacketAssembler::reconfigureAM824 pads the extra (am824Slots - pcmChannels)
+// slots with MIDI-conformant AM824 labels, giving MOTU a valid 21-slot frame.
+const kern_return_t kr = isoch_.StartTransmit(
+    itChannel, hardware_, sid, streamModeRaw,
+    config.outputChannelCount, kMOTUV3WireDbs48k,  // ← Fix 21
+    txMem, txBytes, nullptr, 0, 0);
+```
+`PacketAssembler::reconfigureAM824` automatycznie wypełnia brakujące sloty (19 extra = 21-2)
+etykietami MIDI-conformant (cycling 0x80-0x83) → MOTU dostaje poprawne 21-slotowe ramki.
+
+**Status:** Uncommitted, build `2026-05-28T08:08:46Z`. Commit po potwierdzeniu audio na hardware.
+
+---
+
+#### HALS_IORawClock re-anchoring — zidentyfikowane, nienaprawione
+
+**Objaw:**
+```
+HALS_IORawClock::Update: Re-anchoring IO timeline.
+Sample time is consecutive, host time is not consecutive.
+```
+Pojawia się co ~2-3s na początku, potem co 20-50s+ (CoreAudio adaptuje się). System działa.
+
+**Przyczyna:** `PerformIO` w `ASFWAudioDriver` jest wyzwalany przez `IOTimerDispatchSource`
+z 1ms interwałem. Kernel może opóźniać timery do ~1.5ms lub więcej, zwłaszcza pod obciążeniem.
+CoreAudio widzi: sampleTime rośnie równo (+sampleRate/1000), ale hostTime skacze → "not consecutive".
+
+**Wpływ:** System **nie crashuje** — `AudioDeviceStart (err 0)` potwierdzony, IO trwa 3+ minuty.
+Ale jakość synchronizacji i latencja jest zaniżona przez re-anchoring.
+
+**Fix (TODO, nie w tej sesji):** Zastąpić `mach_absolute_time()` w `PerformIO` czytaniem
+licznika cykli OHCI (`CurrentIsochronousCycleTime` register, offset `0x1E8`):
+```cpp
+// Cycle counter: bits[25:12] = cycleCount (0-7999), bits[11:0] = cycleOffset
+// Convert to host time: cycleCount/8000 × timebaseFreq + cycleOffset × (timebaseFreq/24576000)
+```
+OHCI cycle counter jest hardware-synchronizowany z magistralą IEEE 1394 → jitter <125µs (1 cykl).
+
+---
+
+#### Czego NIE robi front panel MOTU 828 MK3
+
+- **Metry poziomów** na panelu przednim = **tylko analog hardware inputs** (Mic/Line). Nie pokazują
+  poziomu sygnału FireWire IT (host→device). Nawet gdy IT nadaje, metry mogą stać na zero.
+- **Test definitywny:** Słuchawki do gniazda `PHONES` (6.35mm, przód) + odtworzenie dźwięku.
+  Gniazdo PHONES jest mapowane na mix wewnętrzny MOTU który **zawiera** FireWire IT input.
+- **Isoch Transmit zakładka w ASFW:** Szara gdy IT jest zarządzany przez CoreAudio.
+  To jest **normalny stan** po `AudioDeviceStart` — IT działa, po prostu nie przez manual trigger.
+- **Przycisk Stop nie działa w Isoch Metrics:** IR jest zarządzany przez CoreAudio — to dobry znak.
+
+---
 
 ### Aktualny bloker (sesja 14, Fix 19) — SYT gate timeout
 
@@ -319,10 +467,10 @@ i wklej output z `log stream`. Reszta kontekstu jest w tym pliku i `MOTU_828_MK3
 | Config ROM reading | ✅ Działa | Pełny scanner z FSM multi-node |
 | AV/C / FCP | ✅ Działa (kod) | Nie używane dla MOTU V3 — patrz Etap 10 |
 | IRM | ✅ Działa | Alokacja kanału + bandwidth |
-| Isoch Transmit (IT) | ✅ Działa | AM824 + SYT + cadence |
-| Isoch Receive (IR) | 🚧 WIP | Pipeline istnieje, wymaga walidacji na hardware |
-| AudioDriverKit | 🚧 W toku | ASFWAudioDriver + ASFWAudioNub podłączone |
-| **MOTU V3 Backend** | ✅ Zaimplementowany | `MOTUAudioBackend` — czeka na test hardware |
+| Isoch Transmit (IT) | ✅ Działa | AM824 + SYT + cadence; DBS=21 override (Fix 21) |
+| Isoch Receive (IR) | ✅ Odbiera | 11 965 pkts/s od MOTU (sesja 16); DBS override=21 (Fix 20) |
+| AudioDriverKit | ✅ AudioDeviceStart | `StartDevice (err 0)` potwierdzony, IO 3+ min; clock jitter issue |
+| **MOTU V3 Backend** | 🚧 Audio pending | IT nadaje DBS=21, SYT gate bypass wdrożony (Fix 22) — restart + headphone test |
 
 ---
 
@@ -705,7 +853,10 @@ Commit `eeb8787`. 488/488 testów ✅. Odblokuje AV/C dla ~80% rynku interfejsó
 | ~~Model ID 0x000000 w Discovery~~ | ✅ NAPRAWIONE | Root dir model=0x106800, unit SW vers=0x000015. Fix: `EffectiveModelId()` commit `abc75ea` |
 | ~~IR cycleMatchEnable (bit 30)~~ | ✅ NAPRAWIONE | `kIsochHeader=1u<<30` to był `cycleMatchEnable` → zero RX packets. Fix: `kRun\|kWake=0x9000`, commit `935d3ff` |
 | ~~Work queue deadlock~~ | ✅ NAPRAWIONE | `StartStreaming` na background queue, commit `5554280` |
-| IR Receive walidacja pakietów | Wysoki | Bit 30 naprawiony — czeka na potwierdzenie `seq>0` na hardware |
+| IR Receive walidacja pakietów | ✅ POTWIERDZONE | 11 965 pkts/s w sesji 16, override DBS=21 działa |
+| HALS_IORawClock re-anchoring | Średni | Watchdog-based PerformIO timing jittery; fix: OHCI cycle counter jako timestamp |
+| Brak audio na wyjściu MOTU | **Wysoki** | Fix 21 (DBS=21) + Fix 22 (SYT bypass) wdrożone; restart + headphone test → sesja 17 |
+| CoreAudio tylko 2 In / 2 Out | Niski | MOTU ma 18ch IT / 14ch IR; rozszerzyć po potwierdzeniu audio |
 | FCP spam do MOTU | Niski | AVC discovery pisze do MOTU co ~2s; MOTU V3 nie używa AV/C — zbędne |
 
 ---

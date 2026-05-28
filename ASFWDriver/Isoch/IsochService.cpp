@@ -124,7 +124,8 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
                                           uint64_t txQueueBytes,
                                           void* zeroCopyBase,
                                           uint64_t zeroCopyBytes,
-                                          uint32_t zeroCopyFrames) {
+                                          uint32_t zeroCopyFrames,
+                                          bool skipSYTGate) {
 
     if (isochTransmitContext_ &&
         isochTransmitContext_->GetState() == ASFW::Isoch::ITState::Running) {
@@ -280,60 +281,73 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
 
     ASFW_LOG(Controller, "[Isoch] ✅ Started IT Context for Channel %u!", channel);
 
-    // Now that IT DMA is running, MOTU V3 will receive IT packets and begin sending IR.
-    // Wait up to 3000 ms for the IR SYT clock to be established — this confirms MOTU is
-    // actively transmitting isochronous data.
-    // 500ms was too short: MOTU V3 needs time to lock its PLL to the isochronous bus
-    // cycle and start its own isoch transmission after receiving the first IT packets.
-    // Hardware tests showed IR cmdPtr never advanced in 500ms; extending to 3000ms gives
-    // MOTU enough startup time without blocking the driver thread excessively.
-    // (Previously this wait was before Start(), which prevented IT from ever starting and
-    // caused a permanent 500ms timeout — that deadlock is gone since session 5.)
-    constexpr uint32_t kSytGateTimeoutMs = 3000;
-    constexpr uint32_t kSytGatePollMs = 5;
-    bool sytClockEstablished = false;
-    for (uint32_t waitedMs = 0; waitedMs < kSytGateTimeoutMs; waitedMs += kSytGatePollMs) {
-        if (externalSyncBridge_.clockEstablished.load(std::memory_order_acquire)) {
-            sytClockEstablished = true;
-            break;
-        }
-        IOSleep(kSytGatePollMs);
-    }
-    if (!sytClockEstablished) {
-        const uint32_t seq = externalSyncBridge_.updateSeq.load(std::memory_order_acquire);
-        const uint32_t packed = externalSyncBridge_.lastPackedRx.load(std::memory_order_acquire);
-        const uint16_t lastSyt = ASFW::Isoch::Core::ExternalSyncBridge::UnpackSYT(packed);
-        const uint8_t lastFdf = ASFW::Isoch::Core::ExternalSyncBridge::UnpackFDF(packed);
-        const uint8_t lastDbs = ASFW::Isoch::Core::ExternalSyncBridge::UnpackDBS(packed);
-        const uint64_t lastTicks = externalSyncBridge_.lastUpdateHostTicks.load(std::memory_order_acquire);
-        uint64_t ageMs = 0;
-        if (lastTicks != 0) {
-            const uint64_t nowTicks = mach_absolute_time();
-            if (nowTicks >= lastTicks) {
-                ageMs = ASFW::Timing::hostTicksToNanos(nowTicks - lastTicks) / 1'000'000ULL;
+    // SYT gate: wait for the IR SYT clock to be established before declaring success.
+    // This confirms the external device is actively transmitting isochronous data with
+    // valid SYT timestamps.
+    //
+    // MOTU V3 exception (skipSYTGate=true): MOTU 828 MK3 ALWAYS sends syt=0x0000 in CIP
+    // headers (it does not embed IEEE 1394 SYT timestamps). Linux snd-firewire-motu never
+    // waits for SYT. The gate would time out unconditionally → streaming killed after 3s.
+    // When skipSYTGate is set, we bypass the poll and rely on the caller to have already
+    // verified that IR is running (StartReceive + ISOC_COMM_CONTROL + FETCH_PCM_FRAMES).
+    if (skipSYTGate) {
+        ASFW_LOG(Controller, "[Isoch] SYT gate bypassed (device uses syt=0x0000 — MOTU V3 mode)");
+    } else {
+        // Now that IT DMA is running, MOTU V3 will receive IT packets and begin sending IR.
+        // Wait up to 3000 ms for the IR SYT clock to be established — this confirms MOTU is
+        // actively transmitting isochronous data.
+        // 500ms was too short: MOTU V3 needs time to lock its PLL to the isochronous bus
+        // cycle and start its own isoch transmission after receiving the first IT packets.
+        // Hardware tests showed IR cmdPtr never advanced in 500ms; extending to 3000ms gives
+        // MOTU enough startup time without blocking the driver thread excessively.
+        // (Previously this wait was before Start(), which prevented IT from ever starting and
+        // caused a permanent 500ms timeout — that deadlock is gone since session 5.)
+        constexpr uint32_t kSytGateTimeoutMs = 3000;
+        constexpr uint32_t kSytGatePollMs = 5;
+        bool sytClockEstablished = false;
+        for (uint32_t waitedMs = 0; waitedMs < kSytGateTimeoutMs; waitedMs += kSytGatePollMs) {
+            if (externalSyncBridge_.clockEstablished.load(std::memory_order_acquire)) {
+                sytClockEstablished = true;
+                break;
             }
+            IOSleep(kSytGatePollMs);
         }
-        // Dump IR hardware state for diagnostics: cmdPtr static = MOTU not sending at all;
-        // cmdPtr advanced but seq=0 = IR packets arriving but StreamProcessor not processing.
-        if (isochReceiveContext_) {
-            isochReceiveContext_->LogHardwareState();
+        if (!sytClockEstablished) {
+            const uint32_t seq = externalSyncBridge_.updateSeq.load(std::memory_order_acquire);
+            const uint32_t packed = externalSyncBridge_.lastPackedRx.load(std::memory_order_acquire);
+            const uint16_t lastSyt = ASFW::Isoch::Core::ExternalSyncBridge::UnpackSYT(packed);
+            const uint8_t lastFdf = ASFW::Isoch::Core::ExternalSyncBridge::UnpackFDF(packed);
+            const uint8_t lastDbs = ASFW::Isoch::Core::ExternalSyncBridge::UnpackDBS(packed);
+            const uint64_t lastTicks = externalSyncBridge_.lastUpdateHostTicks.load(std::memory_order_acquire);
+            uint64_t ageMs = 0;
+            if (lastTicks != 0) {
+                const uint64_t nowTicks = mach_absolute_time();
+                if (nowTicks >= lastTicks) {
+                    ageMs = ASFW::Timing::hostTicksToNanos(nowTicks - lastTicks) / 1'000'000ULL;
+                }
+            }
+            // Dump IR hardware state for diagnostics: cmdPtr static = MOTU not sending at all;
+            // cmdPtr advanced but seq=0 = IR packets arriving but StreamProcessor not processing.
+            if (isochReceiveContext_) {
+                isochReceiveContext_->LogHardwareState();
+            }
+            ASFW_LOG(Controller,
+                     "[Isoch] ❌ StartTransmit SYT timeout: IT is running but device not responding"
+                     " (waited %ums seq=%u syt=0x%04x fdf=0x%02x dbs=%u ageMs=%llu active=%d established=%d)",
+                     kSytGateTimeoutMs,
+                     seq,
+                     lastSyt,
+                     lastFdf,
+                     lastDbs,
+                     ageMs,
+                     externalSyncBridge_.active.load(std::memory_order_acquire),
+                     externalSyncBridge_.clockEstablished.load(std::memory_order_acquire));
+            isochTransmitContext_->Stop();
+            isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
+            isochTransmitContext_->SetSharedTxQueue(nullptr, 0);
+            txQueue_.Reset();
+            return kIOReturnTimeout;
         }
-        ASFW_LOG(Controller,
-                 "[Isoch] ❌ StartTransmit SYT timeout: IT is running but MOTU not responding"
-                 " (waited %ums seq=%u syt=0x%04x fdf=0x%02x dbs=%u ageMs=%llu active=%d established=%d)",
-                 kSytGateTimeoutMs,
-                 seq,
-                 lastSyt,
-                 lastFdf,
-                 lastDbs,
-                 ageMs,
-                 externalSyncBridge_.active.load(std::memory_order_acquire),
-                 externalSyncBridge_.clockEstablished.load(std::memory_order_acquire));
-        isochTransmitContext_->Stop();
-        isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
-        isochTransmitContext_->SetSharedTxQueue(nullptr, 0);
-        txQueue_.Reset();
-        return kIOReturnTimeout;
     }
 
     return kIOReturnSuccess;

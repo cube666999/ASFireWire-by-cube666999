@@ -4,8 +4,8 @@ Fork: https://github.com/cube666999/ASFireWire-by-cube666999
 Base: https://github.com/mrmidi/ASFireWire  
 Test device: MOTU 828 MK3 (target), developed with Claude Code  
 Tests: 493/493 passing  
-Version: 0.2.17-audio (build 17)  
-Hardware status: MOTU 828 MK3 detected (Ready), v18+Fix19 — SYT gate 3000ms, deactivate-before-activate
+Version: 0.2.19-audio (build 19)  
+Hardware status: MOTU 828 MK3 detected (Ready), v19+Fix20 — IR override wire DBS=21 (cycling CIP DBS bypassed)
 
 ---
 
@@ -19,13 +19,57 @@ Hardware status: MOTU 828 MK3 detected (Ready), v18+Fix19 — SYT gate 3000ms, d
 | AV/C / FCP | ✅ Working | Music Subunit, PCR space, `SendSampleRateCommand` (0x19) — for non-MOTU devices |
 | IRM | ✅ Working | Election, channel + bandwidth allocation |
 | Isoch Transmit (IT) | ✅ Working | AM824 + SYT + cadence |
-| Isoch Receive (IR) | 🚧 WIP | CIPHeader double-swap fixed (Fix 18) · deactivate+3s SYT gate (Fix 19) |
+| Isoch Receive (IR) | 🚧 WIP | CIPHeader double-swap (Fix 18) · deactivate+3s SYT gate (Fix 19) · override wire DBS=21 (Fix 20) |
 | AudioDriverKit | 🚧 In progress | `ASFWAudioDriver` + `ASFWAudioNub` wired; `HandleChangeSampleRate` implemented |
 | **MOTU V3 Backend** | ✅ Implemented | `MOTUAudioBackend` — V3 register protocol, awaiting hardware test |
 
 ---
 
-## Fixes (47 commits)
+## Fixes (49 commits)
+
+### Fix 20 — MOTU V3 override wire DBS=21 (IR AM824 decode: all packets rejected)
+**Files:** `ASFWDriver/Isoch/Receive/StreamProcessor.hpp`,
+`ASFWDriver/Isoch/Receive/IsochAudioRxPipeline.hpp`,
+`ASFWDriver/Isoch/Receive/IsochReceiveContext.hpp/.cpp`,
+`ASFWDriver/Isoch/IsochService.hpp/.cpp`,
+`ASFWDriver/Audio/Backends/MOTUAudioBackend.hpp/.cpp`  
+**Commit:** `597f3c8` · **Tests:** 493/493 ✅
+
+After Fix 19, IR packets were flowing (~456 in 100 polls), but `StreamProcessor` rejected every one:
+```
+Unsupported wire DBS=117 (max AM824 slots=32, queueCh=2) - skipping decode
+Unsupported wire DBS=33  (max AM824 slots=32, queueCh=2) - skipping decode
+Unsupported wire DBS=245 (max AM824 slots=32, queueCh=2) - skipping decode
+```
+
+**Root cause:** MOTU V3 uses the CIP header DBS field (bits[23:16] of Q0) as a **cycling device
+counter** (9 → 33 → 53 → … → 245 → wrap), NOT as the data block size per IEC 61883-1.
+This is a fundamental protocol violation. Values up to 245 far exceed `kMaxAmdtpDbs=32` →
+`StreamProcessor` rejected every packet → `eventCount` capped at 1 → `RxStats.Data` never rose.
+
+**True wire DBS = 21** (for 828 MK3 at 48kHz):
+```
+504 bytes payload / (21 quadlets × 4 bytes) = 6 events × 8000 cycles/s = 48 000 Hz ✅
+```
+Only integer DBS giving a standard sample rate. Confirmed by MOTU kext data table (Box828mk3
+format word entry) and Linux `sound/firewire/motu/motu-stream.c`.
+
+**Fix:** Added `overrideWireDbs_` field in `StreamProcessor`. When non-zero, the override value
+replaces the CIP DBS field for `dbsBytes`, `wireSlotsPerEvent`, and `summary.dbs`; the
+`kMaxAmdtpDbs` guard is bypassed entirely. The override propagates up the call chain:
+`StreamProcessor → IsochAudioRxPipeline → IsochReceiveContext → IsochService`.
+
+`MOTUAudioBackend::StartStreaming` calls `isoch_.SetRxOverrideWireDbs(kMOTUV3WireDbs48k)`
+(= 21) immediately after `StartReceive`. The override is config, not state — `Reset()` does
+not clear it.
+
+Added constant in `MOTUAudioBackend.hpp`:
+```cpp
+static constexpr uint8_t kMOTUV3WireDbs48k = 21;
+// Math: 504 bytes payload / (21 * 4) = 6 events × 8000 cycles/s = 48000 Hz.
+```
+
+---
 
 ### Fix 19 — MOTU deactivate-before-activate + SYT gate 3000ms (IR=0 debug)
 **Files:** `ASFWDriver/Audio/Backends/MOTUAudioBackend.cpp`, `ASFWDriver/Isoch/IsochService.cpp`  

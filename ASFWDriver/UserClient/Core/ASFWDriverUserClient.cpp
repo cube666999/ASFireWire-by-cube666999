@@ -74,6 +74,7 @@ enum {
     // Isoch Metrics
     kMethodGetIsochRxMetrics = 34,
     kMethodResetIsochRxMetrics = 35,
+    kMethodGetIsochTxMetrics = 50, // read-only — works for both manual and CoreAudio-managed IT
 
     // Isoch Transmit Control (IT DMA allocation only - no CMP)
     kMethodStartIsochTransmit = 36,
@@ -486,6 +487,9 @@ kern_return_t ASFWDriverUserClient::ExternalMethod(uint64_t selector,
 
     case kMethodResetIsochRxMetrics:
         return runtimeState->Isoch().ResetIsochRxMetrics(arguments);
+
+    case kMethodGetIsochTxMetrics:
+        return runtimeState->Isoch().GetIsochTxMetrics(arguments);
 
     // IT DMA Allocation (no CMP - just allocates memory)
     case kMethodStartIsochTransmit:

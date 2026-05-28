@@ -251,20 +251,60 @@ Commit `935d3ff` naprawia ten błąd w `IsochReceiveContext.cpp` i `OHCIConstant
 
 ## Isoch Receive — uwagi dla MOTU V3
 
-`IsochReceiveContext` → `StreamProcessor` → `AM824Decoder` istnieje w kodzie, ale **nigdy
-nie był przetestowany na żywym sprzęcie**. Dodatkowe ryzyko specyficzne dla MOTU:
+### CIP DBS — cycling counter (NIE rozmiar bloku danych) ⚠️
 
-MOTU V3 może nie używać standardowych nagłówków CIP (IEC 61883-1). `StreamProcessor`
-i `AM824Decoder` są napisane dla zgodnych strumieni IEC 61883-6. Jeśli MOTU pomija
-nagłówki CIP lub używa własnego formatu, oba komponenty będą wymagały modyfikacji.
+MOTU V3 używa pola DBS w nagłówku CIP (bity[23:16] Q0) jako **cyklicznego licznika
+urządzenia**, a nie faktycznego rozmiaru bloku danych per IEC 61883-1. Wartości:
+9 → 33 → 53 → 117 → 245 → (wrap) — **nie** stały DBS.
 
-**Co sprawdzić podczas hardware testu:**
-- Czy IR DMA ring odbiera jakiekolwiek pakiety (logi `IsochReceiveContext`)
-- Czy `StreamProcessor` nie odrzuca pakietów z błędem DBC/CIP
-- Czy zdekodowane próbki PCM mają właściwą wartość (nie szum)
+`StreamProcessor` ma limit `kMaxAmdtpDbs=32`. Wartości do 245 powodują odrzucanie każdego
+pakietu:
+```
+Unsupported wire DBS=117 (max AM824 slots=32, queueCh=2) - skipping decode
+```
 
-Jeśli IR nie działa od razu → zbadaj format pakietu przez Linux
-`sound/firewire/motu/motu-protocol-v3.c` (funkcja `motu_stream_get_pcm_channels`).
+**Fix 20:** `StreamProcessor::overrideWireDbs_` — gdy ustawione, zastępuje pole DBS
+z CIP i pomija check `kMaxAmdtpDbs`.
+
+### Prawdziwy wire DBS = 21 (dla 828 MK3 @ 48kHz)
+
+```
+Payload pakietu IR: 504 bajty
+504 / (DBS × 4B) = eventCount
+504 / (21 × 4) = 6 events × 8000 cykli/s = 48 000 Hz ✅
+```
+
+Jedyna liczba całkowita DBS dająca standardową częstotliwość próbkowania.
+Potwierdzone: kext MOTU data table (Box828mk3 format word[1]) + Linux
+`sound/firewire/motu/motu-stream.c`.
+
+`MOTUAudioBackend.hpp`:
+```cpp
+static constexpr uint8_t kMOTUV3WireDbs48k = 21;
+```
+
+`MOTUAudioBackend::StartStreaming` po `isoch_.StartReceive()`:
+```cpp
+isoch_.SetRxOverrideWireDbs(kMOTUV3WireDbs48k);
+```
+
+### Pakiety `IR CIP decode failed: q0=0xfcf47300 q1=0x80000000 [err#4300]`
+
+MOTU wysyła również pakiety z EOH=1 w Q0 (bit 31 = 1 → `0xfc... >> 31 = 1`).
+Są to pakiety zarządzające/synchronizacyjne MOTU — **nie** dane PCM. `StreamProcessor`
+odrzuca je (poprawnie) logiem `IR CIP decode failed`. Nie blokują audio.
+
+### Stan AM824 decode (po Fix 20)
+
+- `overrideWireDbs_=21` → `eventCount=6` per pakiet
+- `queueChannels=2` (CoreAudio stereo) → kanały 3–14 są silence-padded
+- `AM824Decoder` przetwarza pierwsze 2 kanały PCM z każdego bloku danych
+- Pełne 14 kanałów wymaga zwiększenia `queueChannels` — osobny etap
+
+**Co sprawdzić podczas hardware testu v19:**
+- Brak logów `Unsupported wire DBS` ← potwierdzenie Fix 20
+- `RxStats.Data` rośnie (> 0)
+- Sygnał audio w CoreAudio (choćby cisza lub szum — byle `Data` rosło)
 
 ---
 

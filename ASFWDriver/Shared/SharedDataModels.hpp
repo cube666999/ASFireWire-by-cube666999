@@ -165,5 +165,31 @@ struct IsochRxSnapshot {
 
 static_assert(sizeof(IsochRxSnapshot) == 88, "IsochRxSnapshot must be 88 bytes");
 
+/// Isoch Transmit metrics snapshot for GUI display
+/// Wire format — must match Swift IsochTxMetrics exactly (88 bytes)
+struct IsochTxSnapshot {
+    // Core counters
+    uint64_t packetsAssembled;   // Total packets assembled (data + no-data)
+    uint64_t dataPackets;        // Packets carrying PCM audio frames
+    uint64_t noDataPackets;      // Packets with empty/silence payload
+    uint64_t underrunCount;      // Ring buffer underruns (0 = data flowing)
+
+    // Buffer state
+    uint32_t bufferFillLevel;    // Ring buffer fill percentage (0-100)
+    uint32_t zeroCopyEnabled;    // 1=zero-copy from CoreAudio, 0=ring-buffer path
+
+    // Context state
+    uint32_t state;              // ITState: 0=Unconfigured 1=Configured 2=Running 3=Stopped
+    uint32_t maxRefillLatencyUs; // Peak DMA refill latency in µs
+
+    // Refill latency histogram [<50µs, 50-200µs, 200-500µs, >500µs]
+    uint64_t latencyHist[4];
+
+    // IRQ watchdog
+    uint64_t irqWatchdogKicks;   // Times IRQ stall recovery was triggered
+} __attribute__((packed));
+
+static_assert(sizeof(IsochTxSnapshot) == 88, "IsochTxSnapshot must be 88 bytes");
+
 } // namespace Metrics
 } // namespace ASFW
