@@ -79,7 +79,8 @@ public:
         summary.hasValidCip = true;
         summary.syt = header->syt;
         summary.fdf = header->fdf;
-        summary.dbs = header->dataBlockSize;
+        // Report effective DBS (override takes precedence over CIP DBS field).
+        summary.dbs = (overrideWireDbs_ != 0) ? overrideWireDbs_ : header->dataBlockSize;
         
         // Continuity Check
         uint8_t expectedDBC = (lastDBC_ + lastDataBlockCount_) & 0xFF;
@@ -102,7 +103,10 @@ public:
         
         // Payload Calculation (cipLength = total minus isoch header, payloadBytes = minus CIP header)
         size_t payloadBytes = cipLength - 8;  // Subtract 8 bytes for CIP header
-        size_t dbsBytes = static_cast<size_t>(header->dataBlockSize) * 4u;
+        // For devices with non-standard CIP DBS (e.g. MOTU V3 where the DBS field is a cycling
+        // counter, not the actual block size), an external override can be configured.
+        const uint32_t effectiveDbs = (overrideWireDbs_ != 0) ? overrideWireDbs_ : header->dataBlockSize;
+        size_t dbsBytes = static_cast<size_t>(effectiveDbs) * 4u;
         
         if (dbsBytes == 0) {
             // Should not happen for AM824
@@ -178,8 +182,12 @@ public:
              
              // Extract Samples (Just verify decodability for now)
              constexpr size_t kEventSampleCapacity = Config::kMaxPcmChannels;
-             const size_t wireSlotsPerEvent = header->dataBlockSize;
-             if (wireSlotsPerEvent > Config::kMaxAmdtpDbs) {
+             // Use effective DBS (override or CIP) as the stride between data blocks.
+             const size_t wireSlotsPerEvent = effectiveDbs;
+             // Only apply the kMaxAmdtpDbs cap when no override is in effect.
+             // With an override the caller has explicitly accepted the wire format
+             // (e.g. MOTU V3 whose CIP DBS field is a cycling counter, not block size).
+             if (overrideWireDbs_ == 0 && wireSlotsPerEvent > Config::kMaxAmdtpDbs) {
                  // We can parse CIP/DBC continuity, but not safely/meaningfully decode this payload.
                  errorCount_++;
                  if (lastUnsupportedWireDbs_ != header->dataBlockSize) {
@@ -362,10 +370,21 @@ private:
     
     uint8_t lastUnsupportedWireDbs_{0};
 
+    // Override wire DBS: when non-zero, replaces the CIP DBS field for stride/event-count
+    // calculation.  Used for devices (e.g. MOTU V3) whose CIP DBS field is a cycling counter
+    // rather than the true data-block size.  Not cleared by Reset() — it is a configuration
+    // value, not streaming state.
+    uint8_t overrideWireDbs_{0};
+
     // Temp buffer for one PCM event's worth of samples (host-facing channels only).
     int32_t eventSamples_[Config::kMaxPcmChannels]{};
     
 public:
+    /// Configure a fixed wire DBS to use instead of the CIP header's DBS field.
+    /// Pass 0 to revert to CIP-derived DBS (default).
+    /// Must be called before streaming starts; value persists across Reset().
+    void SetOverrideWireDbs(uint8_t dbs) noexcept { overrideWireDbs_ = dbs; }
+
     /// Set the output shared queue for decoded samples.
     /// @param queue Pointer to shared RX queue (owned externally, typically by IsochReceiveContext)
     void SetOutputSharedQueue(ASFW::Shared::TxSharedQueueSPSC* queue) noexcept {

@@ -84,6 +84,10 @@ public:
     ASFW::Isoch::IsochReceiveContext* ReceiveContext() const { return isochReceiveContext_.get(); }
     ASFW::Isoch::IsochTransmitContext* TransmitContext() const { return isochTransmitContext_.get(); }
 
+    /// Override wire DBS on the active receive context (must call after StartReceive).
+    /// 0 = revert to CIP DBS field (default).  Primarily for MOTU V3 devices.
+    void SetRxOverrideWireDbs(uint8_t dbs) noexcept;
+
 private:
     struct SharedQueueMapping {
         OSSharedPtr<IOBufferMemoryDescriptor> memory{};

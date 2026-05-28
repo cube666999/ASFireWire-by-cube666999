@@ -80,6 +80,10 @@ public:
     void SetSharedRxQueue(void* base, uint64_t bytes);
     void SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept;
 
+    /// Override wire DBS for non-standard devices (e.g. MOTU V3).
+    /// 0 = use CIP DBS field (default).
+    void SetOverrideWireDbs(uint8_t dbs) noexcept;
+
     void LogHardwareState();
 
 private:

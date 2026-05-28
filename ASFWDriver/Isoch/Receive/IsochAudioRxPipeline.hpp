@@ -34,6 +34,10 @@ public:
     void SetSharedRxQueue(void* base, uint64_t bytes) noexcept;
     void SetExternalSyncBridge(Core::ExternalSyncBridge* bridge) noexcept;
 
+    /// Override the wire DBS used for AM824 decoding.
+    /// See StreamProcessor::SetOverrideWireDbs for details.
+    void SetOverrideWireDbs(uint8_t dbs) noexcept { streamProcessor_.SetOverrideWireDbs(dbs); }
+
     [[nodiscard]] StreamProcessor& StreamProcessorRef() noexcept { return streamProcessor_; }
 
 private:

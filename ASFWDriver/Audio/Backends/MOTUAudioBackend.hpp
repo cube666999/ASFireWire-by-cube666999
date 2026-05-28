@@ -101,6 +101,12 @@ private:
     static constexpr uint32_t kIRMTimeoutMs = 500;
     static constexpr uint32_t kRegTimeoutMs = 200;
 
+    // MOTU V3 stream format at 48kHz: data block = 21 quadlets
+    // (14 PCM + MIDI + system overhead).  MOTU's CIP DBS field is a cycling
+    // counter, not the true block size — we override it in StreamProcessor.
+    // Math: 504 bytes payload / (21 * 4) = 6 events × 8000 cycles/s = 48000 Hz.
+    static constexpr uint8_t kMOTUV3WireDbs48k = 21;
+
     [[nodiscard]] static Async::FWAddress MakeAddr(uint32_t offset) noexcept;
 
     // Blocking-style helpers (poll with IOSleep, same pattern as AVCAudioBackend::WaitForCMP).

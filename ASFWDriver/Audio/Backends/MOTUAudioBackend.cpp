@@ -297,6 +297,10 @@ IOReturn MOTUAudioBackend::StartStreaming(uint64_t guid) noexcept {
             ReleaseIRMResources();
             return kr;
         }
+        // MOTU V3: the CIP DBS field is a cycling device counter, not the true block size.
+        // Override so StreamProcessor uses DBS=21 (6 data blocks × 21 quadlets × 4B = 504B
+        // at 48kHz) instead of the garbage CIP value, which would cap eventCount at 1.
+        isoch_.SetRxOverrideWireDbs(kMOTUV3WireDbs48k);
     }
 
     // Step 6 — ISOC_COMM_CONTROL: activate both RX and TX channels on MOTU.

@@ -95,6 +95,13 @@ kern_return_t IsochService::StartReceive(uint8_t channel,
     return kIOReturnSuccess;
 }
 
+void IsochService::SetRxOverrideWireDbs(uint8_t dbs) noexcept {
+    if (isochReceiveContext_) {
+        isochReceiveContext_->SetOverrideWireDbs(dbs);
+        ASFW_LOG(Controller, "[Isoch] IR override wire DBS set to %u", dbs);
+    }
+}
+
 kern_return_t IsochService::StopReceive() {
     if (!isochReceiveContext_) {
         return kIOReturnNotReady;

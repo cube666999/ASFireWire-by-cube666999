@@ -216,6 +216,10 @@ void IsochReceiveContext::SetExternalSyncBridge(Core::ExternalSyncBridge* bridge
     audio_.SetExternalSyncBridge(bridge);
 }
 
+void IsochReceiveContext::SetOverrideWireDbs(uint8_t dbs) noexcept {
+    audio_.SetOverrideWireDbs(dbs);
+}
+
 void IsochReceiveContext::SetCallback(IsochReceiveCallback callback) {
     callback_ = callback;
 }
