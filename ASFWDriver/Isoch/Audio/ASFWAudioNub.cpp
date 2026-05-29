@@ -494,6 +494,42 @@ kern_return_t IMPL(ASFWAudioNub, Start)
         ivars->channelCount = std::max(ivars->inputChannelCount, ivars->outputChannelCount);
     }
 
+    // Fix 25: Read pre-staged channel counts from the provider (ASFWDriver).
+    // AudioNubPublisher::EnsureNub() sets these on the provider BEFORE calling
+    // Create(), so they are available here during the synchronous Start() call —
+    // before SetProperties() / SetChannelCount() run on the nub itself.
+    if (ivars->parentDriver) {
+        OSDictionary* provPropsRaw = nullptr;
+        if (ivars->parentDriver->CopyProperties(&provPropsRaw) == kIOReturnSuccess && provPropsRaw) {
+            OSSharedPtr<OSDictionary> provProps(provPropsRaw, OSNoRetain);
+            bool stagingFound = false;
+            uint32_t stageCh = 0, stageIn = 0, stageOut = 0;
+            if (auto* n = OSDynamicCast(OSNumber, provProps->getObject("ASFWStagedInputChannelCount"))) {
+                stageIn = ClampAudioChannels(n->unsigned32BitValue());
+                if (stageIn > 0) stagingFound = true;
+            }
+            if (auto* n = OSDynamicCast(OSNumber, provProps->getObject("ASFWStagedOutputChannelCount"))) {
+                stageOut = ClampAudioChannels(n->unsigned32BitValue());
+                if (stageOut > 0) stagingFound = true;
+            }
+            if (auto* n = OSDynamicCast(OSNumber, provProps->getObject("ASFWStagedChannelCount"))) {
+                stageCh = ClampAudioChannels(n->unsigned32BitValue());
+                if (stageCh > 0) stagingFound = true;
+            }
+            if (stagingFound) {
+                if (stageIn  > 0) ivars->inputChannelCount  = stageIn;
+                if (stageOut > 0) ivars->outputChannelCount = stageOut;
+                if (stageCh  > 0) ivars->channelCount       = stageCh;
+                ivars->channelCount = std::max({ivars->channelCount,
+                                                ivars->inputChannelCount,
+                                                ivars->outputChannelCount});
+                ASFW_LOG(Audio,
+                         "ASFWAudioNub: Applied staged channel counts from provider: ch=%u in=%u out=%u",
+                         ivars->channelCount, ivars->inputChannelCount, ivars->outputChannelCount);
+            }
+        }
+    }
+
     // TX/RX queues and audio buffer are created lazily on first RPC access.
 
     // Register the service so ASFWAudioDriver can match on us

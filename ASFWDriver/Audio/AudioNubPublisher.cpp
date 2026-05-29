@@ -5,6 +5,7 @@
 
 #include <DriverKit/IOService.h>
 #include <DriverKit/OSDictionary.h>
+#include <DriverKit/OSNumber.h>
 #include <DriverKit/OSSharedPtr.h>
 
 #include "../Logging/Logging.hpp"
@@ -55,6 +56,29 @@ bool AudioNubPublisher::EnsureNub(uint64_t guid,
         }
     }
     IOLockUnlock(lock_);
+
+    // Fix 25: Stage channel configuration on the provider BEFORE Create().
+    // Create() calls ASFWAudioNub::Start() synchronously. Start() reads channel
+    // counts from its own properties — but our SetProperties() / SetChannelCount()
+    // calls run AFTER Create() returns, so ivars stay at init() defaults (ch=2).
+    // By staging on the provider, Start() can read correct counts via
+    // provider->CopyProperties() and size the queues correctly from the start.
+    // Note: IOService in DriverKit exposes SetProperties(OSDictionary*) which merges.
+    {
+        OSDictionary* stagingRaw = OSDictionary::withCapacity(3);
+        OSSharedPtr<OSDictionary> staging(stagingRaw, OSNoRetain);
+        if (staging) {
+            OSSharedPtr<OSNumber> chNum(OSNumber::withNumber(config.channelCount, 32), OSNoRetain);
+            OSSharedPtr<OSNumber> inNum(OSNumber::withNumber(config.inputChannelCount, 32), OSNoRetain);
+            OSSharedPtr<OSNumber> outNum(OSNumber::withNumber(config.outputChannelCount, 32), OSNoRetain);
+            if (chNum && inNum && outNum) {
+                staging->setObject("ASFWStagedChannelCount",        chNum.get());
+                staging->setObject("ASFWStagedInputChannelCount",   inNum.get());
+                staging->setObject("ASFWStagedOutputChannelCount",  outNum.get());
+                driver_->SetProperties(staging.get());
+            }
+        }
+    }
 
     IOService* nubService = nullptr;
     kern_return_t kr = driver_->Create(
