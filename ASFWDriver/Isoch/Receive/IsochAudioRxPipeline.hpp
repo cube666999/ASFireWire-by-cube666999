@@ -53,7 +53,6 @@ private:
         uint32_t prevCycleTimer{0};
         uint64_t prevHostTicks{0};
         bool     hasPrevious{false};
-        uint32_t pollsSinceLastUpdate{0};
         double   sampleRate{48000.0};
     } cycleCorr_{};
 };

@@ -125,7 +125,8 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
                                           void* zeroCopyBase,
                                           uint64_t zeroCopyBytes,
                                           uint32_t zeroCopyFrames,
-                                          bool skipSYTGate) {
+                                          bool skipSYTGate,
+                                          Encoding::PacketEncoding encoding) {
 
     if (isochTransmitContext_ &&
         isochTransmitContext_->GetState() == ASFW::Isoch::ITState::Running) {
@@ -230,7 +231,8 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
                                                    sid,
                                                    streamModeRaw,
                                                    pcmChannels,
-                                                   am824Slots);
+                                                   am824Slots,
+                                                   encoding);
     if (result != kIOReturnSuccess) {
         ASFW_LOG(Controller, "[Isoch] ❌ Failed to Configure IT Context: 0x%x", result);
         isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);

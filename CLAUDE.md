@@ -137,6 +137,7 @@ Pass `count=0` to `ReadRootDirQuadlets()` to enable autosize: the reader issues 
 ### Reference Material (internal, not public)
 
 - `docs/linux/` — Linux `firewire-ohci` driver (authoritative for descriptor layout)
+- `docs/linux/motu/` — Linux MOTU FireWire driver (snapshot `f5e5d35`): `motu-protocol-v3.c`, `amdtp-motu.c`, `motu.h`. **Autorytatywne źródło dla kanałów MOTU 828 MK3 i DBS.** Patrz `docs/linux/motu/README.md`.
 - `docs/IOFireWireFamily/` — Apple's original FireWire kext source
 - `docs/IOFireWireAVC/` — Apple's AV/C protocol implementation
 - `docs/ohci/` — OHCI specification
@@ -407,6 +408,15 @@ Przy ponownym uruchomieniu apki (gdy dext już jest [activated enabled]), `activ
 | `documentation/PHY_COMMAND_CONTRACTS.md` | Kontrakty dla PHY commands i alpha PHY packets |
 | `documentation/ieee1394_bus_reset.md` | IEEE 1394 bus reset state machine (modernizowana dokumentacja) |
 | `documentation/ieee1394_tree_identification.md` | IEEE 1394 tree identification state machine |
+
+### Referencje Linux MOTU (`docs/linux/motu/`)
+
+| Plik | Zawartość |
+|------|-----------|
+| `docs/linux/motu/README.md` | **Szybka referencja** — kanały 828 MK3 (18 IT / 14 IR fixed), wzór DBS, wyjaśnienie DBS=21 |
+| `docs/linux/motu/motu-protocol-v3.c` | Rejestry V3, sekwencja StartStreaming, detekcja ADAT, definicje `snd_motu_spec_828mk3_fw` |
+| `docs/linux/motu/amdtp-motu.c` | AMDTP streaming: DBS = `1 + DIV_ROUND_UP((msg+pcm)*3, 4)`, PCM byte offset=10, SPH |
+| `docs/linux/motu/motu.h` | Struktury: `snd_motu_spec`, `snd_motu_packet_format`, flagi, stałe V3 |
 
 ### Narzędzia diagnostyczne (`tools/`) — od mrmidi
 

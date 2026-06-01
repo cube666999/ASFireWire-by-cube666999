@@ -19,6 +19,10 @@ namespace Encoding {
 /// FMT value for AM824 format (IEC 61883-6)
 constexpr uint8_t kCIPFormatAM824 = 0x10;
 
+/// FMT value for MOTU V3 custom format (FMT=0x00, FDF=0x00, SYT=0x0000)
+/// per amdtp-motu.c: MOTU uses its own CIP framing, not standard AM824.
+constexpr uint8_t kCIPFormatMotuV3 = 0x00;
+
 /// SYT value indicating NO-DATA packet
 constexpr uint16_t kSYTNoData = 0xFFFF;
 
@@ -50,9 +54,14 @@ public:
     
     /// Set the data block size.
     void setDBS(uint8_t dbs) noexcept { dbs_ = dbs; }
-    
+
     /// Get the data block size.
     uint8_t getDBS() const noexcept { return dbs_; }
+
+    /// Enable MOTU V3 CIP framing: FMT=0x00, FDF=0x00, SYT=0x0000.
+    /// Per amdtp-motu.c: MOTU V3 uses SPH in each data block for timing,
+    /// not SYT in CIP. All data packets send SYT=0x0000.
+    void setMotuV3Mode(bool enable) noexcept { motuV3_ = enable; }
     
     /// Build a CIP header pair.
     ///
@@ -86,11 +95,15 @@ public:
                       (static_cast<uint32_t>(dbs_) << 16) |
                       (static_cast<uint32_t>(dbc));
         
-        // Q1: [EOH=10][FMT=0x10:6][FDF:8][SYT:16]
+        // Q1: [EOH=10][FMT:6][FDF:8][SYT:16]
+        // MOTU V3: FMT=0x00, FDF=0x00, SYT=0x0000 (sync via SPH in data blocks)
         uint16_t sytValue = isNoData ? kSYTNoData : syt;
-        uint32_t q1 = (0x02U << 30) |                          // EOH = 10
-                      (static_cast<uint32_t>(kCIPFormatAM824) << 24) |  // FMT
-                      (static_cast<uint32_t>(kSFC_48kHz) << 16) |       // FDF
+        const uint8_t fmt = motuV3_ ? kCIPFormatMotuV3 : kCIPFormatAM824;
+        const uint8_t fdf = motuV3_ ? 0x00u : kSFC_48kHz;
+        if (motuV3_) { sytValue = 0x0000; }
+        uint32_t q1 = (0x02U << 30) |
+                      (static_cast<uint32_t>(fmt) << 24) |
+                      (static_cast<uint32_t>(fdf) << 16) |
                       sytValue;
         
         // Byte swap both for big-endian wire order
@@ -108,6 +121,7 @@ public:
 private:
     uint8_t sid_;  ///< Source node ID (6 bits)
     uint8_t dbs_;  ///< Data block size (quadlets per source packet)
+    bool motuV3_{false};
     
     /// Byte swap for endianness conversion.
     static constexpr uint32_t byteSwap32(uint32_t x) noexcept {

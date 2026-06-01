@@ -75,17 +75,22 @@ TEST(DeviceProtocolFactoryTests, EffectiveModelIdUsesSWVersionForMOTU) {
 }
 
 TEST(DeviceProtocolFactoryTests, MOTU828MK3ChannelLayout) {
-    // Confirmed from Sequoia diagnostic: fNumFWOutputChannels=14 fNumFWInputChannels=18.
+    // Fix 24: layout set to {21, 21} based on observed wire DBS=21.
+    // Linux reference (motu-protocol-v3.c): tx_fixed=18 (IR), rx_fixed=14 (IT),
+    // plus dynamic ADAT channels from V3_OPT_IFACE_MODE_OFFSET register.
+    // DBS=21 = 2 msg + some base + ADAT combination observed on hardware.
+    // TODO (Fix 28): read V3_OPT_IFACE_MODE_OFFSET at runtime and compute
+    // channels dynamically per Linux formula instead of hardcoded {21,21}.
     const auto layout = DeviceProtocolFactory::GetMOTUV3ChannelLayout(
         DeviceProtocolFactory::kMOTU828MK3FWModel);
-    EXPECT_EQ(layout.inputChannels,  14u);  // device → host (IR)
-    EXPECT_EQ(layout.outputChannels, 18u);  // host → device (IT)
+    EXPECT_EQ(layout.inputChannels,  21u);  // device → host (IR) — Fix 24 approximation
+    EXPECT_EQ(layout.outputChannels, 21u);  // host → device (IT) — Fix 24 approximation
 
     // Hybrid variant has the same layout.
     const auto layoutHyb = DeviceProtocolFactory::GetMOTUV3ChannelLayout(
         DeviceProtocolFactory::kMOTU828MK3HybModel);
-    EXPECT_EQ(layoutHyb.inputChannels,  14u);
-    EXPECT_EQ(layoutHyb.outputChannels, 18u);
+    EXPECT_EQ(layoutHyb.inputChannels,  21u);
+    EXPECT_EQ(layoutHyb.outputChannels, 21u);
 }
 
 TEST(DeviceProtocolFactoryTests, UnknownMOTUModelFallsBackToSafeDefaults) {

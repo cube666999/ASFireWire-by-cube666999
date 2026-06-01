@@ -4,8 +4,8 @@ Fork: https://github.com/cube666999/ASFireWire-by-cube666999
 Base: https://github.com/mrmidi/ASFireWire  
 Test device: MOTU 828 MK3 (target), developed with Claude Code  
 Tests: 493/493 passing  
-Version: 0.2.19-audio (build 19)  
-Hardware status: MOTU 828 MK3 detected (Ready), v19+Fix20 — IR override wire DBS=21 (cycling CIP DBS bypassed)
+Version: 0.2.20-audio (build 20) — Fix 26+27+29  
+Hardware status: MOTU 828 MK3 detected (Ready), v20+Fix29 — MOTU V3 packet encoding (3-byte PCM, SPH sync)
 
 ---
 
@@ -25,7 +25,76 @@ Hardware status: MOTU 828 MK3 detected (Ready), v19+Fix20 — IR override wire D
 
 ---
 
-## Fixes (49 commits)
+## Fixes (52 commits)
+
+### Fix 29 — MOTU V3 Packet Encoding: 3-byte PCM + SPH (session 19, 2026-06-01)
+**Files:** `ASFWDriver/Isoch/Encoding/CIPHeaderBuilder.hpp`,
+`ASFWDriver/Isoch/Encoding/PacketAssembler.hpp`,
+`ASFWDriver/Isoch/Transmit/IsochAudioTxPipeline.hpp/.cpp`,
+`ASFWDriver/Isoch/Transmit/IsochTransmitContext.hpp/.cpp`,
+`ASFWDriver/Isoch/IsochService.hpp/.cpp`,
+`ASFWDriver/Audio/Backends/MOTUAudioBackend.cpp`  
+**Commit:** Pending · **Tests:** 493/493 ✅ · **Status:** Ready for hardware test
+
+**Background:** Prior fixes sent IT as **AM824 quadlets** (IEC 61883-6 standard): 4 bytes per slot, label byte + 24-bit PCM.
+MOTU V3 does NOT follow AM824 spec. It uses a proprietary **3-byte packed format** documented in Linux `amdtp-motu.c`.
+
+**Problem:** When MOTU received AM824-format IT packets, it interpreted them as garbage, refused to lock to transmission timing, and never responded with IR data. Ring buffer oscillated 0%→144% because CoreAudio PerformIO starved waiting for IR (silence = need IT to sync). IT DMA underran constantly.
+
+**Solution:** Implement true MOTU V3 wire format:
+```
+Data block (DBS=21 quadlets = 84 bytes):
+  Bytes 0-3:    SPH (source packet header, set to 0x00000000)
+  Bytes 4-9:    msg data (2×3B, set to 0x000000 = no MIDI)
+  Bytes 10-73:  PCM channels 0-20 as 3-byte big-endian samples
+  Bytes 74-83:  padding (zeros)
+
+CIP header (Q1):
+  FMT  = 0x00 (not 0x10 for AM824)
+  FDF  = 0x00 (MOTU ignores SFC; uses SPH for timing)
+  SYT  = 0x0000 (MOTU ALWAYS sends SYT=0x0000, never embeds IEEE 1394 time)
+```
+
+**Implementation:**
+- Added `PacketEncoding` enum: `kAM824` (default) vs `kMotuV3` (new)
+- Added `CIPHeaderBuilder::setMotuV3Mode()` → Q1 uses FMT=0x00, FDF=0x00, SYT=0x0000
+- Added `PacketAssembler::encodeInterleavedFramesToMotuV3()` → 3-byte PCM encoding with SPH header
+- Propagated `encoding` parameter through: `IsochService::StartTransmit()` → `IsochTransmitContext::Configure()` → `IsochAudioTxPipeline::Configure()` → `PacketAssembler::reconfigureAM824(encoding)`
+- `MOTUAudioBackend::StartStreaming()` now calls `StartTransmit(..., encoding=kMotuV3)`
+
+**Expected outcome (pending hardware test):**
+- IT packets now match MOTU V3 wire spec → MOTU accepts transmission
+- Ring buffer fills stably (MOTU responds with IR after seeing IT DBS=21)
+- No more catch-up bursts → underruns drop to ~0
+- Audio plays without artifacts
+
+---
+
+### Fix 28 — Reverted (race condition with TX queue fill)
+Attempted to increase `startWaitTargetFrames=3072` before IT DMA start, but `IsochService::StartTransmit` has hardcoded `maxWaitMs=100`. If PerformIO dispatch is delayed, IT starts with empty queue → worse underruns. **Reverted in favor of Fix 29.**
+
+---
+
+### Fix 27 — TX Ring Buffer Expansion (session 19)
+**Files:** `ASFWDriver/Isoch/Config/AudioTxProfiles.hpp`  
+Increased `kTxProfileB`:
+- `legacyRbTargetFrames`: 1024 → 2048 (21ms → 43ms target fill)
+- `legacyRbMaxFrames`: 1536 → 4096 (32ms → 85ms max capacity, use full AudioRingBuffer)
+
+**Rationale:** Wider buffer window absorbs PerformIO jitter. However, Fix 29 proved ring buffer size wasn't the root cause of oscillation — MOTU ignoring AM824 packets was. Fix 27 remains as a robustness improvement.
+
+---
+
+### Fix 26 — OHCI Cycle-Time Clock Synchronization (session 19)
+**Files:** `ASFWDriver/Isoch/Receive/IsochAudioRxPipeline.cpp`  
+Changed `CycleTimeCorrelation` update from **poll-count gate** (1000 polls ≈ 2s) to **bus-time gate** (100ms).
+
+**Old logic:** Baseline q8 (nanosPerSample) captured on poll #1000, valid by poll #2000 (≈2 seconds).
+**New logic:** Baseline captured on first `OnPollEnd()`, refreshed every 100ms of 1394 bus time.
+
+**Result:** q8 becomes valid within 100ms, updates 10× more responsively to bus clock drift. `CycleCorr ratio` = 1.000022 (confirmed stable, synchronized to MOTU 828 MK3 crystal).
+
+---
 
 ### Fix 20 — MOTU V3 override wire DBS=21 (IR AM824 decode: all packets rejected)
 **Files:** `ASFWDriver/Isoch/Receive/StreamProcessor.hpp`,

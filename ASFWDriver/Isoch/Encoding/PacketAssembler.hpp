@@ -35,6 +35,12 @@ enum class StreamMode : uint8_t {
     kBlocking = 1,
 };
 
+/// Packet data encoding format.
+enum class PacketEncoding : uint8_t {
+    kAM824 = 0,  ///< Standard IEC 61883-6 AM824 (4 bytes/slot: label + 24-bit PCM)
+    kMotuV3 = 1, ///< MOTU V3 packed format (3-byte PCM, SPH header, no AM824 labels)
+};
+
 /// Compile-time maximum frames per DATA packet (48k blocking path).
 constexpr uint32_t kSamplesPerDataPacket = 8;
 
@@ -124,17 +130,20 @@ public:
     }
 
     /// Reconfigure PCM channels and wire AM824 slot count (CIP DBS).
-    /// `am824Slots` may exceed `channels` when the stream carries non-audio slots
-    /// such as MIDI conformant data.
+    /// `am824Slots` may exceed `channels` when the stream carries non-audio slots.
+    /// `encoding` selects AM824 (standard) or MOTU V3 (3-byte packed) wire format.
     // Positional arguments mirror PCM-channels / wire-slots / SID reconfiguration.
     // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-    void reconfigureAM824(uint32_t channels, uint32_t am824Slots, uint8_t sid) noexcept {
+    void reconfigureAM824(uint32_t channels, uint32_t am824Slots, uint8_t sid,
+                          PacketEncoding encoding = PacketEncoding::kAM824) noexcept {
         channelCount_ = channels;
         am824SlotCount_ = am824Slots;
         midiSlotsPerEvent_ = (am824SlotCount_ > channelCount_)
             ? (am824SlotCount_ - channelCount_)
             : 0;
+        encoding_ = encoding;
         cipBuilder_ = CIPHeaderBuilder(sid, static_cast<uint8_t>(am824SlotCount_));
+        cipBuilder_.setMotuV3Mode(encoding_ == PacketEncoding::kMotuV3);
         ringBuffer_.reconfigure(channels);
         blockingCadence_.reset();
         nonBlockingCadence_.reset();
@@ -322,9 +331,13 @@ private:
             std::memset(&samples[samplesRead], 0, (totalSamples - samplesRead) * sizeof(int32_t));
         }
 
-        // Encode samples to AM824 format
+        // Encode samples: AM824 or MOTU V3 packed format
         uint32_t* audioQuadlets = reinterpret_cast<uint32_t*>(packet.data + kCIPHeaderSize);
-        encodeInterleavedFramesToAm824(samples, framesPerPacket, audioQuadlets);
+        if (encoding_ == PacketEncoding::kMotuV3) {
+            encodeInterleavedFramesToMotuV3(samples, framesPerPacket, audioQuadlets);
+        } else {
+            encodeInterleavedFramesToAm824(samples, framesPerPacket, audioQuadlets);
+        }
     }
     
     /// Assemble a silent DATA packet (CIP header + zero-filled audio).
@@ -337,10 +350,13 @@ private:
         std::memcpy(packet.data, &cip.q0, 4);
         std::memcpy(packet.data + 4, &cip.q1, 4);
 
-        // IMPORTANT: Silent audio must still be valid AM824/MBLA (label 0x40),
-        // otherwise some devices interpret it as garbage (audible noise).
         uint32_t* audioQuadlets = reinterpret_cast<uint32_t*>(packet.data + kCIPHeaderSize);
-        fillSilentAm824Frames(framesPerPacket, audioQuadlets);
+        if (encoding_ == PacketEncoding::kMotuV3) {
+            fillSilentMotuV3Frames(framesPerPacket, audioQuadlets);
+        } else {
+            // AM824/MBLA label 0x40 required — prevents garbage noise on strict devices.
+            fillSilentAm824Frames(framesPerPacket, audioQuadlets);
+        }
     }
 
     /// Assemble a NO-DATA packet (8 bytes: CIP only).
@@ -390,8 +406,47 @@ private:
         }
     }
 
+    /// MOTU V3 packet encoding: 3-byte packed PCM per amdtp-motu.c.
+    ///
+    /// Data block layout (am824SlotCount_ quadlets = am824SlotCount_×4 bytes):
+    ///   Byte  0– 3: SPH = 0x00000000 (presentation timestamp, zero for initial impl)
+    ///   Byte  4– 9: 2 × msg_chunk (3 bytes each, MIDI/control — zeros = no MIDI)
+    ///   Byte 10-10+N×3-1: PCM channels 0..N-1 (3 bytes each, 24-bit big-endian)
+    ///   Remaining: zero padding to quadlet boundary
+    void encodeInterleavedFramesToMotuV3(const int32_t* pcmInterleaved,
+                                         uint32_t frames,
+                                         uint32_t* outWireQuadlets) const noexcept {
+        const uint32_t totalBytes = am824SlotCount_ * 4u;
+        const uint32_t pcmSlots   = (totalBytes - 10u) / 3u; // how many 3-byte slots fit
+        const uint32_t chCount    = (channelCount_ < pcmSlots) ? channelCount_ : pcmSlots;
+
+        for (uint32_t f = 0; f < frames; ++f) {
+            auto* block = reinterpret_cast<uint8_t*>(
+                outWireQuadlets + static_cast<size_t>(f) * am824SlotCount_);
+            std::memset(block, 0, totalBytes); // SPH=0, msg=0, padding=0
+            const int32_t* frameIn = pcmInterleaved + static_cast<size_t>(f) * channelCount_;
+            for (uint32_t ch = 0; ch < chCount; ++ch) {
+                const uint32_t s = static_cast<uint32_t>(frameIn[ch]);
+                uint8_t* dst = block + 10u + ch * 3u;
+                dst[0] = static_cast<uint8_t>((s >> 16) & 0xFFu); // MSB
+                dst[1] = static_cast<uint8_t>((s >>  8) & 0xFFu);
+                dst[2] = static_cast<uint8_t>( s        & 0xFFu); // LSB
+            }
+        }
+    }
+
+    void fillSilentMotuV3Frames(uint32_t frames, uint32_t* outWireQuadlets) const noexcept {
+        const uint32_t totalBytes = am824SlotCount_ * 4u;
+        for (uint32_t f = 0; f < frames; ++f) {
+            std::memset(reinterpret_cast<uint8_t*>(
+                outWireQuadlets + static_cast<size_t>(f) * am824SlotCount_),
+                0, totalBytes);
+        }
+    }
+
     uint32_t channelCount_{2};               ///< Number of PCM audio channels
-    uint32_t am824SlotCount_{2};             ///< Wire AM824 slots per event (CIP DBS)
+    uint32_t am824SlotCount_{2};             ///< Wire slots per event (CIP DBS)
+    PacketEncoding encoding_{PacketEncoding::kAM824}; ///< Wire encoding format
     uint32_t midiSlotsPerEvent_{0};          ///< Extra AM824 slots after PCM (MIDI, etc.)
     uint64_t currentCycleNumber() const noexcept {
         switch (streamMode_) {

@@ -104,7 +104,8 @@ void IsochAudioTxPipeline::SetZeroCopyOutputBuffer(void* base, uint64_t bytes, u
 kern_return_t IsochAudioTxPipeline::Configure(uint8_t sid,
                                               uint32_t streamModeRaw,
                                               uint32_t requestedChannels,
-                                              uint32_t requestedAm824Slots) noexcept {
+                                              uint32_t requestedAm824Slots,
+                                              Encoding::PacketEncoding encoding) noexcept {
     if (!sharedTxQueue_.IsValid()) {
         ASFW_LOG(Isoch, "IT: Configure failed - shared TX queue missing");
         return kIOReturnNotReady;
@@ -144,7 +145,7 @@ kern_return_t IsochAudioTxPipeline::Configure(uint8_t sid,
         am824Slots = requestedAm824Slots;
     }
 
-    assembler_.reconfigureAM824(queueChannels, am824Slots, sid);
+    assembler_.reconfigureAM824(queueChannels, am824Slots, sid, encoding);
 
     requestedStreamMode_ = (streamModeRaw == 1u)
         ? Encoding::StreamMode::kBlocking

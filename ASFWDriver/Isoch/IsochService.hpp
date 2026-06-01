@@ -71,7 +71,9 @@ public:
                                 void* zeroCopyBase,
                                 uint64_t zeroCopyBytes,
                                 uint32_t zeroCopyFrames,
-                                bool skipSYTGate = false);
+                                bool skipSYTGate = false,
+                                Encoding::PacketEncoding encoding =
+                                    Encoding::PacketEncoding::kAM824);
 
     kern_return_t StopTransmit();
 

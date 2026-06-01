@@ -5,6 +5,7 @@
 
 #include "../../Common/DriverKitOwnership.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../../Isoch/Encoding/PacketAssembler.hpp"
 
 #include <DriverKit/IOLib.h>
 #include <DriverKit/IOBufferMemoryDescriptor.h>
@@ -394,19 +395,17 @@ IOReturn MOTUAudioBackend::StartStreaming(uint64_t guid) noexcept {
 
         const uint8_t sid = static_cast<uint8_t>(hardware_.ReadNodeID() & 0x3Fu);
         const uint32_t streamModeRaw = static_cast<uint32_t>(config.streamMode);
-        // MOTU V3: wire DBS must be 21 quadlets/event (14 PCM + overhead) regardless
-        // of how many PCM channels CoreAudio exposes.  Same constant as the RX-side
-        // kMOTUV3WireDbs48k override in StreamProcessor (Fix20).
-        // PacketAssembler::reconfigureAM824 pads the extra (am824Slots - pcmChannels)
-        // slots with MIDI-conformant AM824 labels, giving MOTU a valid 21-slot frame.
-        // skipSYTGate=true: MOTU V3 always sends syt=0x0000 (no IEEE 1394 SYT timestamps).
-        // The SYT gate would time out unconditionally. Linux snd-firewire-motu never waits
-        // for SYT either. IR is already running at this point (steps 5-7 above).
+        // Fix 29: Use MOTU V3 packet encoding per amdtp-motu.c.
+        // MOTU V3 uses 3-byte packed PCM (not AM824 quadlets):
+        //   Data block = SPH(4B) + msg×3B×2 + PCM×3B×N, padded to DBS quadlets
+        // kMOTUV3WireDbs48k=21: DBS=21 matches observed wire packets (pcm_chunks=24).
+        // skipSYTGate=true: MOTU V3 uses SPH for sync, never SYT (always syt=0x0000).
         const kern_return_t kr = isoch_.StartTransmit(
             itChannel, hardware_, sid, streamModeRaw,
             config.outputChannelCount, kMOTUV3WireDbs48k,
             txMem, txBytes, nullptr, 0, 0,
-            /*skipSYTGate=*/true);
+            /*skipSYTGate=*/true,
+            /*encoding=*/Encoding::PacketEncoding::kMotuV3);
         if (kr != kIOReturnSuccess) {
             ASFW_LOG_ERROR(Audio, "MOTUAudioBackend: StartTransmit failed kr=0x%x", kr);
             (void)isoch_.StopReceive();

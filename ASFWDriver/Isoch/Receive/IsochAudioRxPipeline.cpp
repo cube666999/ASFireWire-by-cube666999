@@ -76,17 +76,39 @@ void IsochAudioRxPipeline::OnPollEnd(Driver::HardwareInterface& hw,
         streamProcessor_.RecordPollLatency(deltaUs, packetsProcessed);
     }
 
-    // Periodic cycle-time rate estimation (~1 second intervals, assuming 1kHz Poll cadence).
-    cycleCorr_.pollsSinceLastUpdate++;
-    if (cycleCorr_.pollsSinceLastUpdate >= 1000) {
-        auto [ct, up] = hw.ReadCycleTimeAndUpTime();
-        if (cycleCorr_.hasPrevious) {
-            const int64_t dFW = ASFW::Timing::deltaFWTimeNanos(ct, cycleCorr_.prevCycleTimer);
+    // Fix 26: Publish q8 quickly and refresh frequently using the OHCI cycle timer
+    // as the authoritative measurement gate (not poll count, which is jitter-prone).
+    //
+    // Previously: baseline was captured on poll #1000 (~1s) and q8 only became
+    // non-zero on poll #2000 (~2s). During that startup window, the audio clock
+    // engine fell back to the host nominal rate, which drifts vs MOTU's bus-locked
+    // 48 kHz crystal — accumulating frame errors that empty the TX shared queue
+    // and produce IT underruns (6828 over ~15s observed on MOTU 828 MK3).
+    //
+    // Now: capture baseline on the FIRST OnPollEnd call and refresh q8 every
+    // ~100 ms of *bus* time. The OHCI cycle timer increments at exactly 8000
+    // cycles/sec (locked to the FireWire bus → MOTU's audio clock), so we use
+    // its delta — not mach_absolute_time poll-count heuristics — to decide when
+    // a measurement window has closed. The ratio dHost/dFW still uses
+    // mach_absolute_time for dHost because q8 is *defined* as host-nanos-per-sample,
+    // but the gating is now driven by precise bus time.
+    constexpr uint64_t kCycleCorrUpdateIntervalNanos = 100'000'000ULL; // 100 ms of bus time
+
+    auto [ct, up] = hw.ReadCycleTimeAndUpTime();
+    if (!cycleCorr_.hasPrevious) {
+        // Capture baseline immediately so the next call can produce a valid q8.
+        cycleCorr_.prevCycleTimer = ct;
+        cycleCorr_.prevHostTicks = up;
+        cycleCorr_.hasPrevious = true;
+        ASFW_LOG_V3(Isoch, "CycleCorr: baseline ct=0x%08x up=%llu", ct, up);
+    } else {
+        const int64_t dFW = ASFW::Timing::deltaFWTimeNanos(ct, cycleCorr_.prevCycleTimer);
+        if (dFW >= static_cast<int64_t>(kCycleCorrUpdateIntervalNanos)) {
             const int64_t dHost = static_cast<int64_t>(ASFW::Timing::hostTicksToNanos(up))
                                 - static_cast<int64_t>(ASFW::Timing::hostTicksToNanos(cycleCorr_.prevHostTicks));
             ASFW_LOG_V3(Isoch, "CycleCorr: ct=0x%08x prev=0x%08x dFW=%lld dHost=%lld",
                         ct, cycleCorr_.prevCycleTimer, dFW, dHost);
-            if (dFW > 0 && dHost > 0) {
+            if (dHost > 0) {
                 const double ratio = static_cast<double>(dHost) / static_cast<double>(dFW);
                 const double nanosPerSample = ratio * (1e9 / cycleCorr_.sampleRate);
                 const uint32_t q8 = static_cast<uint32_t>(nanosPerSample * 256.0 + 0.5);
@@ -94,13 +116,9 @@ void IsochAudioRxPipeline::OnPollEnd(Driver::HardwareInterface& hw,
                 ASFW_LOG_V3(Isoch, "CycleCorr: ratio=%.6f nanosPerSample=%.1f q8=%u",
                             ratio, nanosPerSample, q8);
             }
-        } else {
-            ASFW_LOG_V3(Isoch, "CycleCorr: baseline ct=0x%08x up=%llu", ct, up);
+            cycleCorr_.prevCycleTimer = ct;
+            cycleCorr_.prevHostTicks = up;
         }
-        cycleCorr_.prevCycleTimer = ct;
-        cycleCorr_.prevHostTicks = up;
-        cycleCorr_.hasPrevious = true;
-        cycleCorr_.pollsSinceLastUpdate = 0;
     }
 
     if (externalSyncBridge_) {

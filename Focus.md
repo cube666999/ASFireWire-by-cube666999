@@ -8,6 +8,42 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ SESJA NA MAC STUDIO — Przeczytaj to na starcie
 
+> **Stan na 2026-06-01 (sesja 19) — Fix 26,27,29 zaimplementowane, ASFW_Fix29.app gotowa:**
+>
+> **✅ Osiągnięte w sesji 19:**
+> - ✅ **Fix 26** (`IsochAudioRxPipeline.cpp`): OHCI cycle-timer gate zamiast poll-count gate
+>   - Baseline q8 (nanosPerSample) teraz odświeżana co 100ms bus time, nie 2s
+>   - Wynik: CycleCorr ratio=1.000022 (stabilny, synchronizacja z MOTU crystal ✓)
+> - ✅ **Fix 27** (`AudioTxProfiles.hpp`): Zwiększenie TX ring buffer — target 2048, max 4096
+>   - Przed: max=1536 frames (32ms), łatwa przeznaczenie przy jitter >32ms
+>   - Po: max=4096 frames (85ms), pełna pojemność AudioRingBuffer
+>   - Wynik: Ring buffer oscylacja 0%→144% utrzymana (problem nie tu)
+> - ✅ **Fix 29** (MOTU V3 Packet Encoding — GŁÓWNY FIX):
+>   - Zmiana formatu IT z AM824 (4B/slot z label 0x40) na MOTU V3 (3-byte packed PCM)
+>   - Nowe funkcje: `encodeInterleavedFramesToMotuV3()`, `fillSilentMotuV3Frames()`
+>   - CIP nagłówek: FMT=0x00, FDF=0x00, SYT=0x0000 (MOTU nigdy nie wysyła SYT)
+>   - Data block: [SPH 4B][msg 3B×2][PCM 3B×N] = 21 quadletów = DBS=21 ✓
+>   - Propagacja: `PacketEncoding::kMotuV3` przez wszystkie warstwy (IsochService→StartTransmit)
+>   - MOTUAudioBackend: `encoding=kMotuV3` włączone
+>   - **Logi potwierdzają:** CIPHeader poprawnie buduje FMT/FDF/SYT dla MOTU V3
+>   - **Kod robi dokładnie to co sugerował mrmidi w amdtp-motu.c**
+>
+> **Diagnoza — dlaczego AM824 nie działał:**
+> - Wysyłaliśmy: [label 0x40][PCM 24-bit] × 21 slotów
+> - MOTU V3 oczekiwała: [SPH][msg][msg][PCM×3B×18+]
+> - MOTU odbierała nasze pakiety jako śmieci → ignorowała IT → feedback na ring buffer
+> - **Efekt:** Ring buffer zawsze pusty, IT underrunuje przy każdym jitterze (oscylacja 0→144%)
+>
+> **Następny krok — TEST FIX 29 (sesja 19, po restarcie):**
+> - ASFW_Fix29.app na pulpicie (10:59, 493/493 tests ✓)
+> - Restart Mac Studio
+> - Uruchom app, puść Spotify 30s
+> - **Sprawdzenie:  IT Underruns ~0? Słyszymy dźwięk? Format poprawny?**
+> - Jeśli TAK: commit Fix 26+27+29 razem (seria "Audio Output Pipeline")
+> - Jeśli podwójnie zero underrunów: idziemy na IR side (format IR również?)
+
+---
+
 > **Stan na 2026-05-28 (sesja 18) — Fix 21+22+23 gotowe (uncommitted), rebuild wymagany:**
 > - ✅ **Fix I** (`662ca0d`): ISOC_COMM_CONTROL + FETCH_PCM_FRAMES PRZED StartTransmit
 > - ✅ **Fix II** (`2dc6600`): IT DMA deadlock — SYT wait po `Start()`; IT nadaje 4644 pkts ✅
@@ -856,7 +892,8 @@ Commit `eeb8787`. 488/488 testów ✅. Odblokuje AV/C dla ~80% rynku interfejsó
 | IR Receive walidacja pakietów | ✅ POTWIERDZONE | 11 965 pkts/s w sesji 16, override DBS=21 działa |
 | HALS_IORawClock re-anchoring | Średni | Watchdog-based PerformIO timing jittery; fix: OHCI cycle counter jako timestamp |
 | Brak audio na wyjściu MOTU | **Wysoki** | Fix 21 (DBS=21) + Fix 22 (SYT bypass) wdrożone; restart + headphone test → sesja 17 |
-| CoreAudio tylko 2 In / 2 Out | Niski | MOTU ma 18ch IT / 14ch IR; rozszerzyć po potwierdzeniu audio |
+| Liczba kanałów 21/21 vs rzeczywiste 18 IT / 14 IR | Niski | DBS=21 obejmuje audio + padding/MIDI sloty. Apple MOTU kext używał 18ch IT / 14ch IR. Sprawdzić mapowanie i skorygować po potwierdzeniu audio |
+| Brak nazw kanałów w CoreAudio / Audio MIDI Setup | Niski | Kanały widoczne jako numery (9, 10, 11…). Fizyczne I/O MOTU: 2 Analog (front) + 8 Analog Line + 16 ADAT + 2 S/PDIF. Implementacja: `IOAudioChannelDescription` tablicy w AudioDriverKit z nazwami per-kanał (Analog 1, ADAT A-1 itd.). Zrobić po stabilizacji audio. |
 | FCP spam do MOTU | Niski | AVC discovery pisze do MOTU co ~2s; MOTU V3 nie używa AV/C — zbędne |
 
 ---
@@ -896,3 +933,75 @@ sudo systemextensionsctl developer off
 sudo nvram -d boot-args
 # restart → Recovery → csrutil enable → restart
 ```
+
+---
+
+## SESJA 19 SUMMARY — Fix 26+27+29 (2026-06-01)
+
+### Co zostało zrobione
+
+**Fix 26:** OHCI Cycle-Time Clock Synchronization
+- Zmiana z poll-count gate (1000 pollów ≈ 2s) na bus-time gate (100ms)
+- CycleCorr ratio poprawny: 1.000022 (stabilna synchronizacja)
+- ✅ Wynik: q8 (nanosPerSample) odświeżana szybciej (100ms vs 2s)
+
+**Fix 27:** TX Ring Buffer Expansion
+- Zwiększenie max frames: 1536 → 4096 (32ms → 85ms)
+- ✅ Wynik: buffer has capacity, ale oscylacja 0%→144% utrzymana
+
+**Fix 29:** MOTU V3 Packet Encoding (GŁÓWNY FIX)
+- ✅ Zmiana formatu: AM824 4-byte slots → MOTU V3 3-byte packed PCM
+- ✅ CIP: FMT=0x00, FDF=0x00, SYT=0x0000
+- ✅ Data block: [SPH 4B][msg 6B][PCM×3B×18+] = DBS=21
+- ✅ Propagacja encoding przez wszystkie warstwy (IsochService→StartTransmit→IsochTransmitContext→IsochAudioTxPipeline→PacketAssembler)
+- ✅ MOTUAudioBackend: włączone `encoding=kMotuV3`
+- ✅ Wszystkie testy przeszły (493/493)
+
+**Diagnoza w sesji 19:**
+- Logi potwierdziły: CoreAudio PerformIO = dokładnie 48kHz (brak jittera)
+- RTAID (AudioIssueDetector) pokazał RMS poprawiający się w czasie: −36 → −33 dBFS (startup underruny, potem OK)
+- **Przyczyna underrunów:** Ring buffer oscyluje bo MOTU ignorowała nasze AM824 pakiety
+- **Fix 29:** MOTU teraz odbierze poprawny format, powinno zacząć słuchać
+
+### Build status
+
+```
+ASFW_Fix29.app — 10:59 (wszystkie 493 testy ✅, Xcode BUILD SUCCEEDED ✅)
+Lokacja: ~/Desktop/ASFW_Fix29.app
+```
+
+### Następny krok — Sesja 20
+
+**Priorytet 1:** Test Fix 29 na hardware
+1. Restart Mac Studio
+2. Uruchom ASFW_Fix29.app
+3. Puść Spotify ~30 sekund
+4. Sprawdź:
+   - IT Underruns = ~0? (była 7,356)
+   - Ring-Buffer = stabilna 50% (zamiast 0→144%)?
+   - Słyszymy dźwięk?
+
+**Jeśli TAK (wszystko działa):**
+- Commit Fix 26+27+29 jako seria "Audio Output Pipeline Stabilization"
+- Szukaj IR side (Format IR również konieczny?)
+
+**Jeśli NIE (dalej problemy):**
+- Sprawdzić logi: czy `encodeInterleavedFramesToMotuV3` faktycznie koduje 3-bajtowo?
+- Czy MOTU odpowiada na nowe pakiety?
+- Czy IR format też potrzebuje zmianę?
+
+### Notatki techniczne — Fix 29
+
+```cpp
+// Stara (AM824 — ZŁA dla MOTU V3):
+[label 0x40][PCM 24-bit] × 21 slotów × 4B = 84 bajty
+
+// Nowa (MOTU V3 — PRAWIDŁOWA):
+[SPH 4B] [msg 3B] [msg 3B] [PCM 3B×18+] = 82 bajty → pad do 84 (21×4)
+
+// CIP nagłówek MOTU V3:
+Q1: FMT=0x00 (nie 0x10), FDF=0x00 (nie SFC), SYT=0x0000 (zawsze)
+// MOTU używa SPH w każdym data block, nie SYT w CIP
+```
+
+Źródło: `amdtp-motu.c` z Linux kernel (commit f5e5d35)
