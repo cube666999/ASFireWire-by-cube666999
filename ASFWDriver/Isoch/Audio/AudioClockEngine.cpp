@@ -53,11 +53,11 @@ uint64_t ApplyZeroCopyPllClock(AudioClockEngineState& state) {
     const int32_t fillError = static_cast<int32_t>(fillLevel)
                             - static_cast<int32_t>(state.clockSync->targetFillLevel);
 
-    // Fix 32b: raised from 100 → 1000 ppm.
-    // macOS Tahoe's mach_absolute_time may diverge from OHCI 8 kHz crystal by
-    // several hundred ppm. 100 ppm cap was insufficient to compensate, causing
-    // the IT queue to drift monotonically to 100% fill → overflow → underruns.
-    constexpr double kMaxPpm = 1000.0;
+    // Fix 32b/v2: 300 ppm — enough for typical CPU/OHCI crystal mismatch
+    // (~200 ppm), yet moderate enough to avoid overshoot past 0 fill.
+    // 1000 ppm (first attempt) was too aggressive: P-term at 1536-frame error
+    // = 691 ppm > actual drift → buffer overshot 0 → underruns.
+    constexpr double kMaxPpm = 300.0;
     constexpr int32_t kDeadbandFrames = 8;
     constexpr double kPpmPerFrame = 0.45;
     constexpr double kIppmPerFrameTick = 0.0008;
@@ -340,11 +340,12 @@ void PrepareClockEngineForStart(AudioClockEngineState& state) {
             }
             state.clockSync->targetFillLevel = target;
         } else {
-            // Fix 32c: raised from 64 → kAudioIoPeriodFrames (512 frames).
-            // kTxQueueCapacityFrames=4096. Target of 64 was 1.6% of capacity —
-            // too close to empty; any timer jitter caused underruns.
-            // 512 frames = 1× IO period = ~10ms headroom @ 48kHz.
-            state.clockSync->targetFillLevel = ASFW::Isoch::Config::kAudioIoPeriodFrames;
+            // Fix 32c/v2: target = 50% of queue capacity (2048 frames @ 4096 cap).
+            // • 512 (v1) was too close to 0 — PLL drained buffer past zero → underruns.
+            // • 2048 matches the natural steady-state seen before PLL was active,
+            //   so startup correction is minimal and no aggressive overshoot occurs.
+            // • At 300 ppm max correction: stable convergence without overshoot.
+            state.clockSync->targetFillLevel = ASFW::Isoch::Config::kTxQueueCapacityFrames / 2;
         }
     } else {
         state.clockSync->targetFillLevel = 2048;
