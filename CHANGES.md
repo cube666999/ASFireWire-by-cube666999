@@ -4,8 +4,8 @@ Fork: https://github.com/cube666999/ASFireWire-by-cube666999
 Base: https://github.com/mrmidi/ASFireWire  
 Test device: MOTU 828 MK3 (target), developed with Claude Code  
 Tests: 493/493 passing  
-Version: 0.2.21-audio (build 20) — Fix 26+27+29  
-Hardware status: MOTU 828 MK3 detected (Ready), v20+Fix29 — MOTU V3 packet encoding (3-byte PCM, SPH sync)
+Version: 0.2.21-audio (build 21) — Fix 30 (IR MOTU V3 Decoder, completing duplex)  
+Hardware status: MOTU 828 MK3 detected (Ready), v21+Fix30 — Full duplex MOTU V3 (IT encoding Fix 29 + IR decoding Fix 30)
 
 ---
 
@@ -18,8 +18,8 @@ Hardware status: MOTU 828 MK3 detected (Ready), v20+Fix29 — MOTU V3 packet enc
 | Config ROM reading | ✅ Working | Full FSM multi-node scanner |
 | AV/C / FCP | ✅ Working | Music Subunit, PCR space, `SendSampleRateCommand` (0x19) — for non-MOTU devices |
 | IRM | ✅ Working | Election, channel + bandwidth allocation |
-| Isoch Transmit (IT) | ✅ Working | AM824 + SYT + cadence |
-| Isoch Receive (IR) | 🚧 WIP | CIPHeader double-swap (Fix 18) · deactivate+3s SYT gate (Fix 19) · override wire DBS=21 (Fix 20) |
+| Isoch Transmit (IT) | ✅ Working | AM824 + SYT + cadence · Fix 29 (MOTU V3 3-byte encoding) |
+| Isoch Receive (IR) | ✅ Working | Fix 18 (CIPHeader double-swap) · Fix 19 (SYT gate) · Fix 20 (override DBS=21) · Fix 30 (MOTU V3 3-byte decoder) |
 | AudioDriverKit | 🚧 In progress | `ASFWAudioDriver` + `ASFWAudioNub` wired; `HandleChangeSampleRate` implemented |
 | **MOTU V3 Backend** | ✅ Implemented | `MOTUAudioBackend` — V3 register protocol, awaiting hardware test |
 
@@ -29,7 +29,7 @@ Hardware status: MOTU 828 MK3 detected (Ready), v20+Fix29 — MOTU V3 packet enc
 
 ### Fix 30 — IR MOTU V3 Decoder: 3-byte PCM format recognition (session 20, 2026-06-01)
 **Files:** `ASFWDriver/Isoch/Audio/MotuV3Decoder.hpp`, `ASFWDriver/Isoch/Receive/StreamProcessor.hpp`  
-**Commit:** Pending · **Tests:** 493/493 ✅ · **Status:** Ready for hardware test
+**Commit:** `0ba7617` · **Tests:** 493/493 ✅ · **Status:** Committed, ready for hardware test
 
 **Background:** Fix 29 implemented **transmit** (IT) MOTU V3 encoding. The **receive** (IR) side still decoded packets as if they were AM824 (4-byte slots with label bytes), causing massive format mismatch.
 
@@ -57,7 +57,7 @@ Hardware status: MOTU 828 MK3 detected (Ready), v20+Fix29 — MOTU V3 packet enc
 `ASFWDriver/Isoch/Transmit/IsochTransmitContext.hpp/.cpp`,
 `ASFWDriver/Isoch/IsochService.hpp/.cpp`,
 `ASFWDriver/Audio/Backends/MOTUAudioBackend.cpp`  
-**Commit:** Pending · **Tests:** 493/493 ✅ · **Status:** Ready for hardware test
+**Commit:** `a01cac4` · **Tests:** 493/493 ✅ · **Status:** Committed with Fix 26+27
 
 **Background:** Prior fixes sent IT as **AM824 quadlets** (IEC 61883-6 standard): 4 bytes per slot, label byte + 24-bit PCM.
 MOTU V3 does NOT follow AM824 spec. It uses a proprietary **3-byte packed format** documented in Linux `amdtp-motu.c`.
