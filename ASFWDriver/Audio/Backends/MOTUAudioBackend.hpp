@@ -101,11 +101,16 @@ private:
     static constexpr uint32_t kIRMTimeoutMs = 500;
     static constexpr uint32_t kRegTimeoutMs = 200;
 
-    // MOTU V3 stream format at 48kHz: data block = 21 quadlets
-    // (14 PCM + MIDI + system overhead).  MOTU's CIP DBS field is a cycling
-    // counter, not the true block size — we override it in StreamProcessor.
-    // Math: 504 bytes payload / (21 * 4) = 6 events × 8000 cycles/s = 48000 Hz.
-    static constexpr uint8_t kMOTUV3WireDbs48k = 21;
+    // MOTU V3 stream format at 48kHz — DBS overrides for StreamProcessor.
+    // MOTU's CIP DBS field is a cycling counter, not the true block size.
+    //
+    // IT (host→device): 18+6 PCM chunks from Linux README = DBS=21.
+    //   DBS = 1 + DIV_ROUND_UP(26*3, 4) = 21. Used when we transmit to MOTU.
+    // IR (device→host): 18 fixed PCM chunks (tx_fixed_pcm_chunks[0]=18 per Linux spec).
+    //   DBS = 1 + DIV_ROUND_UP((2+18)*3, 4) = 16. Verified: 8 events × 64 B = 512 B payload.
+    //   (OHCI headerQuadlets=0 → kIsochHeaderSize=0 → len=520 = 8 CIP + 512 payload)
+    static constexpr uint8_t kMOTUV3WireDbs48k    = 21;  // IT direction
+    static constexpr uint8_t kMOTUV3WireDbs48k_IR = 16;  // IR direction (MOTU→host)
 
     [[nodiscard]] static Async::FWAddress MakeAddr(uint32_t offset) noexcept;
 

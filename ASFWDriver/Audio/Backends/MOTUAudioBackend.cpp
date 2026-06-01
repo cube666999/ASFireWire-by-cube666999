@@ -292,16 +292,18 @@ IOReturn MOTUAudioBackend::StartStreaming(uint64_t guid) noexcept {
 
     // Step 5 — Start IR DMA (capture from MOTU).
     {
+        // MOTU V3 IR: CIP DBS field is a cycling counter, not true block size.
+        // Override BEFORE StartReceive so the first packet is processed with correct stride.
+        // IR block: SPH(4B) + msg(6B) + 18ch×3B = 64B = 16 quadlets.
+        // Verified: OHCI headerQuadlets=0, so len=520 = 8B CIP + 512B payload = 8 events × 64B.
+        isoch_.SetRxOverrideWireDbs(kMOTUV3WireDbs48k_IR);
+
         const kern_return_t kr = isoch_.StartReceive(irChannel, hardware_, rxMem, rxBytes);
         if (kr != kIOReturnSuccess) {
             ASFW_LOG_ERROR(Audio, "MOTUAudioBackend: StartReceive failed kr=0x%x", kr);
             ReleaseIRMResources();
             return kr;
         }
-        // MOTU V3: the CIP DBS field is a cycling device counter, not the true block size.
-        // Override so StreamProcessor uses DBS=21 (6 data blocks × 21 quadlets × 4B = 504B
-        // at 48kHz) instead of the garbage CIP value, which would cap eventCount at 1.
-        isoch_.SetRxOverrideWireDbs(kMOTUV3WireDbs48k);
     }
 
     // Step 6 — ISOC_COMM_CONTROL: activate both RX and TX channels on MOTU.

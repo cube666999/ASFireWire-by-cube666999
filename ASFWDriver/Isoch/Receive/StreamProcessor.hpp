@@ -25,7 +25,12 @@ class StreamProcessor {
 public:
     StreamProcessor() = default;
 
-    static constexpr size_t kIsochHeaderSize = 8;  // Timestamp + isoch header
+    // OHCI IR DMA buffer layout: headerQuadlets=0 in ContextMatch (0xF0000000),
+    // so OHCI writes NO header bytes — CIP header starts at byte 0.
+    //   [0-3]  CIP Header Q0  (EOH=0, SID, DBS cycling counter, SPH, DBC)
+    //   [4-7]  CIP Header Q1  (EOH=1, FMT, FDF, SYT)
+    //   [8+]   Audio payload  (MOTU V3: SPH+msg+PCM blocks)
+    static constexpr size_t kIsochHeaderSize = 0;
 
     struct RxCipSummary {
         bool hasValidCip{false};
@@ -35,13 +40,13 @@ public:
     };
 
     /// Process a single packet payload.
-    /// @param payload Raw payload bytes (INCLUDING isoch header prefix when isochHeader=1).
+    /// @param payload Raw payload bytes from the OHCI IR DMA buffer.
     /// @param length Length in bytes.
     ///
-    /// With isochHeader=1 in packet-per-buffer mode, the buffer layout is:
-    ///   [0-3]  Timestamp quadlet (upper 16 bits INVALID in PPB mode)
-    ///   [4-7]  Isochronous header (dataLength | tag | chan | tcode | sy)
-    ///   [8+]   CIP Header + AM824 payload
+    /// OHCI IR DMA (headerQuadlets=0 → kIsochHeaderSize=0):
+    ///   [0-3]  CIP Header Q0
+    ///   [4-7]  CIP Header Q1
+    ///   [8+]   Audio payload (MOTU V3: SPH+msg+PCM; AM824: quadlets with labels)
     [[nodiscard]] RxCipSummary ProcessPacket(const uint8_t* payload, size_t length) noexcept {
         RxCipSummary summary{};
         // Need at least isoch header (8) + CIP header (8)
@@ -216,6 +221,10 @@ public:
              if (isMotuV3) {
                  // Decode MOTU V3: 3-byte packed PCM format
                  // Data block layout: [SPH 4B][msg 6B][PCM 3B×N]
+                 static std::atomic<bool> loggedMotuV3Mode{false};
+                 if (!loggedMotuV3Mode.exchange(true)) {
+                     ASFW_LOG(Isoch, "IR RX: Detected MOTU V3 format (FDF==0x00), using 3-byte decoder");
+                 }
                  const uint8_t* dataBytePtr = reinterpret_cast<const uint8_t*>(dataPtr);
                  for (size_t i = 0; i < eventCount; ++i) {
                      // Clear temp frame
