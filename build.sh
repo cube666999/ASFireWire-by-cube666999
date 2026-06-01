@@ -34,6 +34,8 @@ VERBOSE=false
 NO_BUMP=false
 RUN_TESTS=false
 TEST_ONLY=false
+CLEAN=false
+DEPLOY=false
 # When true, generate `compile_commands.json` by piping xcodebuild to xcpretty
 GENERATE_COMMANDS=false
 # Path to write compile_commands.json (relative to script working dir)
@@ -52,9 +54,11 @@ SWIFT_COVERAGE_LCOV="${BUILD_DIR}/swift_coverage.lcov"
 
 usage() {
   cat <<EOF
-Usage: $0 [--verbose] [--no-bump] [--scheme NAME] [--config CONFIG] [--arch ARCH] [--derived PATH]
+Usage: $0 [--verbose] [--no-bump] [--clean] [--deploy] [--scheme NAME] [--config CONFIG] [--arch ARCH] [--derived PATH]
   --verbose          Show full xcodebuild output (disables quiet filtering)
   --no-bump          Skip ./bump.sh
+  --clean            Delete DerivedData before building (forces full rebuild)
+  --deploy           After build: sign app+dext and copy to ~/Desktop/ASFW_vNN.app
   --test             Run C++ tests before building
   --test-only        Run C++ tests only (skip xcodebuild)
   --swift-test-only  Run Swift/XCTest tests only (skip main build)
@@ -72,6 +76,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --verbose) VERBOSE=true; shift;;
     --no-bump) NO_BUMP=true; shift;;
+    --clean)   CLEAN=true; shift;;
+    --deploy)  DEPLOY=true; shift;;
     --test) RUN_TESTS=true; shift;;
     --test-only) TEST_ONLY=true; shift;;
     --swift-test-only) SWIFT_TEST_ONLY=true; shift;;
@@ -406,12 +412,99 @@ run_static_analysis() {
   fi
 }
 
+# After a successful xcodebuild, verify that the dext Info.plist CFBundleVersion
+# matches CURRENT_PROJECT_VERSION in project.pbxproj.  A stale DerivedData cache
+# can produce a build that looks successful but ships an old version number,
+# causing macOS to skip the system extension upgrade silently.
+verify_dext_version() {
+  local dext_plist="${DERIVED}/Build/Products/${CONFIGURATION}/ASFW.app/Contents/Library/SystemExtensions/net.mrmidi.ASFW.ASFWDriver.dext/Info.plist"
+  if [[ ! -f "$dext_plist" ]]; then
+    warn "Cannot verify dext version: Info.plist not found at expected path"
+    return 0
+  fi
+
+  local built_ver
+  built_ver=$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" "$dext_plist" 2>/dev/null || echo "unknown")
+
+  local expected_ver
+  expected_ver=$(grep 'CURRENT_PROJECT_VERSION' "${PROJECT_NAME}.xcodeproj/project.pbxproj" \
+    | head -1 | awk '{print $3}' | tr -d ';')
+
+  if [[ "$built_ver" != "$expected_ver" ]]; then
+    err "Dext version mismatch: built=${built_ver}, expected=${expected_ver}"
+    err "DerivedData is stale. Run: ./build.sh --clean  (or: rm -rf ${DERIVED})"
+    exit 1
+  fi
+  ok "Dext version verified: ${built_ver} ✓"
+}
+
+# Sign app+dext and copy to ~/Desktop/ASFW_vNN.app.
+# Requires valid Apple Development certificate in the keychain.
+deploy_app() {
+  local src_app="${DERIVED}/Build/Products/${CONFIGURATION}/ASFW.app"
+  if [[ ! -d "$src_app" ]]; then
+    err "--deploy: app not found at ${src_app}"; return 1
+  fi
+
+  # Read the version from the freshly-verified dext
+  local ver
+  ver=$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" \
+    "${src_app}/Contents/Library/SystemExtensions/net.mrmidi.ASFW.ASFWDriver.dext/Info.plist" 2>/dev/null)
+  local dest_app="${HOME}/Desktop/ASFW_v${ver}.app"
+
+  log "Deploying v${ver} → ${dest_app}..."
+
+  # Find signing identity automatically
+  local identity
+  identity=$(security find-identity -v -p codesigning \
+    | grep -m1 "Apple Development:" | sed -E 's/.*"(Apple Development:[^"]+)".*/\1/')
+  if [[ -z "$identity" ]]; then
+    err "--deploy: No 'Apple Development' certificate found in keychain"; return 1
+  fi
+
+  # Work from /tmp to avoid iCloud Drive xattr issues
+  local tmp_app="/tmp/ASFW_deploy_v${ver}.app"
+  rm -rf "$tmp_app"
+  cp -R "$src_app" "$tmp_app"
+  find "$tmp_app" -exec xattr -c {} \; 2>/dev/null || true
+
+  # Sign dext first, then app with --deep
+  codesign --force --options runtime \
+    --sign "$identity" \
+    --entitlements "ASFWDriver/ASFWDriver.entitlements" \
+    --timestamp=none \
+    "${tmp_app}/Contents/Library/SystemExtensions/net.mrmidi.ASFW.ASFWDriver.dext" 2>&1
+
+  codesign --force --options runtime \
+    --sign "$identity" \
+    --entitlements "ASFW/App.entitlements" \
+    --timestamp=none \
+    --deep \
+    "${tmp_app}" 2>&1
+
+  if ! codesign --verify --deep --strict "$tmp_app" 2>&1; then
+    err "--deploy: Signature verification failed"; rm -rf "$tmp_app"; return 1
+  fi
+
+  # Copy to Desktop (replace previous same-version app)
+  rm -rf "$dest_app"
+  cp -R "$tmp_app" "$dest_app"
+  rm -rf "$tmp_app"
+
+  ok "Deployed: ${dest_app} (v${ver}, signed as '${identity}')"
+}
+
 main() {
   echo "==============================="
   echo "  ASFireWire – Quiet Build"
   echo "==============================="
 
   preflight
+  if $CLEAN; then
+    log "Cleaning DerivedData (${DERIVED})..."
+    rm -rf "${DERIVED}"
+    ok "DerivedData removed"
+  fi
   bump_version
 
   # If --commands was requested, generate compile_commands.json and exit.
@@ -479,7 +572,12 @@ main() {
     summarize
     echo
     ok "Build Succeeded"
-    
+    verify_dext_version
+
+    if $DEPLOY; then
+      deploy_app
+    fi
+
     # If --analyze was requested, run static analysis after successful build
     if $RUN_ANALYZER; then
       # Ensure compile_commands.json exists (generate if needed)
