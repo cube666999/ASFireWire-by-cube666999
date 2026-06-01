@@ -10,6 +10,23 @@ Two components:
 - **ASFWDriver/** — C++23 DriverKit driver extension (dext)
 - **ASFW/** — Swift 6 control app and installer (required to install the dext)
 
+## Compact Instructions
+
+When compacting this conversation, **preserve**:
+- Aktualny numer fixa i co zmienia (np. Fix 31: kIsochHeaderSize=0, DBS IR=16)
+- Aktualny stan wersji dextu: `CURRENT_PROJECT_VERSION` w `project.pbxproj`, wynik `systemextensionsctl list`
+- Aktywne ustalenia debugowania: co działa (IT running, IR decode status, buffer fill %, underruns)
+- Cel bieżącej sesji — co próbujemy naprawić i dlaczego
+- Wszelkie potwierdzone fakty sprzętowe (MOTU 828 MK3: DBS IR=16, DBS IT=21, 18ch IT / 14ch IR)
+- Zasady git: zawsze `git push cube666 main`, nigdy `git push` bez remote
+- Wnioski z disassembly/logów które potwierdziły działanie fixa
+
+**Odrzuć**:
+- Surowe logi systemowe (zawartość plików `.txt` z pulpitu)
+- Wielokrotnie czytane duże pliki (project.pbxproj, bump.sh, build.sh) — są w repo
+- Stare iteracje debugowania które już zostały rozwiązane
+- Długie outputy bash które nie wnoszą nowych informacji
+
 ## Build Commands
 
 **Primary build (Xcode — required for signing and producing `.dext`):**

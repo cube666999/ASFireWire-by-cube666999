@@ -53,7 +53,11 @@ uint64_t ApplyZeroCopyPllClock(AudioClockEngineState& state) {
     const int32_t fillError = static_cast<int32_t>(fillLevel)
                             - static_cast<int32_t>(state.clockSync->targetFillLevel);
 
-    constexpr double kMaxPpm = 100.0;
+    // Fix 32b: raised from 100 → 1000 ppm.
+    // macOS Tahoe's mach_absolute_time may diverge from OHCI 8 kHz crystal by
+    // several hundred ppm. 100 ppm cap was insufficient to compensate, causing
+    // the IT queue to drift monotonically to 100% fill → overflow → underruns.
+    constexpr double kMaxPpm = 1000.0;
     constexpr int32_t kDeadbandFrames = 8;
     constexpr double kPpmPerFrame = 0.45;
     constexpr double kIppmPerFrameTick = 0.0008;
@@ -161,16 +165,22 @@ uint64_t ComputeHostTicksPerBuffer(AudioClockEngineState& state,
                                    uint32_t q8,
                                    bool rxPllReady) {
     if (q8 > 0) {
+        // Best path: hardware-locked cycle-time PLL derived from IR SYT timestamps.
         return ApplyCycleTimeClock(state, q8);
     }
-    if (state.zeroCopyEnabled && state.txQueueValid) {
+    if (state.txQueueValid) {
+        // Fix 32: Fill-level PLL — adjusts clock ±100 ppm to keep IT queue at
+        // targetFillLevel.  Active whenever the IT queue exists, regardless of
+        // zeroCopy output mode.  The IT queue fill reflects real OHCI backpressure
+        // and is the correct signal for rate correction in both modes:
+        //   • zeroCopy=false (non-zeroCopy): CoreAudio IO writes to queue; OHCI DMA reads.
+        //   • zeroCopy=true: shared-memory output; OHCI DMA reads.
+        // Without this correction the CPU-derived nominal clock drifts from the
+        // OHCI hardware 8 kHz crystal, causing the buffer to oscillate and underrun.
         return ApplyZeroCopyPllClock(state);
     }
     if (rxPllReady) {
         return ApplyNominalClock(state, false);
-    }
-    if (state.txQueueValid && !state.zeroCopyEnabled) {
-        return ApplyNominalClock(state, true);
     }
     return static_cast<uint64_t>(state.clockSync->currentTicksPerBuffer);
 }
@@ -330,7 +340,11 @@ void PrepareClockEngineForStart(AudioClockEngineState& state) {
             }
             state.clockSync->targetFillLevel = target;
         } else {
-            state.clockSync->targetFillLevel = 64;
+            // Fix 32c: raised from 64 → kAudioIoPeriodFrames (512 frames).
+            // kTxQueueCapacityFrames=4096. Target of 64 was 1.6% of capacity —
+            // too close to empty; any timer jitter caused underruns.
+            // 512 frames = 1× IO period = ~10ms headroom @ 48kHz.
+            state.clockSync->targetFillLevel = ASFW::Isoch::Config::kAudioIoPeriodFrames;
         }
     } else {
         state.clockSync->targetFillLevel = 2048;
