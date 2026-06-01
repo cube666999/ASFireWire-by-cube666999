@@ -15,6 +15,7 @@
 #include "../Core/ExternalSyncBridge.hpp"
 #include "../Config/AudioConstants.hpp"
 #include "../Audio/AM824Decoder.hpp"
+#include "../Audio/MotuV3Decoder.hpp"
 #include "../../Logging/Logging.hpp"
 #include "../../Shared/TxSharedQueue.hpp"
 
@@ -95,11 +96,16 @@ public:
         
         lastDBC_ = header->dataBlockCounter;
         lastSYT_ = header->syt;
-        
+
         // Cache last CIP for periodic logging
         lastCIP_DBS_ = header->dataBlockSize;
         lastCIP_FDF_ = header->fdf;
         lastCIP_SID_ = header->sourceNodeId;
+
+        // Determine format based on CIP header (FDF field)
+        // FDF=0x00 → MOTU V3 format (3-byte packed PCM, no AM824 labels)
+        // FDF≠0x00 → AM824 standard format (4-byte quadlets with label bytes)
+        const bool isMotuV3 = (header->fdf == 0x00);
         
         // Payload Calculation (cipLength = total minus isoch header, payloadBytes = minus CIP header)
         size_t payloadBytes = cipLength - 8;  // Subtract 8 bytes for CIP header
@@ -175,11 +181,11 @@ public:
 
              if (eventCount > 0) {
              samplePacketCount_++;
-             
+
              // Update Min/Max Stats
              if (eventCount < minEvents_) minEvents_ = eventCount;
              if (eventCount > maxEvents_) maxEvents_ = eventCount;
-             
+
              // Extract Samples (Just verify decodability for now)
              constexpr size_t kEventSampleCapacity = Config::kMaxPcmChannels;
              // Use effective DBS (override or CIP) as the stride between data blocks.
@@ -187,7 +193,7 @@ public:
              // Only apply the kMaxAmdtpDbs cap when no override is in effect.
              // With an override the caller has explicitly accepted the wire format
              // (e.g. MOTU V3 whose CIP DBS field is a cycling counter, not block size).
-             if (overrideWireDbs_ == 0 && wireSlotsPerEvent > Config::kMaxAmdtpDbs) {
+             if (!isMotuV3 && overrideWireDbs_ == 0 && wireSlotsPerEvent > Config::kMaxAmdtpDbs) {
                  // We can parse CIP/DBC continuity, but not safely/meaningfully decode this payload.
                  errorCount_++;
                  if (lastUnsupportedWireDbs_ != header->dataBlockSize) {
@@ -205,41 +211,78 @@ public:
                  decodeSlotsPerEvent = std::min<size_t>(decodeSlotsPerEvent, queueChannels);
              }
              const bool queueWriteSafe = (!sharedRxQueue_) || (queueChannels <= kEventSampleCapacity);
-             
-             // Iterate events
-             for (size_t i = 0; i < eventCount; ++i) {
-                 // Clear temp frame so omitted/unsupported slots don't leak stale values.
-                 for (size_t ch = 0; ch < kEventSampleCapacity; ++ch) {
-                     eventSamples_[ch] = 0;
-                 }
 
-                 // Decode only the supported subset. We still use the wire DBS for stride.
-                 for (size_t ch = 0; ch < decodeSlotsPerEvent; ++ch) {
-                     uint32_t sampleQuad = dataPtr[(i * wireSlotsPerEvent) + ch];
-                     
-                     // Decode AM824 sample
-                     auto sample = AM824Decoder::DecodeSample(sampleQuad);
-                     if (sample) {
-                         // Store in temp buffer for this event
-                         eventSamples_[ch] = *sample;
-                     } else if (AM824Decoder::IsMIDI(sampleQuad)) {
-                         // MIDI: ignore for now, could route elsewhere
-                         eventSamples_[ch] = 0;
-                     } else {
-                         // Unknown or Empty
+             // MOTU V3 or standard AM824 decoding
+             if (isMotuV3) {
+                 // Decode MOTU V3: 3-byte packed PCM format
+                 // Data block layout: [SPH 4B][msg 6B][PCM 3B×N]
+                 const uint8_t* dataBytePtr = reinterpret_cast<const uint8_t*>(dataPtr);
+                 for (size_t i = 0; i < eventCount; ++i) {
+                     // Clear temp frame
+                     for (size_t ch = 0; ch < kEventSampleCapacity; ++ch) {
                          eventSamples_[ch] = 0;
                      }
+
+                     // Point to this event's data block
+                     const uint8_t* blockStart = dataBytePtr + (i * dbsBytes);
+
+                     // Decode MOTU V3 data block (returns number of channels decoded)
+                     size_t decodedChannels = MotuV3Decoder::DecodeDataBlock(
+                         blockStart,
+                         dbsBytes,
+                         decodeSlotsPerEvent,
+                         eventSamples_
+                     );
+
+                     // Write to queue if decoding succeeded and queue is available
+                     if (decodedChannels > 0) {
+                         if (sharedRxQueue_ && queueWriteSafe) {
+                             sharedRxQueue_->Write(eventSamples_, 1);
+                         } else if (sharedRxQueue_ && !queueWriteSafe) {
+                             errorCount_++;
+                         }
+                     } else {
+                         // Failed to decode this block
+                         errorCount_++;
+                     }
                  }
-                 
-                 // Write this event (1 frame of all channels) to shared RX queue
-                 if (sharedRxQueue_ && queueWriteSafe) {
-                     sharedRxQueue_->Write(eventSamples_, 1);
-                 } else if (sharedRxQueue_ && !queueWriteSafe) {
-                     // Queue requests more channels than this processor can safely stage.
-                     errorCount_++;
+             } else {
+                 // Standard AM824 decoding: quadlet-based with label bytes
+                 // Iterate events
+                 for (size_t i = 0; i < eventCount; ++i) {
+                     // Clear temp frame so omitted/unsupported slots don't leak stale values.
+                     for (size_t ch = 0; ch < kEventSampleCapacity; ++ch) {
+                         eventSamples_[ch] = 0;
+                     }
+
+                     // Decode only the supported subset. We still use the wire DBS for stride.
+                     for (size_t ch = 0; ch < decodeSlotsPerEvent; ++ch) {
+                         uint32_t sampleQuad = dataPtr[(i * wireSlotsPerEvent) + ch];
+
+                         // Decode AM824 sample
+                         auto sample = AM824Decoder::DecodeSample(sampleQuad);
+                         if (sample) {
+                             // Store in temp buffer for this event
+                             eventSamples_[ch] = *sample;
+                         } else if (AM824Decoder::IsMIDI(sampleQuad)) {
+                             // MIDI: ignore for now, could route elsewhere
+                             eventSamples_[ch] = 0;
+                         } else {
+                             // Unknown or Empty
+                             eventSamples_[ch] = 0;
+                         }
+                     }
+
+                     // Write this event (1 frame of all channels) to shared RX queue
+                     if (sharedRxQueue_ && queueWriteSafe) {
+                         sharedRxQueue_->Write(eventSamples_, 1);
+                     } else if (sharedRxQueue_ && !queueWriteSafe) {
+                         // Queue requests more channels than this processor can safely stage.
+                         errorCount_++;
+                     }
                  }
              }
-             
+
         } else {
              emptyPacketCount_++;
         }

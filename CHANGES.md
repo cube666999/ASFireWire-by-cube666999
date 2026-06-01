@@ -4,7 +4,7 @@ Fork: https://github.com/cube666999/ASFireWire-by-cube666999
 Base: https://github.com/mrmidi/ASFireWire  
 Test device: MOTU 828 MK3 (target), developed with Claude Code  
 Tests: 493/493 passing  
-Version: 0.2.20-audio (build 20) — Fix 26+27+29  
+Version: 0.2.21-audio (build 20) — Fix 26+27+29  
 Hardware status: MOTU 828 MK3 detected (Ready), v20+Fix29 — MOTU V3 packet encoding (3-byte PCM, SPH sync)
 
 ---
@@ -26,6 +26,29 @@ Hardware status: MOTU 828 MK3 detected (Ready), v20+Fix29 — MOTU V3 packet enc
 ---
 
 ## Fixes (52 commits)
+
+### Fix 30 — IR MOTU V3 Decoder: 3-byte PCM format recognition (session 20, 2026-06-01)
+**Files:** `ASFWDriver/Isoch/Audio/MotuV3Decoder.hpp`, `ASFWDriver/Isoch/Receive/StreamProcessor.hpp`  
+**Commit:** Pending · **Tests:** 493/493 ✅ · **Status:** Ready for hardware test
+
+**Background:** Fix 29 implemented **transmit** (IT) MOTU V3 encoding. The **receive** (IR) side still decoded packets as if they were AM824 (4-byte slots with label bytes), causing massive format mismatch.
+
+**Problem:** MOTU V3 sends IR packets in its proprietary 3-byte format [SPH 4B][msg 6B][PCM 3B×N]. Previous code tried to parse them as AM824 quadlets → every 3-byte sample crossed into the next channel's slot boundary → complete misalignment. Result: 215,084 IR errors observed in session 19 hardware test, distorted audio output.
+
+**Solution:** 
+1. New file `MotuV3Decoder.hpp`: helper class to decode 3-byte big-endian samples
+2. Modified `StreamProcessor::ProcessPacket()`: 
+   - Check CIP header FDF field: if FDF==0x00 → MOTU V3 format
+   - For MOTU V3: use `MotuV3Decoder::DecodeDataBlock()` to read [SPH][msg][3-byte samples]
+   - For non-MOTU (FDF≠0x00): use existing AM824Decoder (label byte + 24-bit)
+3. Override DBS=21 already configured in MOTUAudioBackend (linia 304)
+
+**Expected results:**
+- IR error count: ~0 (was 215K)
+- Audio output: clean, no distortion or whistling
+- CIP logging: should show FDF=0x00 confirmation
+
+---
 
 ### Fix 29 — MOTU V3 Packet Encoding: 3-byte PCM + SPH (session 19, 2026-06-01)
 **Files:** `ASFWDriver/Isoch/Encoding/CIPHeaderBuilder.hpp`,

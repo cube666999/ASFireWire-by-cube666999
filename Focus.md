@@ -8,6 +8,37 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ SESJA NA MAC STUDIO — Przeczytaj to na starcie
 
+> **Stan na 2026-06-01 (sesja 20) — Fix 30 wdrożony (IR MOTU V3 Decoder), ASFW_Fix30.app gotowa:**
+>
+> **✅ Osiągnięte w sesji 20:**
+> - ✅ **Fix 30** (IR MOTU V3 Decoder — MAIN PATCH):
+>   - Nowy plik: `MotuV3Decoder.hpp` — dekodowanie 3-byte packed PCM bez label bytes
+>   - Metoda `DecodeDataBlock()`: czyta [SPH 4B][msg 6B][PCM 3B×N], zwraca PCM samples
+>   - `StreamProcessor::ProcessPacket()`: check `FDF==0x00` → MOTU V3 mode
+>   - Logika dekodowania: dla MOTU V3 używaj MotuV3Decoder, dla AM824 stary decoder
+>   - Override DBS=21 już ustawiony w MOTUAudioBackend.cpp (linia 304)
+>   - Kodowanie IT (Fix 29) ✅ + Dekodowanie IR (Fix 30) = pełna duplex duplex MOTU V3 ✓
+>
+> **Diagnoza — dlaczego IR miało 215K błędów:**
+> - Poprzednie: IR packets zawierały MOTU V3 format [SPH][msg][PCM×3B] ale kod dekodował je jako AM824 [label][PCM×24bit]
+> - Efekt: co 4-byte slot przechodził do next channel offset → kompletny misalignment
+> - **Fix 30:** Sprawdzenie FDF==0x00, dekodowanie 3 bytes per sample zamiast 4 bytes
+> - Oczekiwany wynik: IR ErrorCount → ~0, słychać czyste audio bez distortion
+>
+> **Następny krok — TEST FIX 30 (sesja 20, po restarcie):**
+> - ASFW_Fix30.app na pulpicie (11:31, freshly signed)
+> - Restart Mac Studio (required dla dext upgrade z aktywnym AudioDriverKit)
+> - Uruchom app, puść Spotify 30s
+> - **Sprawdzenie w logach (log stream --debug):**
+>   - `IR RX: len=... payload=... cipDbs=... events=...` — IR pakiety przetwarzane
+>   - `RxStats: ... Errs=...` — powinno być ~0 (było 215K w poprzednim sesji)
+>   - Brak `IR CIP decode failed` — logika MOTU V3 działa
+>   - Audio czyste, bez pisku/disto → IT (Fix 29) + IR (Fix 30) synchronized ✓
+> - Jeśli sukces: commit Fix 30 jako osobny commit
+> - Jeśli logi pokazują Errs>0: check RxStats dla FDF pattern
+
+---
+
 > **Stan na 2026-06-01 (sesja 19) — Fix 26,27,29 zaimplementowane, ASFW_Fix29.app gotowa:**
 >
 > **✅ Osiągnięte w sesji 19:**
