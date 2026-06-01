@@ -341,12 +341,18 @@ void PrepareClockEngineForStart(AudioClockEngineState& state) {
             }
             state.clockSync->targetFillLevel = target;
         } else {
-            // Fix 32c/v2: target = 50% of queue capacity (2048 frames @ 4096 cap).
-            // • 512 (v1) was too close to 0 — PLL drained buffer past zero → underruns.
-            // • 2048 matches the natural steady-state seen before PLL was active,
-            //   so startup correction is minimal and no aggressive overshoot occurs.
-            // • At 300 ppm max correction: stable convergence without overshoot.
-            state.clockSync->targetFillLevel = ASFW::Isoch::Config::kTxQueueCapacityFrames / 2;
+            // Fix 32c/v3: target = 75% of queue capacity (3072 frames @ 4096 cap).
+            //
+            // Root cause of oscillation: IsochTransmitContext refills the IT DMA ring
+            // in batches of up to legacyRbTargetFrames (2048 frames) at a time.  Each
+            // refill event removes up to 2048 frames from TxSharedQueueSPSC at once.
+            //
+            // With target ≤ 2048: fill can drop to 0 during a refill → underrun.
+            // With target = 3072: after a full 2048-frame refill, 1024 frames remain
+            // → OHCI always has data → no underruns from oscillation.
+            //
+            // Safety margin = 3072 - 2048 = 1024 frames (21 ms @ 48 kHz).
+            state.clockSync->targetFillLevel = (ASFW::Isoch::Config::kTxQueueCapacityFrames * 3) / 4;
         }
     } else {
         state.clockSync->targetFillLevel = 2048;
