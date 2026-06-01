@@ -53,15 +53,16 @@ uint64_t ApplyZeroCopyPllClock(AudioClockEngineState& state) {
     const int32_t fillError = static_cast<int32_t>(fillLevel)
                             - static_cast<int32_t>(state.clockSync->targetFillLevel);
 
-    // Fix 32b/v2: 300 ppm — enough for typical CPU/OHCI crystal mismatch
-    // (~200 ppm), yet moderate enough to avoid overshoot past 0 fill.
-    // 1000 ppm (first attempt) was too aggressive: P-term at 1536-frame error
-    // = 691 ppm > actual drift → buffer overshot 0 → underruns.
-    constexpr double kMaxPpm = 300.0;
+    // Fix 32 v3 — PI tuning based on measured ~300 ppm CPU/OHCI drift:
+    // • kMaxPpm=1000: headroom to drain from 96% quickly and correct drift
+    // • kIntegralClamp=500000: allows I-term to reach 400 ppm steady-state
+    //   (needed because drift≈300 ppm → required integral = 300/0.0008 = 375k)
+    //   With only 200k clamp (v2), max I = 160 ppm < 300 ppm drift → no convergence.
+    constexpr double kMaxPpm = 1000.0;
     constexpr int32_t kDeadbandFrames = 8;
     constexpr double kPpmPerFrame = 0.45;
     constexpr double kIppmPerFrameTick = 0.0008;
-    constexpr int64_t kIntegralClamp = 200000;
+    constexpr int64_t kIntegralClamp = 500000;
 
     int32_t controlError = fillError;
     if (std::abs(controlError) <= kDeadbandFrames) {
