@@ -352,19 +352,22 @@ void PrepareClockEngineForStart(AudioClockEngineState& state) {
             }
             state.clockSync->targetFillLevel = target;
         } else {
-            // Fix 32 v5: target = legacyRbTargetFrames/2 + 1024 safety = 2048.
+            // Fix 33: PLL target = kAudioIoPeriodFrames = 512 frames.
             //
-            // IsochTransmitContext reads legacyRbTargetFrames=2048 at a time (~42 ms).
-            // CoreAudio writes 4×512=2048 in the same window → balanced on average.
-            // Sawtooth: fill oscillates F_min ↔ F_min+2048, natural average = F_min+1024.
+            // With rate-matched refill (Fix 33 in OnRefillTickPreHW), TxSharedQueue drains
+            // at exactly samplesPerDataPacket (6 frames) per OHCI interrupt = 48000 fps,
+            // matching the PerformIO write rate.  The natural TxQ sawtooth is:
+            //   +512 every 10.67ms (one PerformIO write), -6 per 125µs interrupt
+            //   → oscillates 0–512, average ≈ 256 frames.
             //
-            // Setting target = average ensures zero mean PLL error and prevents integral
-            // windup.  With target=2048: F_min=1024 (21ms safety), F_max=3072 (< 4096
-            // capacity → PerformIO never blocks → no sudden drops).
+            // PLL target must match this natural average to avoid integral windup.
+            // Setting target = kAudioIoPeriodFrames (= 512, the sawtooth peak) keeps
+            // the average error near zero.  The PLL then corrects only for long-term
+            // CPU/OHCI drift (≈300 ppm), not for the harmless sawtooth oscillation.
             //
-            // Previous target=3072 (v3/v4) caused: natural average=2048 → permanent
-            // error=-1024 → integral windup → fill hits 4096 ceiling → chaos.
-            state.clockSync->targetFillLevel = ASFW::Isoch::Config::kTxQueueCapacityFrames / 2;
+            // Previous target=2048 (v5): average TxQ ≈ 256 → permanent error=-1792 →
+            // I-term wound to -500k → integral windup → same oscillation as before.
+            state.clockSync->targetFillLevel = ASFW::Isoch::Config::kAudioIoPeriodFrames;
         }
     } else {
         state.clockSync->targetFillLevel = 2048;

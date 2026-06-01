@@ -43,7 +43,9 @@ inline constexpr TxBufferProfile kTxProfileA{
 
 inline constexpr TxBufferProfile kTxProfileB{
     "B",
-    512,   // startWaitTargetFrames  (reverted — race condition with PerformIO start caused worse underruns)
+    2048,  // startWaitTargetFrames  (Fix 33: raised from 512 — with rate-matched refill, pre-primes ring
+           //                        to 2048 frames = 42ms jitter tolerance; no TxQ overflow risk because
+           //                        steady-state transfer is rate-matched not burst-draining)
     0,     // startupPrimeLimitFrames (unbounded)
     2048,  // legacyRbTargetFrames  (Fix 27: was 1024)
     4096,  // legacyRbMaxFrames     (Fix 27: was 1536 — kAudioRingBufferFrames=4096)

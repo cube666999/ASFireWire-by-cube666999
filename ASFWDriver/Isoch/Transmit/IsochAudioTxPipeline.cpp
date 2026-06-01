@@ -292,9 +292,33 @@ void IsochAudioTxPipeline::OnRefillTickPreHW() noexcept {
         uint32_t pumpedFrames = 0;
         bool skipped = true;
 
-        if (rbFill < targetRbFillFrames) {
+        // Fix 33: rate-matched steady-state transfer.
+        //
+        // Previous "want = targetRbFillFrames - rbFill" drained TxSharedQueue to 0 in one burst:
+        //   → TxQ empty after first refill; ring oscillated 0–512, hitting 0 each PerformIO
+        //     period (85 interrupts × 6 frames = 510 consumed, only 512 refilled = 2 left)
+        //   → Constant underruns; targetRbFillFrames=2048 unachievable (TxQ only holds 512).
+        //
+        // Fix: in steady state transfer exactly samplesPerDataPacket frames per interrupt.
+        //   This matches the OHCI consumption rate exactly:
+        //     ring drains: 6 frames/interrupt
+        //     ring gains:  6 frames/interrupt (from TxQ)
+        //     net ring change: ~0 → ring stays at pre-prime level (startWaitTargetFrames)
+        //
+        //   TxQ is also balanced: PerformIO writes 512 every 85 interrupts (48000 fps);
+        //   rate-matched drain = 6/interrupt = 48000 fps → TxQ maintains sawtooth 0–512.
+        //
+        // Burst refill when ring drops below safetyFrames (8× one data packet = 48 frames):
+        //   recovers from jitter spikes that temporarily starve the ring.
+        const uint32_t perCycle = assembler_.samplesPerDataPacket();  // = 6 at 48 kHz
+        const uint32_t safetyFrames = perCycle * 8;                   // = 48 frames (1 ms)
+        const uint32_t want_steady = perCycle;
+        const uint32_t want_burst  = (targetRbFillFrames > rbFill) ? (targetRbFillFrames - rbFill) : 0;
+        const uint32_t wantPerInterrupt = (rbFill < safetyFrames) ? want_burst : want_steady;
+
+        if (wantPerInterrupt > 0 && rbFill < targetRbFillFrames) {
             skipped = false;
-            uint32_t want = targetRbFillFrames - rbFill;
+            uint32_t want = wantPerInterrupt;
             int32_t transferBuf[kTransferChunkFrames * Config::kMaxPcmChannels];
             uint32_t chunks = 0;
 
