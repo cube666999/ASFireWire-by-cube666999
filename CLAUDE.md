@@ -47,9 +47,25 @@ ctest --test-dir build/tests_build -V -R TopologyManager   # single test suite
 
 **Version management:**
 ```bash
-./bump.sh patch     # Bump patch version and regenerate DriverVersion.hpp
-./bump.sh refresh   # Regenerate version header only
+./bump.sh patch     # Bump patch version, sync Xcode project, auto-commit
+./bump.sh refresh   # Regenerate version header only (NO version bump, NO commit)
 ```
+
+**⚠️ CRITICAL — Version bump gotchas (fixed 2026-06-01):**
+
+`./build.sh` calls `./bump.sh patch` automatically (unless `--no-bump`). Two bugs existed that caused the dext to silently ship with the old version, making macOS refuse to upgrade the system extension:
+
+1. **Bug (fixed):** `build.sh` was calling `./bump.sh` without arguments → `refresh` mode → version never incremented. Fix: now calls `./bump.sh patch`.
+
+2. **Bug (fixed):** `bump.sh` modified `VERSION.txt` and `project.pbxproj` but didn't commit them. On **iCloud Drive**, the sync from `cube666` (dev machine) would overwrite those files back to the committed version **before xcodebuild started**, silently reverting the bump. Fix: `bump.sh patch/major/minor` now immediately `git commit`s `VERSION.txt`, `DriverVersion.hpp`, and `project.pbxproj` after bumping.
+
+**Consequence of old bugs:** Multiple sessions where we compiled Fix N but the running dext was still Fix N-1 because macOS saw `CFBundleVersion=21` on both old and new dext and skipped the upgrade. Always verify with:
+```bash
+systemextensionsctl list  # should show new version after install
+log stream ... | grep "IR override wire DBS"  # should show new value
+```
+
+**NEVER use `./build.sh --no-bump` for a hardware test build** unless you manually bumped the version first and the new `CURRENT_PROJECT_VERSION` is committed to git.
 
 ## Architecture
 

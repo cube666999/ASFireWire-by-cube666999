@@ -264,7 +264,9 @@ bump_version() {
   $NO_BUMP && { warn "Skipping version bump (--no-bump)"; return; }
   if [[ -x "./bump.sh" ]]; then
     log "Bumping version…"
-    ./bump.sh >/dev/null && ok "Version bumped"
+    # MUST pass "patch" — calling ./bump.sh without args = "refresh" mode
+    # which does NOT increment the version number (silent no-op).
+    ./bump.sh patch >/dev/null && ok "Version bumped"
   else
     warn "bump.sh missing or not executable – skipping"
   fi

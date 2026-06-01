@@ -240,7 +240,35 @@ main() {
   
   # Always regenerate version header
   generate_version_header
-  
+
+  # After a real bump (not refresh), immediately commit the version files.
+  # This is critical on iCloud Drive: uncommitted changes get overwritten by
+  # sync from another machine (cube666 → Mac Studio) before xcodebuild starts,
+  # silently reverting VERSION.txt and project.pbxproj back to the old version.
+  # The built dext then gets the old CFBundleVersion and macOS refuses to upgrade.
+  #
+  # Skip auto-commit when called from Xcode (SRCROOT is set) — Xcode runs
+  # bump.sh as a build phase script, not a manual invocation.
+  if [[ "$action" != "refresh" && -z "${SRCROOT:-}" ]]; then
+    local PBXPROJ="${PROJECT_ROOT}/ASFW.xcodeproj/project.pbxproj"
+    local current_version
+    current_version=$(head -n 1 "$VERSION_FILE" | tr -d '[:space:]')
+
+    # Collect files that actually changed vs HEAD
+    local changed=()
+    git -C "$PROJECT_ROOT" diff --quiet HEAD -- "$VERSION_FILE"  2>/dev/null || changed+=("$VERSION_FILE")
+    git -C "$PROJECT_ROOT" diff --quiet HEAD -- "$OUTPUT_FILE"   2>/dev/null || changed+=("$OUTPUT_FILE")
+    [[ -f "$PBXPROJ" ]] && { git -C "$PROJECT_ROOT" diff --quiet HEAD -- "$PBXPROJ" 2>/dev/null || changed+=("$PBXPROJ"); }
+
+    if [[ ${#changed[@]} -gt 0 ]]; then
+      git -C "$PROJECT_ROOT" add "${changed[@]}"
+      git -C "$PROJECT_ROOT" commit -m "chore: bump version to ${current_version}" \
+        && ok "Version files committed to git (prevents iCloud revert)"
+    else
+      warn "Version files unchanged — was this a duplicate bump?"
+    fi
+  fi
+
   # Show current version
   local current_version
   current_version=$(head -n 1 "$VERSION_FILE" | tr -d '[:space:]')
