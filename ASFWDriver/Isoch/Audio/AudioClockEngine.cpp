@@ -53,14 +53,30 @@ uint64_t ApplyZeroCopyPllClock(AudioClockEngineState& state) {
     const int32_t fillError = static_cast<int32_t>(fillLevel)
                             - static_cast<int32_t>(state.clockSync->targetFillLevel);
 
-    // Fix 32 v3 — PI tuning based on measured ~300 ppm CPU/OHCI drift:
-    // • kMaxPpm=1000: headroom to drain from 96% quickly and correct drift
-    // • kIntegralClamp=500000: allows I-term to reach 400 ppm steady-state
-    //   (needed because drift≈300 ppm → required integral = 300/0.0008 = 375k)
-    //   With only 200k clamp (v2), max I = 160 ppm < 300 ppm drift → no convergence.
-    constexpr double kMaxPpm = 1000.0;
-    constexpr int32_t kDeadbandFrames = 8;
-    constexpr double kPpmPerFrame = 0.45;
+    // Fix 32 v5 — PI tuning for batch-read sawtooth stability:
+    //
+    // Root cause of v3/v4 oscillation: targetFillLevel=3072 is incompatible with
+    // the natural sawtooth average (2048).  IsochTransmitContext reads 2048 frames
+    // (legacyRbTargetFrames) at once every ~42 ms; CoreAudio writes 4×512=2048
+    // over the same window.  The sawtooth oscillates F_min↔F_min+2048, average=F_min+1024.
+    //
+    // With target=3072: average natural fill=2048 → permanent error=-1024/tick →
+    //   I-term winds to -500k → PLL maxes at -1000 ppm → CoreAudio overshoots →
+    //   fill hits queue ceiling (4096) → PerformIO drops → fill collapses → chaos.
+    //
+    // With target=2048 (= legacyRbTargetFrames/2 + 1024 safety):
+    //   F_min=1024, F_max=3072, average=2048=target → zero average error → stable.
+    //   Safety margin: 1024 frames (21 ms @ 48 kHz) — safe below legacyRbMaxFrames.
+    //
+    // P-gain reduced from 0.45→0.03: with 1024-frame sawtooth amplitude, old P-term
+    // was 460 ppm — enough to oscillate on every sawtooth cycle.  New P-term at
+    // 1024-frame error = 31 ppm: slow enough to not fight the sawtooth, while I-term
+    // handles steady-state 300 ppm CPU/OHCI drift.
+    //
+    // I steady-state for 300 ppm drift: integral = 300/0.0008 = 375k (within 500k clamp).
+    constexpr double kMaxPpm = 400.0;
+    constexpr int32_t kDeadbandFrames = 64;
+    constexpr double kPpmPerFrame = 0.03;
     constexpr double kIppmPerFrameTick = 0.0008;
     constexpr int64_t kIntegralClamp = 500000;
 
@@ -254,28 +270,23 @@ void LogPeriodicMetrics(AudioClockEngineState& state,
                      corrPpm,
                      rxFill,
                      txFill);
-        } else if (state.zeroCopyEnabled && state.txQueueValid) {
+        } else if (state.txQueueValid) {
+            // Fix 32 v5: log CLK-TX for all modes (was gated on zeroCopyEnabled — wrong).
             const uint32_t fill = state.txQueueWriter->FillLevelFrames();
             ASFW_LOG(Audio,
-                     "CLK-TX: fill=%u target=%u err=%d integral=%lld corr=%.1f ppm (max=%.1f) zcDisc=%llu",
+                     "CLK-TX: fill=%u target=%u err=%d integral=%lld corr=%.1f ppm (max=%.1f sat#=%llu) zc=%{public}s",
                      fill,
                      state.clockSync->targetFillLevel,
                      state.clockSync->lastFillError,
                      state.clockSync->fillErrorIntegral,
                      corrPpm,
                      state.clockSync->maxCorrectionPpm,
-                     state.zeroCopyTimeline->discontinuities);
+                     state.clockSync->saturationCount,
+                     state.zeroCopyEnabled ? "Y" : "N");
         } else if (rxPllReady) {
             ASFW_LOG(Audio,
                      "CLK-RX: fill=%u corr=0.0 ppm q8=0 (awaiting cycle-time)",
                      rxFill);
-        } else if (state.txQueueValid) {
-            const uint32_t fill = state.txQueueWriter->FillLevelFrames();
-            ASFW_LOG(Audio,
-                     "CLK: fill=%u target=%u err=%d nominal (legacy TX path)",
-                     fill,
-                     state.clockSync->targetFillLevel,
-                     state.clockSync->lastFillError);
         }
     }
 
@@ -341,18 +352,19 @@ void PrepareClockEngineForStart(AudioClockEngineState& state) {
             }
             state.clockSync->targetFillLevel = target;
         } else {
-            // Fix 32c/v3: target = 75% of queue capacity (3072 frames @ 4096 cap).
+            // Fix 32 v5: target = legacyRbTargetFrames/2 + 1024 safety = 2048.
             //
-            // Root cause of oscillation: IsochTransmitContext refills the IT DMA ring
-            // in batches of up to legacyRbTargetFrames (2048 frames) at a time.  Each
-            // refill event removes up to 2048 frames from TxSharedQueueSPSC at once.
+            // IsochTransmitContext reads legacyRbTargetFrames=2048 at a time (~42 ms).
+            // CoreAudio writes 4×512=2048 in the same window → balanced on average.
+            // Sawtooth: fill oscillates F_min ↔ F_min+2048, natural average = F_min+1024.
             //
-            // With target ≤ 2048: fill can drop to 0 during a refill → underrun.
-            // With target = 3072: after a full 2048-frame refill, 1024 frames remain
-            // → OHCI always has data → no underruns from oscillation.
+            // Setting target = average ensures zero mean PLL error and prevents integral
+            // windup.  With target=2048: F_min=1024 (21ms safety), F_max=3072 (< 4096
+            // capacity → PerformIO never blocks → no sudden drops).
             //
-            // Safety margin = 3072 - 2048 = 1024 frames (21 ms @ 48 kHz).
-            state.clockSync->targetFillLevel = (ASFW::Isoch::Config::kTxQueueCapacityFrames * 3) / 4;
+            // Previous target=3072 (v3/v4) caused: natural average=2048 → permanent
+            // error=-1024 → integral windup → fill hits 4096 ceiling → chaos.
+            state.clockSync->targetFillLevel = ASFW::Isoch::Config::kTxQueueCapacityFrames / 2;
         }
     } else {
         state.clockSync->targetFillLevel = 2048;
