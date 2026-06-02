@@ -2,6 +2,8 @@
 
 #include "IsochAudioTxPipeline.hpp"
 
+#include "../Encoding/BlockingCadence48k.hpp"
+#include "../Encoding/NonBlockingCadence48k.hpp"
 #include "../Encoding/TimingUtils.hpp"
 
 namespace ASFW::Isoch {
@@ -299,20 +301,34 @@ void IsochAudioTxPipeline::OnRefillTickPreHW() noexcept {
         //     period (85 interrupts × 6 frames = 510 consumed, only 512 refilled = 2 left)
         //   → Constant underruns; targetRbFillFrames=2048 unachievable (TxQ only holds 512).
         //
-        // Fix: in steady state transfer exactly samplesPerDataPacket frames per interrupt.
-        //   This matches the OHCI consumption rate exactly:
-        //     ring drains: 6 frames/interrupt
-        //     ring gains:  6 frames/interrupt (from TxQ)
+        // Fix: in steady state transfer exactly avgFramesPerCycle frames per interrupt.
+        //   This matches the OHCI average audio consumption rate over ALL cycles (data+no-data):
+        //     average consumption = sampleRate / kIsochCyclesPerSecond = 48000/8000 = 6
+        //     ring drains: 6 frames/interrupt (average)
+        //     ring gains:  6 frames/interrupt (from TxQ, over all 8000 IRQs/sec)
         //     net ring change: ~0 → ring stays at pre-prime level (startWaitTargetFrames)
         //
         //   TxQ is also balanced: PerformIO writes 512 every 85 interrupts (48000 fps);
         //   rate-matched drain = 6/interrupt = 48000 fps → TxQ maintains sawtooth 0–512.
         //
-        // Burst refill when ring drops below safetyFrames (8× one data packet = 48 frames):
+        // Fix 36: use avgFramesPerCycle = samplesPerDataPacket × dataPackets/8cycles / 8,
+        //   NOT samplesPerDataPacket directly.
+        //   Reason: OnRefillTickPreHW fires for ALL 8000 IRQs/sec (data AND no-data).
+        //   For blocking cadence (NDDD): samplesPerDataPacket=8 but only 6/8 cycles are data.
+        //     drain = 8 × 8000 = 64000 fps ≠ 48000 fps → TxQ empties in 512/16000 = 32ms
+        //     → assembler underrun every ~32ms (observed: ~1070 frames every ~1.5s aggregate).
+        //   Fix: avgFramesPerCycle = 8 × 6/8 = 6 (blocking) or 6 × 8/8 = 6 (non-blocking).
+        //
+        // Burst refill when ring drops below safetyFrames (8× avgFramesPerCycle = 48 frames):
         //   recovers from jitter spikes that temporarily starve the ring.
-        const uint32_t perCycle = assembler_.samplesPerDataPacket();  // = 6 at 48 kHz
-        const uint32_t safetyFrames = perCycle * 8;                   // = 48 frames (1 ms)
-        const uint32_t want_steady = perCycle;
+        const uint32_t perCycle = assembler_.samplesPerDataPacket();  // frames per DATA packet
+        const bool isBlockingMode = (effectiveStreamMode_ == Encoding::StreamMode::kBlocking);
+        const uint32_t dataPacketsPer8 = isBlockingMode
+            ? Encoding::kDataPacketsPer8Cycles            // = 6 (NDDD cadence)
+            : Encoding::kNonBlockingDataPacketsPer8Cycles; // = 8 (DATA every cycle)
+        const uint32_t avgFramesPerCycle = (perCycle * dataPacketsPer8) / 8; // = 6 at 48kHz
+        const uint32_t safetyFrames = avgFramesPerCycle * 8;  // = 48 frames (1 ms)
+        const uint32_t want_steady = avgFramesPerCycle;       // = 6 at 48 kHz
         const uint32_t want_burst  = (targetRbFillFrames > rbFill) ? (targetRbFillFrames - rbFill) : 0;
         const uint32_t wantPerInterrupt = (rbFill < safetyFrames) ? want_burst : want_steady;
 

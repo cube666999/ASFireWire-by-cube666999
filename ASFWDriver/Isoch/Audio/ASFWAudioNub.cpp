@@ -838,9 +838,14 @@ void ASFWAudioNub::SetChannelCount(uint32_t channels)
     if (!ivars) return;
     const uint32_t clamped = ClampAudioChannels(channels);
     ivars->channelCount = clamped;
-    ivars->inputChannelCount = clamped;
-    ivars->outputChannelCount = clamped;
-    ASFW_LOG(Audio, "ASFWAudioNub: Channel count set to %u (legacy aggregate)", clamped);
+    // Fix 35: Do NOT overwrite inputChannelCount / outputChannelCount if staging (Fix 25)
+    // already set them to asymmetric values (e.g. MOTU V3: in=14, out=18).
+    // Only fall back to the aggregate when the per-direction counts are still at their
+    // uninitialised default (0).
+    if (ivars->inputChannelCount == 0)  ivars->inputChannelCount  = clamped;
+    if (ivars->outputChannelCount == 0) ivars->outputChannelCount = clamped;
+    ASFW_LOG(Audio, "ASFWAudioNub: SetChannelCount=%u (in=%u out=%u)", clamped,
+             ivars->inputChannelCount, ivars->outputChannelCount);
 }
 
 // LOCALONLY: Get channel count

@@ -37,15 +37,23 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
 
     func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
         let nsError = error as NSError
-        // Error 4 = OSSystemExtensionErrorExtensionNotFound:
-        // - activation: same version already active → treat as success
-        // - deactivation: bundle path mismatch with installed dext → treat as "already gone"
-        if nsError.domain == "OSSystemExtensionErrorDomain" && nsError.code == 4 {
+        guard nsError.domain == "OSSystemExtensionErrorDomain" else {
+            completion?(.failure(error)); completion = nil; return
+        }
+        switch nsError.code {
+        case 4:
+            // OSSystemExtensionErrorExtensionNotFound:
+            // - activation: same version already active → treat as success
+            // - deactivation: bundle path mismatch with installed dext → treat as "already gone"
             let msg = currentOp == .activation
                 ? "Extension already active (version match)"
                 : "Extension not found — already inactive or installed from different path"
             completion?(.success(msg))
-        } else {
+        case 11:
+            // OSSystemExtensionErrorRequestCanceled: we returned .cancel from
+            // actionForReplacingExtension (same version already installed) → treat as success.
+            completion?(.success("Extension already active — replacement cancelled (same version)"))
+        default:
             completion?(.failure(error))
         }
         completion = nil
@@ -56,6 +64,13 @@ final class DriverInstallManager: NSObject, OSSystemExtensionRequestDelegate {
     }
 
     func request(_ request: OSSystemExtensionRequest, actionForReplacingExtension existing: OSSystemExtensionProperties, withExtension replacement: OSSystemExtensionProperties) -> OSSystemExtensionRequest.ReplacementAction {
+        // Same version already installed — don't replace.
+        // Without this check the old instance briefly enters [terminating for upgrade via delegate]
+        // on every app launch (e.g. after a reboot as a Login Item), producing the ghost duplicate
+        // visible in `systemextensionsctl list`.
+        if existing.bundleVersion == replacement.bundleVersion {
+            return .cancel
+        }
         return .replace
     }
 

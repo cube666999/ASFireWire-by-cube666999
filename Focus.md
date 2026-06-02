@@ -8,6 +8,28 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ SESJA NA MAC STUDIO — Przeczytaj to na starcie
 
+> **Stan na 2026-06-01 (sesja 21) — Fix 33 wdrożony (rate-matched IT ring refill), build w toku:**
+>
+> **✅ Osiągnięte w sesji 21:**
+> - ✅ **Fix 33** (Rate-matched IT ring refill — eliminuje TxQ starvation):
+>   - `OnRefillTickPreHW`: steady-state transfer = `samplesPerDataPacket` (6 frames/interrupt), nie burst
+>   - Ring oscyluje 0–512 ramek (sawtooth), nie trafia w 0 przy każdym PerformIO
+>   - Profile B: `startWaitTargetFrames` 512 → 2048 (42 ms pre-prime margin)
+>   - PLL target: 2048 → 512 (`kAudioIoPeriodFrames`), eliminuje integral windup ±400 ppm
+>   - Commit: `50417e9`, build `0.2.27-audio`
+>
+> **Następny krok — TEST FIX 33 (sesja 21, po restarcie):**
+> - ASFW_Fix33.app na pulpicie (freshly signed)
+> - Restart Mac Studio (wymagany dla dext upgrade z aktywnym AudioDriverKit)
+> - Uruchom app, puść Spotify 30s
+> - **Sprawdzenie w logach (log stream --debug):**
+>   - `IT UnderrunCount` bliski 0 (był 886/s)
+>   - `Ring buffer` stabilny ok. 2048 ramek (był 0%→144%)
+>   - Audio czyste, bez piku/distortion
+> - Jeśli sukces: weryfikuj czy Fix 30 IR nadal działa (IR Errs ≈ 0)
+
+---
+
 > **Stan na 2026-06-01 (sesja 20) — Fix 30 wdrożony (IR MOTU V3 Decoder), ASFW_Fix30.app gotowa:**
 >
 > **✅ Osiągnięte w sesji 20:**
@@ -287,7 +309,8 @@ Poprawna wartość (irCh=0, itCh=1): `0xC1C00000`.
 | IO trwa >5s bez "not consecutive" | ✅ **POTWIERDZONE** — 3+ minuty aktywne IO, re-anchoring adaptuje się (sesja 16) |
 | SYT gate bypass dla MOTU V3 | ✅ **Fix 22** (uncommitted, sesja 17) — `skipSYTGate=true`; MOTU zawsze `syt=0x0000`; IT nie będzie zabijane po 3s |
 | HALS_IORawClock re-anchoring (jitter) | ⚠️ Znany — watchdog timing nieregularny; CoreAudio adaptuje się; fix: OHCI cycle counter |
-| Słyszysz dźwięk z Maca przez MOTU (TX) | ⏳ **Test słuchawkowy po restarcie** — Fix 22 zainstalowany, restart → Spotify → PHONES jack |
+| TxQ starvation (burst refill) | ✅ **Fix 33** (`50417e9`) — rate-matched 6 frames/interrupt, sawtooth 0–512, PLL target=512 |
+| Słyszysz dźwięk z Maca przez MOTU (TX) | ⏳ **Test po restarcie z Fix 33** — restart → Spotify → PHONES jack |
 | Pełny duplex (TX + RX) | ⏳ Kolejny etap |
 | Pełne 18ch IT / 14ch IR w CoreAudio | ⏳ Teraz tylko "2 In / 2 Out" — rozszerzenie do pełnych kanałów po potwierdzeniu audio |
 
@@ -922,10 +945,12 @@ Commit `eeb8787`. 488/488 testów ✅. Odblokuje AV/C dla ~80% rynku interfejsó
 | ~~Work queue deadlock~~ | ✅ NAPRAWIONE | `StartStreaming` na background queue, commit `5554280` |
 | IR Receive walidacja pakietów | ✅ POTWIERDZONE | 11 965 pkts/s w sesji 16, override DBS=21 działa |
 | HALS_IORawClock re-anchoring | Średni | Watchdog-based PerformIO timing jittery; fix: OHCI cycle counter jako timestamp |
-| Brak audio na wyjściu MOTU | **Wysoki** | Fix 21 (DBS=21) + Fix 22 (SYT bypass) wdrożone; restart + headphone test → sesja 17 |
+| TxQ starvation / underruny IT | ✅ NAPRAWIONE | Fix 33 — rate-matched 6 frames/interrupt, PLL target=512 |
+| Brak audio na wyjściu MOTU | **Wysoki** | Fix 33 (TxQ) + Fix 30 (IR decoder) wdrożone; restart + headphone test → sesja 21 |
 | Liczba kanałów 21/21 vs rzeczywiste 18 IT / 14 IR | Niski | DBS=21 obejmuje audio + padding/MIDI sloty. Apple MOTU kext używał 18ch IT / 14ch IR. Sprawdzić mapowanie i skorygować po potwierdzeniu audio |
 | Brak nazw kanałów w CoreAudio / Audio MIDI Setup | Niski | Kanały widoczne jako numery (9, 10, 11…). Fizyczne I/O MOTU: 2 Analog (front) + 8 Analog Line + 16 ADAT + 2 S/PDIF. Implementacja: `IOAudioChannelDescription` tablicy w AudioDriverKit z nazwami per-kanał (Analog 1, ADAT A-1 itd.). Zrobić po stabilizacji audio. |
 | FCP spam do MOTU | Niski | AVC discovery pisze do MOTU co ~2s; MOTU V3 nie używa AV/C — zbędne |
+| `bufferFillLevel` UI — mislabeled "%" | Niski | `IsochTransmitContext::BufferFillLevel()` → `assembler_.bufferFillLevel()` zwraca **surowe ramki** (frames), nie procent. UI (`MetricsView.swift`) wyświetla tę wartość z sufiksem `%` — błąd etykiety. Wartość 144 = 144 ramki = 3 ms audio (nie 144%). Poprawny display: `fill * 100 / kAudioRingBufferFrames`. Pliki: `IsochHandler.cpp:404`, `DriverConnector+Isoch.swift:56`, `MetricsView.swift:331` |
 
 ---
 

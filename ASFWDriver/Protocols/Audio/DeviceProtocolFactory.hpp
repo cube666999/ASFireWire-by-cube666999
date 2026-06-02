@@ -115,11 +115,14 @@ public:
         switch (modelId) {
             case kMOTU828MK3FWModel:    // unitSwVersion 0x15
             case kMOTU828MK3HybModel:   // unitSwVersion 0x35
-                // Wire DBS=21 confirmed from IR payload math (504 bytes / 6 events / 4 = 21 quadlets).
-                // MOTU kext reports 14 IR / 18 IT active audio channels but packs them into 21-slot
-                // AM824 frames (extra slots carry MIDI/control/padding).  Use 21 for both directions
-                // so the shared queues are sized to the actual wire DBS and avoid 99.9% drop rate.
-                return {21u, 21u};
+                // PCM channel counts from Linux snd_motu_spec_828mk3_fw (motu-protocol-v3.c):
+                //   tx_fixed_pcm_chunks[0] = 18  → device→host (IR) = 18 input channels
+                //   rx_fixed_pcm_chunks[0] = 14  → host→device (IT) = 14 output channels
+                // Wire DBS=21 (kMOTUV3WireDbs48k) is NOT the PCM channel count — it is the
+                // data block size on the wire (2 msg slots + up to 24 PCM slots rounded up to
+                // a quadlet boundary). DBS=21 stays in MOTUAudioBackend; what we publish to
+                // CoreAudio is the actual usable PCM count: 18 in / 14 out.
+                return {18u, 14u};
             case kMOTU896MK3Model:      // unitSwVersion 0x16 — 28 input / 24 output physical
                 return {20u, 16u};
             case kMOTUTravelerMK3Model: // unitSwVersion 0x17

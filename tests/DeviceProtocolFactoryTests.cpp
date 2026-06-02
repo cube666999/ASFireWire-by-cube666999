@@ -75,22 +75,24 @@ TEST(DeviceProtocolFactoryTests, EffectiveModelIdUsesSWVersionForMOTU) {
 }
 
 TEST(DeviceProtocolFactoryTests, MOTU828MK3ChannelLayout) {
-    // Fix 24: layout set to {21, 21} based on observed wire DBS=21.
-    // Linux reference (motu-protocol-v3.c): tx_fixed=18 (IR), rx_fixed=14 (IT),
-    // plus dynamic ADAT channels from V3_OPT_IFACE_MODE_OFFSET register.
-    // DBS=21 = 2 msg + some base + ADAT combination observed on hardware.
-    // TODO (Fix 28): read V3_OPT_IFACE_MODE_OFFSET at runtime and compute
-    // channels dynamically per Linux formula instead of hardcoded {21,21}.
+    // Fix 34: corrected from {21, 21} to {18, 14} — wire DBS=21 is NOT the PCM
+    // channel count.  Authoritative source: Linux motu-protocol-v3.c
+    //   snd_motu_spec_828mk3_fw.tx_fixed_pcm_chunks[0] = 18  (device→host, IR)
+    //   snd_motu_spec_828mk3_fw.rx_fixed_pcm_chunks[0] = 14  (host→device, IT)
+    // Confirmed by MOTU kext Sequoia diagnostic:
+    //   fNumFWInputChannels=18 (IR), fNumFWOutputChannels=14 (IT).
+    // Wire DBS=21 stays in MOTUAudioBackend (kMOTUV3WireDbs48k) — it reflects
+    // 2 msg slots + 24 rounded PCM slots on the wire, not usable PCM count.
     const auto layout = DeviceProtocolFactory::GetMOTUV3ChannelLayout(
         DeviceProtocolFactory::kMOTU828MK3FWModel);
-    EXPECT_EQ(layout.inputChannels,  21u);  // device → host (IR) — Fix 24 approximation
-    EXPECT_EQ(layout.outputChannels, 21u);  // host → device (IT) — Fix 24 approximation
+    EXPECT_EQ(layout.inputChannels,  18u);  // device → host (IR): 18 PCM channels at 48 kHz
+    EXPECT_EQ(layout.outputChannels, 14u);  // host → device (IT): 14 PCM channels at 48 kHz
 
-    // Hybrid variant has the same layout.
+    // Hybrid variant has the same FireWire channel layout.
     const auto layoutHyb = DeviceProtocolFactory::GetMOTUV3ChannelLayout(
         DeviceProtocolFactory::kMOTU828MK3HybModel);
-    EXPECT_EQ(layoutHyb.inputChannels,  21u);
-    EXPECT_EQ(layoutHyb.outputChannels, 21u);
+    EXPECT_EQ(layoutHyb.inputChannels,  18u);
+    EXPECT_EQ(layoutHyb.outputChannels, 14u);
 }
 
 TEST(DeviceProtocolFactoryTests, UnknownMOTUModelFallsBackToSafeDefaults) {

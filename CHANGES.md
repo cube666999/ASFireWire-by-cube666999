@@ -4,8 +4,8 @@ Fork: https://github.com/cube666999/ASFireWire-by-cube666999
 Base: https://github.com/mrmidi/ASFireWire  
 Test device: MOTU 828 MK3 (target), developed with Claude Code  
 Tests: 493/493 passing  
-Version: 0.2.21-audio (build 21) — Fix 30 (IR MOTU V3 Decoder, completing duplex)  
-Hardware status: MOTU 828 MK3 detected (Ready), v21+Fix30 — Full duplex MOTU V3 (IT encoding Fix 29 + IR decoding Fix 30)
+Version: 0.2.27-audio (build 27) — Fix 33 (rate-matched IT ring refill eliminates TxQ starvation)  
+Hardware status: MOTU 828 MK3 detected (Ready), v27+Fix33 — TxQ starvation eliminated; IT ring stable at pre-prime level
 
 ---
 
@@ -25,7 +25,58 @@ Hardware status: MOTU 828 MK3 detected (Ready), v21+Fix30 — Full duplex MOTU V
 
 ---
 
-## Fixes (52 commits)
+## Fixes (55 commits)
+
+### build.sh tooling — version guard, --clean, --deploy (session 21, 2026-06-01)
+**File:** `build.sh`  
+**Status:** Committed
+
+Three improvements to prevent stale-build hardware-test failures:
+
+1. **`verify_dext_version()`** — after xcodebuild, compares `CFBundleVersion` inside the built
+   dext's `Info.plist` against `CURRENT_PROJECT_VERSION` in `project.pbxproj`. If they differ
+   (e.g. Xcode incremental build skipped plist regeneration), the script aborts with instructions
+   to run `--clean`. Prevents shipping an old dext version after a version bump.
+
+2. **`--clean` flag** — deletes `./build/DerivedData` before building, forcing a full Xcode
+   rebuild. Required whenever `CURRENT_PROJECT_VERSION` changes without a full rebuild.
+
+3. **`--deploy` flag** — after a successful build, signs and copies the app to
+   `~/Desktop/ASFW_vNN.app`. Signs dext first (`ASFWDriver/ASFWDriver.entitlements`), then
+   app with `--deep` (`ASFW/App.entitlements`). Copies via `/tmp` to strip iCloud xattrs
+   before codesign (iCloud Drive quarantine xattrs break `codesign`).
+
+**Typical hardware-test command:**
+```bash
+./build.sh --no-bump --clean --deploy   # version already bumped by previous ./build.sh
+```
+
+**Note:** `build.sh` uses `./build/DerivedData` (project-local), **not**
+`~/Library/Developer/Xcode/DerivedData`. Xcode GUI uses the standard path — separate trees.
+
+---
+
+### Fix 33 — Rate-matched IT ring refill eliminates TxQ starvation (session 21, 2026-06-01)
+**Files:** `ASFWDriver/Isoch/Transmit/IsochAudioTxPipeline.cpp`,
+`ASFWDriver/Isoch/Config/AudioTxProfiles.hpp`,
+`ASFWDriver/Isoch/Audio/AudioClockEngine.cpp`  
+**Commit:** `50417e9` · **Tests:** 493/493 ✅ · **Status:** Committed
+
+**Root cause identified:** `OnRefillTickPreHW` computed `want = target - rbFill` and transferred that many frames in a single interrupt. This burst-drained `TxSharedQueue` to 0 in one call. The ring then oscillated 0–512 frames and hit 0 every PerformIO period (85 × 125 µs = 10.67 ms, consuming 510 frames; only 512 refilled each burst = 2 frames remaining → constant underruns). `legacyRbTargetFrames = 2048` was unachievable: TxQ never held more than 512 frames.
+
+**Fix — `OnRefillTickPreHW` (steady-state rate matching):**
+Transfer exactly `samplesPerDataPacket` (= 6 frames) per interrupt — matching OHCI consumption. Ring drains 6, gains 6 → net ≈ 0 → ring stays at pre-prime level. TxQ drains 6/interrupt = 48 000 fps = PerformIO write rate → TxQ balanced (sawtooth 0–512). Burst refill only when `ring < 8 × samplesPerDataPacket` (48 frames, 1 ms) to absorb transient jitter.
+
+**Fix — `AudioTxProfiles.hpp` Profile B:**
+`startWaitTargetFrames` 512 → **2048**. Rate-matched refill eliminates the old TxQ overflow risk; pre-prime fills ring to 2048 frames = 42 ms jitter margin. The previous "race condition" was caused by burst-drain behaviour; rate-matched transfer eliminates it.
+
+**Fix — `AudioClockEngine.cpp` PLL target:**
+`targetFillLevel` 2048 → **`kAudioIoPeriodFrames` (512)**. With rate-matched refill, TxQ natural average ≈ 256 frames (sawtooth 0–512, peak = 512). Previous target = 2048 → permanent average error = −1792 → integral windup → PLL saturated at ±400 ppm → oscillation continued. New target = 512 (sawtooth peak) → near-zero average error → PLL corrects only long-term CPU/OHCI drift (≈ 300 ppm), not the harmless sawtooth.
+
+**Diagnostic note — `bufferFillLevel` display:**
+The `bufferFillLevel` metric reported in `IsochTransmitContext` and shown in the ASFW app UI is **raw frames** (not a percentage). The UI appends `%` incorrectly. "144%" = 144 frames = 3 ms audio. With Fix 33 and pre-prime at 2048 frames, the display will show ~2048 (not ~50%).
+
+---
 
 ### Fix 30 — IR MOTU V3 Decoder: 3-byte PCM format recognition (session 20, 2026-06-01)
 **Files:** `ASFWDriver/Isoch/Audio/MotuV3Decoder.hpp`, `ASFWDriver/Isoch/Receive/StreamProcessor.hpp`  

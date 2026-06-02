@@ -7,10 +7,12 @@
  * and the AM824Decoder static helpers.
  *
  * Packet memory layout expected by StreamProcessor::ProcessPacket():
- *   [0..7]   Isoch prefix (8 bytes: timestamp + isoch header, may be zero)
- *   [8..11]  CIP quadlet-0  — stored in host (LE) byte order, simulating OHCI pre-swap
- *   [12..15] CIP quadlet-1  — stored in host (LE) byte order, simulating OHCI pre-swap
- *   [16+]    AM824 data quadlets — stored in host (LE) byte order, simulating OHCI pre-swap
+ *   StreamProcessor::kIsochHeaderSize = 0  (Fix 30: OHCI writes headerQuadlets=0,
+ *   so NO isoch prefix is prepended — CIP header starts at byte 0).
+ *
+ *   [0..3]   CIP quadlet-0  — stored in host (LE) byte order, simulating OHCI pre-swap
+ *   [4..7]   CIP quadlet-1  — stored in host (LE) byte order, simulating OHCI pre-swap
+ *   [8+]     AM824 / MOTU V3 data — stored in host (LE) byte order
  *
  * Rationale: on LE (ARM64) hosts the OHCI hardware byte-swaps every received quadlet
  * as it writes it into the DMA buffer.  The decoders therefore read the semantic
@@ -57,11 +59,12 @@ uint32_t MakeBEQuad(uint8_t label, uint32_t sample24 = 0) {
 /**
  * Build a synthetic IEC 61883-6 packet with OHCI-pre-swapped byte layout.
  *
+ * kIsochHeaderSize=0: NO isoch prefix — CIP header is at byte 0.
+ *
  * Layout:
- *   [0..7]   8-byte isoch prefix (zeroed)
- *   [8..11]  CIP Q0 in host (LE) byte order: EOH=0 | SID<<24 | DBS<<16 | DBC
- *   [12..15] CIP Q1 in host (LE) byte order: EOH=1 | FMT(0x10)<<24 | fdf<<16 | syt
- *   [16+]    am824Quadlets in host (LE) byte order (use MakeBEQuad() to build each)
+ *   [0..3]   CIP Q0 in host (LE) byte order: EOH=0 | SID<<24 | DBS<<16 | DBC
+ *   [4..7]   CIP Q1 in host (LE) byte order: EOH=1 | FMT(0x10)<<24 | fdf<<16 | syt
+ *   [8+]     am824Quadlets in host (LE) byte order (use MakeBEQuad() to build each)
  *
  * @param sid  Source node ID (6 bits)
  * @param dbs  Data Block Size — quadlets per data block (e.g. 2 = stereo)
@@ -75,15 +78,16 @@ std::vector<uint8_t> MakePacket(
     uint8_t fdf, uint16_t syt,
     const std::vector<uint32_t>& am824Quadlets = {})
 {
+    const size_t kHdr = StreamProcessor::kIsochHeaderSize;  // 0
     const size_t payloadBytes = am824Quadlets.size() * 4u;
-    std::vector<uint8_t> pkt(8u + 8u + payloadBytes, 0x00u);
+    std::vector<uint8_t> pkt(kHdr + 8u + payloadBytes, 0x00u);
 
     // CIP Q0: EOH=0, SID, DBS, DBC  — store as LE to simulate OHCI pre-swap
     const uint32_t q0Host =
         (static_cast<uint32_t>(sid) << 24) |
         (static_cast<uint32_t>(dbs) << 16) |
         static_cast<uint32_t>(dbc);
-    PutLE32(pkt.data() + 8, q0Host);
+    PutLE32(pkt.data() + kHdr, q0Host);
 
     // CIP Q1: EOH=1, FMT=0x10 (AM824), fdf, syt  — store as LE
     const uint32_t q1Host =
@@ -91,13 +95,13 @@ std::vector<uint8_t> MakePacket(
         (0x10u << 24) |
         (static_cast<uint32_t>(fdf) << 16) |
         static_cast<uint32_t>(syt);
-    PutLE32(pkt.data() + 12, q1Host);
+    PutLE32(pkt.data() + kHdr + 4u, q1Host);
 
     // AM824 payload — store as LE to simulate OHCI pre-swap
     for (size_t i = 0; i < am824Quadlets.size(); ++i) {
         // am824Quadlets[i] is the semantic value (label in bits 31:24);
         // store in host byte order so ProcessPacket reads it back correctly.
-        PutLE32(pkt.data() + 16u + i * 4u, am824Quadlets[i]);
+        PutLE32(pkt.data() + kHdr + 8u + i * 4u, am824Quadlets[i]);
     }
 
     return pkt;
@@ -122,9 +126,9 @@ std::vector<uint32_t> MakeStereoAM824(size_t eventCount, uint32_t baseVal = 0x11
 // ============================================================================
 
 TEST(StreamProcessor, ShortPacket_LessThan16Bytes_ReturnsNoValidCip) {
-    // Need at least 16 bytes (8 isoch + 8 CIP); 15 must fail.
+    // kIsochHeaderSize=0: need at least 8 bytes (CIP header only); 7 must fail.
     StreamProcessor sp;
-    std::vector<uint8_t> buf(15, 0x00);
+    std::vector<uint8_t> buf(7, 0x00);
 
     const auto summary = sp.ProcessPacket(buf.data(), buf.size());
 
@@ -134,10 +138,10 @@ TEST(StreamProcessor, ShortPacket_LessThan16Bytes_ReturnsNoValidCip) {
 }
 
 TEST(StreamProcessor, ExactlyHeaderSize_NoPayload_CountsAsEmptyPacket) {
-    // 16 bytes = isoch prefix (8) + CIP header (8), payloadBytes = 0 → emptyPacketCount++
+    // kIsochHeaderSize=0: 8 bytes = CIP header only, payloadBytes = 0 → emptyPacketCount++
     StreamProcessor sp;
     auto pkt = MakePacket(0x3F, 2, 0, 0x00, 0xFFFF);  // DBS=2, no AM824 data
-    ASSERT_EQ(pkt.size(), 16u);
+    ASSERT_EQ(pkt.size(), 8u);
 
     const auto summary = sp.ProcessPacket(pkt.data(), pkt.size());
 
@@ -153,9 +157,9 @@ TEST(StreamProcessor, InvalidCIPQ0_EOH1_ReturnsNoValidCip) {
     auto pkt = MakePacket(0x3F, 2, 0, 0x00, 0xFFFF);
 
     // Overwrite Q0: set bit 31 → EOH=1 → invalid.
-    // With LE storage Q0 starts at byte 8; bit 31 lives in the most-significant
-    // byte which is at offset +3 (byte 11) on a little-endian machine.
-    pkt[11] |= 0x80;
+    // kIsochHeaderSize=0: Q0 starts at byte 0; bit 31 lives in the most-significant
+    // byte which is at offset +3 (byte 3) on a little-endian machine.
+    pkt[3] |= 0x80;
 
     const auto summary = sp.ProcessPacket(pkt.data(), pkt.size());
 
@@ -168,9 +172,9 @@ TEST(StreamProcessor, InvalidCIPQ1_EOH0_ReturnsNoValidCip) {
     StreamProcessor sp;
     auto pkt = MakePacket(0x3F, 2, 0, 0x00, 0xFFFF);
 
-    // Q1 starts at byte 12. Clear bit 31 of host value → EOH=0 → invalid.
-    // With LE storage bit 31 lives at offset +3 from Q1 start, i.e. byte 15.
-    pkt[15] &= 0x7F;
+    // Q1 starts at byte 4 (kIsochHeaderSize=0). Clear bit 31 → EOH=0 → invalid.
+    // With LE storage bit 31 lives at offset +3 from Q1 start, i.e. byte 7.
+    pkt[7] &= 0x7F;
 
     const auto summary = sp.ProcessPacket(pkt.data(), pkt.size());
 

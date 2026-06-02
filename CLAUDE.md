@@ -35,7 +35,14 @@ When compacting this conversation, **preserve**:
 ./build.sh --verbose              # Full xcodebuild output
 ./build.sh --no-bump              # Skip version bump
 ./build.sh --config Release       # Release build
+./build.sh --clean                # Delete DerivedData before build (forces full rebuild)
+./build.sh --deploy               # After build: sign + copy to ~/Desktop/ASFW_vNN.app
+./build.sh --no-bump --clean --deploy  # Typical hardware-test workflow (version already bumped)
 ```
+
+**⚠️ DerivedData path:** `build.sh` uses `./build/DerivedData` (project-local), **not** `~/Library/Developer/Xcode/DerivedData`. The built app lives at `./build/DerivedData/Build/Products/Debug/ASFW.app`. Xcode GUI uses the standard path — these are separate DerivedData trees.
+
+**⚠️ iCloud Drive + codesign:** Files on iCloud Drive carry `com.apple.quarantine` and other xattrs that break `codesign`. `--deploy` handles this by copying to `/tmp` first and stripping xattrs before signing. Sign dext first (with `ASFWDriver/ASFWDriver.entitlements`), then app with `--deep` (with `ASFW/App.entitlements`).
 
 **Generate `compile_commands.json`** (for clangd, static analysis):
 ```bash
@@ -83,6 +90,50 @@ log stream ... | grep "IR override wire DBS"  # should show new value
 ```
 
 **NEVER use `./build.sh --no-bump` for a hardware test build** unless you manually bumped the version first and the new `CURRENT_PROJECT_VERSION` is committed to git.
+
+## Czytanie logów dextu (Tahoe / Mac Studio)
+
+### ⚠️ Dwie pułapki — zanim zaczniesz
+
+**Pułapka 1 — `log` w zsh to wbudowana funkcja matematyczna:**
+```bash
+log stream ...    # ← uruchamia zsh-builtin, NIE /usr/bin/log — zero logów!
+/usr/bin/log stream ...  # ✅ poprawne
+```
+Zawsze używaj pełnej ścieżki lub alias: `alias log=/usr/bin/log`.
+
+**Pułapka 2 — predykat `process == "ASFWDriver"` nie działa:**
+Dext nie uruchamia się jako osobny proces o tej nazwie — logi trafiają przez kernel. Predykat po procesie nie łapie nic. Dext używa też `OS_LOG_DEFAULT` (bez subsystemu), więc `subsystem == "net.mrmidi.ASFW"` też nie działa.
+
+### Metoda, która działa (potwierdzona na Tahoe 2026-05-25)
+
+Logi dextu pojawiają się jako:
+```
+kernel: (net.mrmidi.ASFW.ASFWDriver.dext) [Kategoria] Treść
+```
+Dlatego `grep "ASFWDriver.dext"` jest właściwym filtrem.
+
+```bash
+# Live stream — Terminal 1 podczas testu hardware:
+log stream --debug --info 2>/dev/null | grep "ASFWDriver.dext"
+
+# Po zdarzeniu — ostatnie N minut:
+log show --last 10m --debug --info 2>/dev/null | grep "ASFWDriver.dext"
+
+# Filtrowanie po kategorii (Isoch, IR, IT, SYT itp.):
+log stream --debug --info 2>/dev/null | grep "ASFWDriver.dext" | grep -E "(Isoch|IR|IT|syt|Streaming|Started|Poll|CIP|Underrun)"
+
+# Dext + coreaudiod razem (pełny obraz AudioDriverKit):
+log stream --debug --info 2>/dev/null | grep -E "(ASFWDriver\.dext|coreaudiod.*StartIO|HALC)"
+```
+
+### Dlaczego `--predicate` z subsystemem nie działa
+
+Dext używa `OS_LOG_DEFAULT` (bez nazwanego subsystemu). Gdyby używał `os_log_create("net.mrmidi.ASFW", "Isoch")`, działałoby:
+```bash
+log stream --predicate 'subsystem == "net.mrmidi.ASFW"' --level debug  # ← nie działa teraz
+```
+Zmiana wymaga refaktoru logowania w całym driverze — TODO, niezrobione.
 
 ## Architecture
 
