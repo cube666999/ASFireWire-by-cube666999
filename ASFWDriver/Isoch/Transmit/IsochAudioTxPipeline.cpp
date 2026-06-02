@@ -324,8 +324,16 @@ void IsochAudioTxPipeline::OnRefillTickPreHW() noexcept {
         // call — as the pump target. This self-adapts to any IRQ coalescing rate.
         // (One-call lag: first call uses avgFramesPerCycle as fallback; pre-prime covers it.)
         //
-        // safetyFrames = want_steady × 8: enough to absorb one burst-catchup call
-        // (toInject up to kAudioWriteAhead=16 packets ≈ 12 DATA × 8 frames = 96 frames).
+        // Fix 36c: always pump want_steady regardless of current fill level.
+        //
+        // Fix 36b still had a drain-to-zero oscillation: the guard `rbFill < targetRbFillFrames`
+        // prevented pumping when the ring started above target (pre-prime fills to 2948 frames,
+        // target=2048). With no pumping, InjectNearHw drained 48 frames/call for ~62 calls
+        // (~63ms) until the ring hit 0, causing all the underruns.
+        //
+        // Fix: guard on kMaxRbFillFrames (ring capacity) instead of targetRbFillFrames.
+        // Always pump at least want_steady to match consumption rate; burst-pump additionally
+        // when ring drops below target. Ring stays stable at pre-prime level in steady state.
         const uint32_t perCycle = assembler_.samplesPerDataPacket();  // frames per DATA packet
         const bool isBlockingMode = (effectiveStreamMode_ == Encoding::StreamMode::kBlocking);
         const uint32_t dataPacketsPer8 = isBlockingMode
@@ -333,12 +341,12 @@ void IsochAudioTxPipeline::OnRefillTickPreHW() noexcept {
             : Encoding::kNonBlockingDataPacketsPer8Cycles; // = 8 (DATA every cycle)
         const uint32_t avgFramesPerCycle = (perCycle * dataPacketsPer8) / 8; // = 6 at 48kHz
         const uint32_t pumpEstimate = (nextCallPumpFrames_ > 0) ? nextCallPumpFrames_ : avgFramesPerCycle;
-        const uint32_t safetyFrames = pumpEstimate * 8;   // = ~384 frames at typical 985 Hz
         const uint32_t want_steady = pumpEstimate;        // = ~48 frames/call at 985 Hz
         const uint32_t want_burst  = (targetRbFillFrames > rbFill) ? (targetRbFillFrames - rbFill) : 0;
-        const uint32_t wantPerInterrupt = (rbFill < safetyFrames) ? want_burst : want_steady;
+        // Always pump at least want_steady; burst if ring is below target.
+        const uint32_t wantPerInterrupt = (want_burst > want_steady) ? want_burst : want_steady;
 
-        if (wantPerInterrupt > 0 && rbFill < targetRbFillFrames) {
+        if (wantPerInterrupt > 0 && rbFill < kMaxRbFillFrames) {
             skipped = false;
             uint32_t want = wantPerInterrupt;
             int32_t transferBuf[kTransferChunkFrames * Config::kMaxPcmChannels];
