@@ -402,10 +402,18 @@ IOReturn MOTUAudioBackend::StartStreaming(uint64_t guid) noexcept {
         //   Data block = SPH(4B) + msg×3B×2 + PCM×3B×N, padded to DBS quadlets
         // kMOTUV3WireDbs48k=21: DBS=21 matches observed wire packets (pcm_chunks=24).
         // skipSYTGate=true: MOTU V3 uses SPH for sync, never SYT (always syt=0x0000).
+        // Fix 38c: wire zero-copy output buffer so IT DMA reads directly from
+        // the CoreAudio output buffer instead of going through AssemblerRingBuffer.
+        // nub->GetOutputAudioLocalMapping() is non-null here: AudioDriver calls
+        // CopyOutputAudioMemory() at Start() time (before StartStreaming runs).
+        void* const zcBase    = nub->GetOutputAudioLocalMapping();
+        const uint64_t zcBytes   = nub->GetOutputAudioBytes();
+        const uint32_t zcFrames  = nub->GetOutputAudioFrameCapacity();
+
         const kern_return_t kr = isoch_.StartTransmit(
             itChannel, hardware_, sid, streamModeRaw,
             config.outputChannelCount, kMOTUV3WireDbs48k,
-            txMem, txBytes, nullptr, 0, 0,
+            txMem, txBytes, zcBase, zcBytes, zcFrames,
             /*skipSYTGate=*/true,
             /*encoding=*/Encoding::PacketEncoding::kMotuV3);
         if (kr != kIOReturnSuccess) {
