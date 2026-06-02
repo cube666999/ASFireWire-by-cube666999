@@ -4,8 +4,8 @@ Fork: https://github.com/cube666999/ASFireWire-by-cube666999
 Base: https://github.com/mrmidi/ASFireWire  
 Test device: MOTU 828 MK3 (target), developed with Claude Code  
 Tests: 493/493 passing  
-Version: 0.2.48-audio (build 48) — Fix 40 (MOTU V3 encoding in InjectNearHw; was always AM824 → silence)  
-Hardware status: MOTU 828 MK3 detected (Ready), v48+Fix40 — MOTU V3 encoding dispatched correctly; audio output pending hardware test
+Version: 0.2.51-audio (build 51) — Fix 41 (EXC_ARM_DA_ALIGN in encodeInterleavedFramesToMotuV3; std::memset on 8-byte aligned ptr → stnp fault)  
+Hardware status: MOTU 828 MK3 — IT 8000 pkts/s, 0 underruns, Zero-Copy active (v51 confirmed); audio output pending verification; IR 75% drops (ring overflow, next session)
 
 ---
 
@@ -26,6 +26,25 @@ Hardware status: MOTU 828 MK3 detected (Ready), v48+Fix40 — MOTU V3 encoding d
 ---
 
 ## Fixes (57 commits)
+
+### Fix 41 — EXC_ARM_DA_ALIGN in encodeInterleavedFramesToMotuV3 (session 24, 2026-06-02)
+**File:** `ASFWDriver/Isoch/Encoding/PacketAssembler.hpp`  
+**Commit:** `5049c19`  **Version:** v49→v51  
+**Status:** Committed, tested (493/493 ✅), confirmed stable on hardware
+
+`encodeInterleavedFramesToMotuV3` and `fillSilentMotuV3Frames` called `std::memset(block, 0, totalBytes)` where `block` is derived from `payloadVirt + kCIPHeaderSize (8 bytes)`. Since `payloadVirt` is page-aligned (4096 bytes), `block` is only **8-byte aligned** (`0x...008`). `_platform_memset` in DriverKit uses ARM64 `stnp` (non-temporal store pair) which requires **16-byte alignment** → `EXC_ARM_DA_ALIGN` → dext crash on first audio packet → repeated crash (10×) → kernel panic.
+
+Diagnosed from crash report `/Library/Logs/DiagnosticReports/net.mrmidi.ASFW.ASFWDriver-2026-06-02-163054.ips`:
+```
+Exception: EXC_BAD_ACCESS (EXC_ARM_DA_ALIGN at 0x10444d008)
+faulting thread: _platform_memset ← encodeInterleavedFramesToMotuV3 (line 439) ← encodeToWire ← InjectNearHw
+```
+
+Fix: replaced `std::memset` with a `uint32_t` zero-fill loop (always 4-byte aligned, since `outWireQuadlets` is `uint32_t*`).
+
+After fix: dext runs stable, IT 8000 pkts/s, 0 underruns, Zero-Copy active, zero kernel panics. ✅
+
+---
 
 ### Fix 40 — InjectNearHw: MOTU V3 encoding dispatch (session 23, 2026-06-02)
 **File:** `ASFWDriver/Isoch/Encoding/PacketAssembler.hpp`, `ASFWDriver/Isoch/Transmit/IsochAudioTxPipeline.cpp`  

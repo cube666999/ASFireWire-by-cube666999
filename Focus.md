@@ -8,31 +8,38 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ SESJA NA MAC STUDIO — Przeczytaj to na starcie
 
-> **Stan na 2026-06-02 (sesja 23) — Fix 39 + Fix 40 wdrożone, ASFW_v48.app na pulpicie — CZEKA NA TEST HARDWARE:**
+> **Stan na 2026-06-02 (sesja 24) — Fix 40 + Fix 41 wdrożone, ASFW_v51.app na pulpicie — CZEKA NA TEST AUDIO:**
 >
-> **✅ Fix 39** (v47, commit `3fad643`): `SetZeroCopyOutputBuffer` musi być wywołane PO `Configure()`.
-> - Bug: `Configure()` wewnętrznie wywołuje `reconfigureAM824()` która resetuje `zeroCopyEnabled_ = false`.
-> - Przed fixem: zero-copy wyglądało aktywne w UI (flaga pipeline), ale assembler używał pustego ring-buffer → 33 759 underrunów.
-> - Po fixie: 0 underrunów, "Data flowing" zielony w UI ✅ — zero-copy naprawdę aktywne.
->
-> **✅ Fix 40** (v48, uncommitted): `InjectNearHw` używał AM824 encodera na pakietach MOTU V3.
+> **✅ Fix 40** (v48→v51, commit `5049c19`): `InjectNearHw` używał AM824 encodera na pakietach MOTU V3.
 > - Bug: `EncodePcmFramesWithAm824Placeholders` była zawsze wywoływana, niezależnie od `encoding_`.
-> - Dla MOTU V3: assembler tworzył CICHE pakiety (MOTU V3 format) przez `NextSilentPacket`, ale `InjectNearHw` nadpisywał payload AM824-encoded danymi → MOTU odbierało nieprawidłowe bloki → **cisza**.
-> - Fix: `PacketAssembler::encodeToWire()` — dispatcher do `encodeInterleavedFramesToMotuV3` lub `encodeInterleavedFramesToAm824`. `InjectNearHw` wywołuje `assembler_.encodeToWire()` zamiast hardcoded AM824.
-> - Usunięto martwy kod: `EncodePcmFramesWithAm824Placeholders` + `EncodeMidiPlaceholderSlot`.
+> - Fix: `PacketAssembler::encodeToWire()` — dispatcher do `encodeInterleavedFramesToMotuV3` lub `encodeInterleavedFramesToAm824`.
 >
-> **TEST Fix 40 — po restarcie Mac Studio:**
-> - Zainstaluj **ASFW_v48.app** z pulpitu → Restart Mac Studio
-> - Uruchom ASFW, puść Spotify z MOTU 828 MK3 jako wyjściem audio
-> - Słuchaj na gniazdku PHONES (przód MOTU) — **powinien być słyszalny dźwięk** 🎵
-> - **W logach szukaj:**
->   ```
->   IT: ✅ ZERO-COPY enabled! AudioBuffer base=0x... bytes=28672 frames=512 assembler=ENABLED
->   [Isoch] ✅ ZERO-COPY wired! AudioBuffer base=0x... bytes=28672 frames=512 targetFill=320
->   ```
-> - **W UI:** Underruns = 0, Mode = "Zero-Copy", "Data flowing" zielony
-> - Jeśli słyszysz dźwięk → commit Fix 39 (już commitowany) + Fix 40 → przejdź do IR side
-> - Jeśli cisza → zbierz logi: `/usr/bin/log stream --debug --info 2>/dev/null | grep "ASFWDriver.dext"` i wklej
+> **✅ Fix 41** (v51, commit `5049c19`): `EXC_ARM_DA_ALIGN` kernel panic przy pierwszym wywołaniu `encodeInterleavedFramesToMotuV3`.
+> - Bug: `std::memset(block, 0, 84)` gdzie `block = payloadVirt + kCIPHeaderSize (8 bytes)`.
+>   Payload buffer jest page-aligned → `payloadVirt + 8` = tylko **8-byte aligned**.
+>   `_platform_memset` w DriverKit używa ARM64 `stnp` (non-temporal store pair) = wymaga **16-byte alignment** → `EXC_ARM_DA_ALIGN` → crash po 10 razach → kernel panic.
+> - Fix: zastąpiono `std::memset` pętlą `uint32_t` zero-fill (zawsze 4-byte aligned).
+>   Dotyczy `encodeInterleavedFramesToMotuV3` i `fillSilentMotuV3Frames`.
+> - Potwierdzone crash reportem: `/Library/Logs/DiagnosticReports/net.mrmidi.ASFW.ASFWDriver-2026-06-02-163054.ips`
+>
+> **✅ POTWIERDZONY STAN po Fix 41 (v51, sesja 24, 2026-06-02 ~23:37):**
+> - Dext działa stabilnie — ZERO crashów, ZERO kernel panics ✅
+> - IT: **8000 pkts/sec**, **0 underrunów**, **Zero-Copy: CoreAudio direct** ✅
+> - IR: **8001 pkts/sec** od MOTU ✅ — ale **75% drops** (ring overflow — do naprawy)
+> - `StopDevice` + `StartDevice` cykl działa poprawnie (CoreAudio restart ~23:38:08 → 23:38:11) ✅
+> - Testy: **493/493** ✅
+>
+> **⏳ TEST AUDIO — jutro (zdalny VPN):**
+> - Uruchom **ASFW_v51.app** z pulpitu (już zainstalowana — dext v51 aktywny)
+> - Ustaw MOTU 828 MK3 jako wyjście systemowe w macOS Sound Settings
+> - Odtwórz Spotify → słuchaj na gnieździe PHONES (przód MOTU)
+> - **Oczekiwany wynik:** Dźwięk z MOTU 🎵 — Fix 40 naprawia format, Fix 41 naprawia crash
+>
+> **📋 Następny priorytet po potwierdzeniu audio:**
+> - **IR Ring Overflow** — 75% drops (457920 z 610.6K). Pierścień IR DMA jest przepełniony / processing loop nie nadąża.
+>   Prawdopodobna przyczyna: IR ring buffer za mały lub timer polling za rzadki.
+>   Fix: zwiększyć rozmiar IR ring buffera lub przyspieszyć drain.
+> - **HALS_IORawClock** — OHCI cycle counter jako hostTime w PerformIO (rejestr 0x1E8)
 
 ---
 
@@ -961,8 +968,11 @@ Commit `eeb8787`. 488/488 testów ✅. Odblokuje AV/C dla ~80% rynku interfejsó
 | Podwójny dext po restarcie | ✅ NAPRAWIONE | Fix 37 — `.cancel` dla tej samej wersji dextu |
 | Zero-copy output nieaktywne | ✅ NAPRAWIONE | Fix 38c — `kEnableZeroCopyOutputPath=true` + wiring w MOTUAudioBackend |
 | SetZeroCopyOutputBuffer przed Configure() | ✅ NAPRAWIONE | Fix 39 (`3fad643`) — `reconfigureAM824()` resetowało zero-copy; 33 759 underrunów → 0 |
-| InjectNearHw: AM824 encoder dla MOTU V3 | ✅ NAPRAWIONE | Fix 40 (v48) — `PacketAssembler::encodeToWire()` dispatcher; MOTU dostawało AM824 zamiast MOTU V3 → cisza |
-| Brak audio na wyjściu MOTU | **Wysoki** | Fix 40 (v48) powinien naprawić — test po restarcie z ASFW_v48.app |
+| InjectNearHw: AM824 encoder dla MOTU V3 | ✅ NAPRAWIONE | Fix 40 (`5049c19`) — `PacketAssembler::encodeToWire()` dispatcher; MOTU dostawało AM824 zamiast MOTU V3 → cisza |
+| EXC_ARM_DA_ALIGN — crash przy MOTU V3 encoding | ✅ NAPRAWIONE | Fix 41 (`5049c19`) — `std::memset` na 8-byte aligned ptr → `stnp` wymaga 16-byte; zastąpiono uint32_t zero-fill |
+| IT działający bez crashów (v51) | ✅ POTWIERDZONE | 8000 pkts/s, 0 underrunów, Zero-Copy aktywny, brak kernel panic (sesja 24) |
+| Brak audio na wyjściu MOTU | ⏳ **Test jutro** | IT nadaje poprawnie — weryfikacja dźwięku z MOTU PHONES jack (zdalnie przez VPN) |
+| IR Ring Overflow — 75% drops | **Wysoki** | 457920 drops z 610.6K pkts — pierścień IR DMA przepełniony; processing loop nie nadąża. Naprawić w kolejnej sesji. |
 | Liczba kanałów 21/21 vs rzeczywiste 18 IT / 14 IR | Niski | DBS=21 obejmuje audio + padding/MIDI sloty. Apple MOTU kext używał 18ch IT / 14ch IR. Sprawdzić mapowanie i skorygować po potwierdzeniu audio |
 | Brak nazw kanałów w CoreAudio / Audio MIDI Setup | Niski | Kanały widoczne jako numery (9, 10, 11…). Fizyczne I/O MOTU: 2 Analog (front) + 8 Analog Line + 16 ADAT + 2 S/PDIF. Implementacja: `IOAudioChannelDescription` tablicy w AudioDriverKit z nazwami per-kanał (Analog 1, ADAT A-1 itd.). Zrobić po stabilizacji audio. |
 | FCP spam do MOTU | Niski | AVC discovery pisze do MOTU co ~2s; MOTU V3 nie używa AV/C — zbędne |
