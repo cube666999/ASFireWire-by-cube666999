@@ -32,7 +32,7 @@
 #include <cstring>
 #include <utility>
 
-static constexpr bool kEnableZeroCopyOutputPath = false;  // temporary A/B gate
+static constexpr bool kEnableZeroCopyOutputPath = true;  // Fix 38: enable zero-copy output path
 
 // Report only hardware/presentation pipeline latency to HAL.
 // Software queue/ring buffering should not be baked into device latency fields.
