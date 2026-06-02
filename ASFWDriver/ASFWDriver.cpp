@@ -780,8 +780,18 @@ kern_return_t ASFWDriver::StartIsochTransmit(uint8_t channel) {
     const uint8_t sid = static_cast<uint8_t>(ctx.deps.hardware->ReadNodeID() & 0x3Fu);
     const uint32_t streamModeRaw = nub->GetStreamMode();
 
+    // Fix 38b: wire zero-copy output buffer to IT context.
+    // Nub creates and maps the buffer at AudioDriver Start() time (CopyOutputAudioMemory).
+    // GetOutputAudioLocalMapping() is safe here — LOCALONLY, same dext process, non-null
+    // only after the buffer is created (AudioDriver Start() runs before user presses Start IT).
+    // If null (AudioDriver not yet started), falls back to ring-buffer mode automatically.
+    void* const zeroCopyBase   = nub->GetOutputAudioLocalMapping();
+    const uint64_t zeroCopyBytes  = nub->GetOutputAudioBytes();
+    const uint32_t zeroCopyFrames = nub->GetOutputAudioFrameCapacity();
+
     return ctx.isoch.StartTransmit(channel, *ctx.deps.hardware, sid, streamModeRaw, pcmChannels,
-                                   am824Slots, txMem, txBytes, nullptr, 0, 0);
+                                   am824Slots, txMem, txBytes,
+                                   zeroCopyBase, zeroCopyBytes, zeroCopyFrames);
 }
 
 kern_return_t ASFWDriver::StopIsochTransmit() {
