@@ -187,24 +187,15 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
                  txQueueBytes);
     }
 
+    // Compute startTargetFill early — does not depend on assembler configuration.
     if (zeroCopyBase && zeroCopyBytes > 0 && zeroCopyFrames > 0) {
-        isochTransmitContext_->SetZeroCopyOutputBuffer(zeroCopyBase, zeroCopyBytes, zeroCopyFrames);
         uint32_t target = (zeroCopyFrames * 5) / 8;
         if (target < 8) target = 8;
         startTargetFill = target;
-        ASFW_LOG(Controller,
-                 "[Isoch] ✅ ZERO-COPY wired! AudioBuffer base=%p bytes=%llu frames=%u targetFill=%u",
-                 zeroCopyBase,
-                 zeroCopyBytes,
-                 zeroCopyFrames,
-                 startTargetFill);
-    } else {
-        isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
     }
 
     if (isochTransmitContext_->SharedTxCapacityFrames() == 0) {
         ASFW_LOG(Controller, "[Isoch] ❌ StartTransmit blocked: shared TX queue metadata missing");
-        isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
         isochTransmitContext_->SetSharedTxQueue(nullptr, 0);
         txQueue_.Reset();
         return kIOReturnNotReady;
@@ -213,7 +204,6 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
     if (!isochReceiveContext_ ||
         isochReceiveContext_->GetState() != ASFW::Isoch::IRPolicy::State::Running) {
         ASFW_LOG(Controller, "[Isoch] ❌ StartTransmit blocked: IR context is not running");
-        isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
         isochTransmitContext_->SetSharedTxQueue(nullptr, 0);
         txQueue_.Reset();
         return kIOReturnNotReady;
@@ -235,10 +225,25 @@ kern_return_t IsochService::StartTransmit(uint8_t channel,
                                                    encoding);
     if (result != kIOReturnSuccess) {
         ASFW_LOG(Controller, "[Isoch] ❌ Failed to Configure IT Context: 0x%x", result);
-        isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
         isochTransmitContext_->SetSharedTxQueue(nullptr, 0);
         txQueue_.Reset();
         return result;
+    }
+
+    // Fix 39: SetZeroCopyOutputBuffer MUST be called after Configure().
+    // Configure() calls reconfigureAM824() which resets assembler_.zeroCopyEnabled_ = false.
+    // If called before Configure(), the zero-copy source is silently cleared and the assembler
+    // falls back to reading from the empty ring buffer → underruns + silence.
+    if (zeroCopyBase && zeroCopyBytes > 0 && zeroCopyFrames > 0) {
+        isochTransmitContext_->SetZeroCopyOutputBuffer(zeroCopyBase, zeroCopyBytes, zeroCopyFrames);
+        ASFW_LOG(Controller,
+                 "[Isoch] ✅ ZERO-COPY wired! AudioBuffer base=%p bytes=%llu frames=%u targetFill=%u",
+                 zeroCopyBase,
+                 zeroCopyBytes,
+                 zeroCopyFrames,
+                 startTargetFill);
+    } else {
+        isochTransmitContext_->SetZeroCopyOutputBuffer(nullptr, 0, 0);
     }
 
     const auto& txProfile = ASFW::Isoch::Config::kTxBufferProfile;
