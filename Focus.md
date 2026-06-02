@@ -8,15 +8,15 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ SESJA NA MAC STUDIO — Przeczytaj to na starcie
 
-> **Stan na 2026-06-02 (sesja 22) — Fix 38c wdrożony (zero-copy output wired do IT), ASFW_v44.app na pulpicie:**
+> **Stan na 2026-06-02 (sesja 22) — Fix 38c wdrożony (zero-copy output wired do IT), ASFW_v44.app na pulpicie — CZEKA NA TEST HARDWARE:**
 >
-> **✅ Osiągnięte w sesji 22:**
-> - ✅ **Fix 36b** (v40): Adaptive IT pump rate — `nextCallPumpFrames_` = faktyczne frames zużyte przez `InjectNearHw`. DriverKit coalesces IT IRQ do ~985 Hz (8 OHCI cycles/IRQ), więc każde wywołanie zużywa ~48 frames, nie 6.
-> - ✅ **Fix 36c** (v41): Pump zawsze aktywny — usunięcie błędnego warunku `rbFill < targetRbFillFrames`. Warunek blokował pompę gdy ring > target (np. 2951 > 2048 po pre-prime), powodując drain do 0 → 85K underrunów. Nowy guard: `rbFill < kMaxRbFillFrames`.
-> - ✅ **Fix 37** (v39): `actionForReplacingExtension` zwraca `.cancel` dla tej samej wersji — eliminuje podwójny dext po restarcie. Error code 11 (requestCanceled) traktowany jako sukces.
-> - ✅ **Fix 38** (v42): `kEnableZeroCopyOutputPath = true` w `ASFWAudioDriver.cpp` — aktywuje zero-copy path po stronie AudioDrivera.
-> - ✅ **Fix 38b** (v43): Podłączenie zero-copy w `ASFWDriver::StartIsochTransmit` — okazało się ZŁĄ ścieżką (UserClient path, MOTU jej nie używa).
-> - ✅ **Fix 38c** (v44): Podłączenie zero-copy w **`MOTUAudioBackend::StartStreaming`** — właściwa ścieżka IT dla MOTU. `nub->GetOutputAudioLocalMapping/Bytes/FrameCapacity()` zamiast `nullptr, 0, 0`.
+> **🔧 Zaimplementowane w sesji 22 (NIE przetestowane na hardware):**
+> - 🔧 **Fix 36b** (v40): Adaptive IT pump rate — `nextCallPumpFrames_` = faktyczne frames zużyte przez `InjectNearHw`. DriverKit coalesces IT IRQ do ~985 Hz (8 OHCI cycles/IRQ), więc każde wywołanie zużywa ~48 frames, nie 6.
+> - 🔧 **Fix 36c** (v41): Pump zawsze aktywny — usunięcie błędnego warunku `rbFill < targetRbFillFrames`. Warunek blokował pompę gdy ring > target (np. 2951 > 2048 po pre-prime), powodując drain do 0 → 85K underrunów. Nowy guard: `rbFill < kMaxRbFillFrames`.
+> - ✅ **Fix 37** (v39): `actionForReplacingExtension` zwraca `.cancel` dla tej samej wersji — eliminuje podwójny dext po restarcie (potwierdzone logami).
+> - 🔧 **Fix 38** (v42): `kEnableZeroCopyOutputPath = true` w `ASFWAudioDriver.cpp` — aktywuje zero-copy path po stronie AudioDrivera.
+> - 🔧 **Fix 38b** (v43): Podłączenie zero-copy w `ASFWDriver::StartIsochTransmit` — okazało się ZŁĄ ścieżką (UserClient path, MOTU jej nie używa).
+> - 🔧 **Fix 38c** (v44): Podłączenie zero-copy w **`MOTUAudioBackend::StartStreaming`** — właściwa ścieżka IT dla MOTU. `nub->GetOutputAudioLocalMapping/Bytes/FrameCapacity()` zamiast `nullptr, 0, 0`.
 >
 > **Kluczowe odkrycia sesji 22:**
 > - DriverKit coalesces OHCI IT IRQ: **~985 Hz** (nie 8000 Hz), ~8 OHCI cycles/IRQ → 48 frames/call
