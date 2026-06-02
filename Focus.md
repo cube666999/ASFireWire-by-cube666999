@@ -29,17 +29,26 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 > - `StopDevice` + `StartDevice` cykl działa poprawnie (CoreAudio restart ~23:38:08 → 23:38:11) ✅
 > - Testy: **493/493** ✅
 >
-> **⏳ TEST AUDIO — jutro (zdalny VPN):**
+> **⏳ TEST AUDIO — przy Mac Studio (fizycznie):**
 > - Uruchom **ASFW_v51.app** z pulpitu (już zainstalowana — dext v51 aktywny)
 > - Ustaw MOTU 828 MK3 jako wyjście systemowe w macOS Sound Settings
 > - Odtwórz Spotify → słuchaj na gnieździe PHONES (przód MOTU)
 > - **Oczekiwany wynik:** Dźwięk z MOTU 🎵 — Fix 40 naprawia format, Fix 41 naprawia crash
 >
+> **✅ DIAGNOZA (2026-06-03, sesja 25) — "75% IR drops" to NIE był błąd:**
+> - Poprzedni wpis mówił: "IR ring overflow, 75% drops". To była błędna interpretacja.
+> - Analiza logów z `/usr/bin/log show` potwierdziła:
+>   - **DMA ring IR: 100% delivery** — 480 pkts/60ms = 8000/s = wszystkie pakiety od MOTU ✅
+>   - **IT stats: 75.0% DATA / 25.0% NO-DATA** (911517D/303839N z 1215356 total) ✅
+>   - 25% NO-DATA to **poprawny mechanizm NDDD cadence** dla 48kHz @ 8kHz izoch:
+>     `48000÷8=6000 DATA/s` → `6000/8000=75%` DATA, reszta to puste pakiety adaptacji tempa.
+>   - `cadence=NDDD` w logach IT to potwierdzał od początku.
+> - **Nie ma żadnego problemu z pierścieniem IR DMA.** Ring (512 desc) działa poprawnie.
+>
 > **📋 Następny priorytet po potwierdzeniu audio:**
-> - **IR Ring Overflow** — 75% drops (457920 z 610.6K). Pierścień IR DMA jest przepełniony / processing loop nie nadąża.
->   Prawdopodobna przyczyna: IR ring buffer za mały lub timer polling za rzadki.
->   Fix: zwiększyć rozmiar IR ring buffera lub przyspieszyć drain.
 > - **HALS_IORawClock** — OHCI cycle counter jako hostTime w PerformIO (rejestr 0x1E8)
+> - **Rozszerzyć do 18ch IT / 14ch IR** — ASFWAudioNub publikuje teraz tylko "2 In / 2 Out"
+> - **Kontrolki głośności (klawisze F11/F12/Mute)** — `IOUserAudioLevelControl` + `IOUserAudioToggleControl` w ASFWAudioDriver; software gain w PerformIO przed wysłaniem do MOTU (MOTU V3 nie ma hardware volume register). Szczegóły implementacji poniżej w sekcji "Planowane funkcje".
 
 ---
 
@@ -975,8 +984,65 @@ Commit `eeb8787`. 488/488 testów ✅. Odblokuje AV/C dla ~80% rynku interfejsó
 | IR Ring Overflow — 75% drops | **Wysoki** | 457920 drops z 610.6K pkts — pierścień IR DMA przepełniony; processing loop nie nadąża. Naprawić w kolejnej sesji. |
 | Liczba kanałów 21/21 vs rzeczywiste 18 IT / 14 IR | Niski | DBS=21 obejmuje audio + padding/MIDI sloty. Apple MOTU kext używał 18ch IT / 14ch IR. Sprawdzić mapowanie i skorygować po potwierdzeniu audio |
 | Brak nazw kanałów w CoreAudio / Audio MIDI Setup | Niski | Kanały widoczne jako numery (9, 10, 11…). Fizyczne I/O MOTU: 2 Analog (front) + 8 Analog Line + 16 ADAT + 2 S/PDIF. Implementacja: `IOAudioChannelDescription` tablicy w AudioDriverKit z nazwami per-kanał (Analog 1, ADAT A-1 itd.). Zrobić po stabilizacji audio. |
+| Brak obsługi klawiszy głośności (F11/F12/Mute) | Średni | macOS klawisze głośności nie działają gdy MOTU jest wyjściem systemowym — brak zadeklarowanych kontrolek w `ASFWAudioDriver`. Szczegóły w sekcji "Planowane funkcje". |
 | FCP spam do MOTU | Niski | AVC discovery pisze do MOTU co ~2s; MOTU V3 nie używa AV/C — zbędne |
 | `bufferFillLevel` UI — mislabeled "%" | Niski | `IsochTransmitContext::BufferFillLevel()` → `assembler_.bufferFillLevel()` zwraca **surowe ramki** (frames), nie procent. UI (`MetricsView.swift`) wyświetla tę wartość z sufiksem `%` — błąd etykiety. Wartość 144 = 144 ramki = 3 ms audio (nie 144%). Poprawny display: `fill * 100 / kAudioRingBufferFrames`. Pliki: `IsochHandler.cpp:404`, `DriverConnector+Isoch.swift:56`, `MetricsView.swift:331` |
+
+---
+
+## Planowane funkcje (po potwierdzeniu audio)
+
+### Kontrolki głośności — klawisze F11/F12/Mute
+
+**Problem:** Gdy MOTU 828 MK3 jest wyjściem systemowym, klawisze głośności (F11/F12/Mute) nie działają — macOS nie ma dokąd wysłać zmiany, bo `ASFWAudioDriver` nie deklaruje żadnych kontrolek.
+
+**Dlaczego tak działa macOS:** HAL sprawdza czy `IOUserAudioDevice` ma zarejestrowane `IOUserAudioLevelControl` / `IOUserAudioToggleControl`. Jeśli tak — klawisze wysyłają callbacki do sterownika. Jeśli nie — macOS albo nic nie robi albo stosuje niezależny software mix (bez kontroli sterownika).
+
+**Dlaczego software gain, nie hardware:** MOTU 828 MK3 to interfejs studyjny — brak rejestru "hardware volume" dostępnego przez FireWire. Gain stosujemy po naszej stronie przed wysłaniem próbek do IT pipeline. Przy gain=1.0f (0 dB) koszt jest zerowy (kompilator eliminuje multiply).
+
+**Implementacja (3 kroki, ~100–150 linii w `ASFWAudioDriver`):**
+
+1. **Zadeklarować kontrolki w `ASFWAudioDriver::Start()` (lub `CreateDevice()`):**
+```cpp
+auto* volumeCtrl = IOUserAudioLevelControl::Create(
+    this,
+    kIOUserAudioObjectPropertyScopeOutput,
+    kIOUserAudioObjectPropertyElementMain,
+    0.0f,    // initial dB
+   -96.0f,  // min dB
+    0.0f    // max dB
+);
+auto* muteCtrl = IOUserAudioToggleControl::Create(
+    this,
+    kIOUserAudioControlSubTypeMute,
+    kIOUserAudioObjectPropertyScopeOutput,
+    kIOUserAudioObjectPropertyElementMain
+);
+AddControl(volumeCtrl);
+AddControl(muteCtrl);
+```
+
+2. **Obsłużyć callback zmiany wartości:**
+```cpp
+kern_return_t ASFWAudioDriver::SetControlValue(
+    IOUserAudioControl* control, IOUserAudioControlValue newValue)
+{
+    // zapisać gain_ / mute_ jako std::atomic<float> / std::atomic<bool>
+    return super::SetControlValue(control, newValue);
+}
+```
+
+3. **Zastosować gain w `PerformIO` przed zapisem do IT shared queue:**
+```cpp
+const float gain = mute_.load() ? 0.0f : dBToLinear(volumeDb_.load());
+if (gain != 1.0f) {
+    for (auto& sample : outputSamples) {
+        sample = static_cast<int32_t>(sample * gain);
+    }
+}
+```
+
+**Zależności:** Wymaga działającego `PerformIO` + IT pipeline (Fix 40+41). Implementować PO potwierdzeniu działającego audio.
 
 ---
 

@@ -48,6 +48,66 @@ void BuildChannelNamesFromPlugs(ParsedAudioDriverConfig& inOutConfig) {
     }
 }
 
+// MOTU 828 MK3 FW channel layout at 1× rate (44.1/48 kHz):
+//
+//   TX (device → host, 18ch = CoreAudio "Input"):
+//     1–2   Analog 1-2  (front combo XLR/TRS, mic preamps)
+//     3–8   Analog 3-8  (rear balanced TRS)
+//     9–10  S/PDIF 1-2  (coaxial)
+//    11–18  Optical 1-8 (ADAT A at 1×; TOSLINK S/PDIF if no ADAT device connected)
+//
+//   RX (host → device, 14ch = CoreAudio "Output"):
+//     1–8   Analog 1-8  (rear balanced TRS)
+//     9–10  Main L/R    (front XLR)
+//    11–12  Phones L/R  (front 6.35 mm)
+//    13–14  S/PDIF 1-2  (coaxial)
+//
+// Source: Linux kernel snd_motu_spec_828mk3_fw + motu-protocol-v3.c
+// (tx_fixed_pcm_chunks={18,18,14}, rx_fixed_pcm_chunks={14,14,10} at 1× rate).
+// Applies to: Vendor 0x0001F2, Model 0x000015 (828mk3 FW) and 0x000035 (828mk3 Hybrid).
+static void ApplyMOTUV3ChannelNames(ParsedAudioDriverConfig& inOutConfig) {
+    constexpr uint32_t kMOTUVendor     = 0x0001F2;
+    constexpr uint32_t kModel828mk3FW  = 0x000015;
+    constexpr uint32_t kModel828mk3Hyb = 0x000035;
+
+    if (inOutConfig.vendorId != kMOTUVendor) {
+        return;
+    }
+    if (inOutConfig.modelId != kModel828mk3FW && inOutConfig.modelId != kModel828mk3Hyb) {
+        return;
+    }
+
+    // Input channel names (device→host, 18ch)
+    static const char* kInputNames[18] = {
+        "Analog 1", "Analog 2",
+        "Analog 3", "Analog 4", "Analog 5", "Analog 6", "Analog 7", "Analog 8",
+        "S/PDIF 1", "S/PDIF 2",
+        "Optical 1", "Optical 2", "Optical 3", "Optical 4",
+        "Optical 5", "Optical 6", "Optical 7", "Optical 8",
+    };
+
+    // Output channel names (host→device, 14ch)
+    static const char* kOutputNames[14] = {
+        "Analog 1", "Analog 2", "Analog 3", "Analog 4",
+        "Analog 5", "Analog 6", "Analog 7", "Analog 8",
+        "Main L",   "Main R",
+        "Phones L", "Phones R",
+        "S/PDIF 1", "S/PDIF 2",
+    };
+
+    const uint32_t inCount  = std::min(inOutConfig.inputChannelCount,  kMaxNamedChannels);
+    const uint32_t outCount = std::min(inOutConfig.outputChannelCount, kMaxNamedChannels);
+
+    for (uint32_t i = 0; i < inCount && i < 18; ++i) {
+        strlcpy(inOutConfig.inputChannelNames[i], kInputNames[i],
+                sizeof(inOutConfig.inputChannelNames[i]));
+    }
+    for (uint32_t i = 0; i < outCount && i < 14; ++i) {
+        strlcpy(inOutConfig.outputChannelNames[i], kOutputNames[i],
+                sizeof(inOutConfig.outputChannelNames[i]));
+    }
+}
+
 } // namespace
 
 void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
@@ -144,6 +204,11 @@ void ParseAudioDriverConfigFromProperties(OSDictionary* properties,
     }
 
     BuildChannelNamesFromPlugs(inOutConfig);
+
+    // Override with device-specific names when vendor/model are known.
+    // Must run AFTER BuildChannelNamesFromPlugs so the generic "Input N" fallback
+    // is already in place for any channels beyond the device-specific table.
+    ApplyMOTUV3ChannelNames(inOutConfig);
 }
 
 } // namespace ASFW::Isoch::Audio

@@ -62,8 +62,8 @@ struct AudioDriverDeviceState {
 
     char inputPlugName[64]{};
     char outputPlugName[64]{};
-    char inputChannelNames[8][64]{};
-    char outputChannelNames[8][64]{};
+    char inputChannelNames[ASFW::Isoch::Audio::kMaxNamedChannels][64]{};
+    char outputChannelNames[ASFW::Isoch::Audio::kMaxNamedChannels][64]{};
 };
 
 struct AudioDriverSharedMemoryState {
@@ -611,13 +611,18 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         return error;
     }
     
-    // Set channel names on the device (elements are 1-based)
-    // This gives us "Analog Out 1", "Analog Out 2" etc. in Audio MIDI Setup
-    for (uint32_t ch = 1; ch <= ivars->device.outputChannelCount && ch <= 8; ch++) {
+    // Set channel names on the device (elements are 1-based).
+    // Covers all channels up to kMaxNamedChannels (18).
+    // Names are populated by BuildChannelNamesFromPlugs or MOTU-specific overrides.
+    const uint32_t namedOutputCount = std::min(ivars->device.outputChannelCount,
+                                               ASFW::Isoch::Audio::kMaxNamedChannels);
+    for (uint32_t ch = 1; ch <= namedOutputCount; ch++) {
         auto outChName = OSSharedPtr(OSString::withCString(ivars->device.outputChannelNames[ch - 1]), OSNoRetain);
         ivars->audioDevice->SetElementName(ch, IOUserAudioObjectPropertyScope::Output, outChName.get());
     }
-    for (uint32_t ch = 1; ch <= ivars->device.inputChannelCount && ch <= 8; ch++) {
+    const uint32_t namedInputCount = std::min(ivars->device.inputChannelCount,
+                                              ASFW::Isoch::Audio::kMaxNamedChannels);
+    for (uint32_t ch = 1; ch <= namedInputCount; ch++) {
         auto inChName = OSSharedPtr(OSString::withCString(ivars->device.inputChannelNames[ch - 1]), OSNoRetain);
         ivars->audioDevice->SetElementName(ch, IOUserAudioObjectPropertyScope::Input, inChName.get());
     }
