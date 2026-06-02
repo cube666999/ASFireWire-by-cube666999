@@ -143,6 +143,14 @@ private:
     // Audio injection cursor (packet index)
     uint32_t audioWriteIndex_{0};
 
+    // Adaptive pump: frames consumed by InjectNearHw last call.
+    // Used by OnRefillTickPreHW to match pump rate to actual IRQ coalescing rate.
+    // DriverKit coalesces OHCI IT interrupts to ~985 Hz (8 OHCI cycles/IRQ) instead
+    // of the expected 8000 Hz (1 cycle/IRQ), so each DoRefillOnce() injects ~8 packets
+    // (≈48 frames for NDDD 48kHz) rather than 1 packet (6 frames).
+    // One-call lag is harmless: wrong only for the first call, pre-prime covers it.
+    uint32_t nextCallPumpFrames_{0};
+
     // DBC continuity validation for produced packets (ignore NO-DATA).
     struct DbcTracker {
         uint8_t lastDbc{0};

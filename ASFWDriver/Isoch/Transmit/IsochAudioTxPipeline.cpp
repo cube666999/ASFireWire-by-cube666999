@@ -205,6 +205,7 @@ void IsochAudioTxPipeline::ResetForStart() noexcept {
     adaptiveFill_.lastCombinedUnderruns = 0;
 
     audioWriteIndex_ = 0;
+    nextCallPumpFrames_ = 0;  // will be set after first InjectNearHw call
 
     dbcTracker_.lastDbc = 0;
     dbcTracker_.lastDataBlockCount = 0;
@@ -311,24 +312,29 @@ void IsochAudioTxPipeline::OnRefillTickPreHW() noexcept {
         //   TxQ is also balanced: PerformIO writes 512 every 85 interrupts (48000 fps);
         //   rate-matched drain = 6/interrupt = 48000 fps → TxQ maintains sawtooth 0–512.
         //
-        // Fix 36: use avgFramesPerCycle = samplesPerDataPacket × dataPackets/8cycles / 8,
-        //   NOT samplesPerDataPacket directly.
-        //   Reason: OnRefillTickPreHW fires for ALL 8000 IRQs/sec (data AND no-data).
-        //   For blocking cadence (NDDD): samplesPerDataPacket=8 but only 6/8 cycles are data.
-        //     drain = 8 × 8000 = 64000 fps ≠ 48000 fps → TxQ empties in 512/16000 = 32ms
-        //     → assembler underrun every ~32ms (observed: ~1070 frames every ~1.5s aggregate).
-        //   Fix: avgFramesPerCycle = 8 × 6/8 = 6 (blocking) or 6 × 8/8 = 6 (non-blocking).
+        // Fix 36b: adapt pump rate to actual DriverKit interrupt coalescing.
         //
-        // Burst refill when ring drops below safetyFrames (8× avgFramesPerCycle = 48 frames):
-        //   recovers from jitter spikes that temporarily starve the ring.
+        // Fix 36 computed avgFramesPerCycle = 6 assuming 8000 DoRefillOnce calls/sec
+        // (one OHCI cycle per IRQ). But DriverKit coalesces OHCI IT interrupts to
+        // ~985 Hz (~8 OHCI cycles/IRQ). Each DoRefillOnce() therefore runs InjectNearHw
+        // over ~8 packets (6 DATA for NDDD), consuming 6×8 = 48 frames. Pumping only 6
+        // produces a 42-frame deficit per call → assembler drains in ~50ms.
+        //
+        // Fix: use nextCallPumpFrames_ — actual DATA frames InjectNearHw consumed last
+        // call — as the pump target. This self-adapts to any IRQ coalescing rate.
+        // (One-call lag: first call uses avgFramesPerCycle as fallback; pre-prime covers it.)
+        //
+        // safetyFrames = want_steady × 8: enough to absorb one burst-catchup call
+        // (toInject up to kAudioWriteAhead=16 packets ≈ 12 DATA × 8 frames = 96 frames).
         const uint32_t perCycle = assembler_.samplesPerDataPacket();  // frames per DATA packet
         const bool isBlockingMode = (effectiveStreamMode_ == Encoding::StreamMode::kBlocking);
         const uint32_t dataPacketsPer8 = isBlockingMode
             ? Encoding::kDataPacketsPer8Cycles            // = 6 (NDDD cadence)
             : Encoding::kNonBlockingDataPacketsPer8Cycles; // = 8 (DATA every cycle)
         const uint32_t avgFramesPerCycle = (perCycle * dataPacketsPer8) / 8; // = 6 at 48kHz
-        const uint32_t safetyFrames = avgFramesPerCycle * 8;  // = 48 frames (1 ms)
-        const uint32_t want_steady = avgFramesPerCycle;       // = 6 at 48 kHz
+        const uint32_t pumpEstimate = (nextCallPumpFrames_ > 0) ? nextCallPumpFrames_ : avgFramesPerCycle;
+        const uint32_t safetyFrames = pumpEstimate * 8;   // = ~384 frames at typical 985 Hz
+        const uint32_t want_steady = pumpEstimate;        // = ~48 frames/call at 985 Hz
         const uint32_t want_burst  = (targetRbFillFrames > rbFill) ? (targetRbFillFrames - rbFill) : 0;
         const uint32_t wantPerInterrupt = (rbFill < safetyFrames) ? want_burst : want_steady;
 
@@ -551,6 +557,7 @@ void IsochAudioTxPipeline::InjectNearHw(uint32_t hwPacketIndex, Tx::IsochTxDescr
     const uint32_t framesPerPacket = assembler_.samplesPerDataPacket();
     const uint32_t pcmChannels = assembler_.channelCount();
     const uint32_t am824Slots = assembler_.am824SlotCount();
+    uint32_t dataPacketsInjected = 0;  // for pump-rate adaptation in OnRefillTickPreHW
 
     for (uint32_t i = 0; i < toInject; ++i) {
         const uint32_t idx = (audioWriteIndex_ + i) % numPackets;
@@ -621,9 +628,15 @@ void IsochAudioTxPipeline::InjectNearHw(uint32_t hwPacketIndex, Tx::IsochTxDescr
         uint32_t* audioQuadlets = reinterpret_cast<uint32_t*>(payloadVirt + Encoding::kCIPHeaderSize);
 
         EncodePcmFramesWithAm824Placeholders(samples, framesPerPacket, pcmChannels, am824Slots, audioQuadlets);
+        ++dataPacketsInjected;
     }
 
     audioWriteIndex_ = audioTarget;
+
+    // Update pump estimate for the next OnRefillTickPreHW call.
+    // nextCallPumpFrames_ = frames this call consumed from the assembler ring buffer,
+    // so the pump precisely matches consumption regardless of interrupt coalescing rate.
+    nextCallPumpFrames_ = dataPacketsInjected * framesPerPacket;
 
     std::atomic_thread_fence(std::memory_order_release);
     ASFW::Driver::WriteBarrier();
