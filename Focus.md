@@ -8,25 +8,33 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ SESJA NA MAC STUDIO — Przeczytaj to na starcie
 
-> **Stan na 2026-06-01 (sesja 21) — Fix 33 wdrożony (rate-matched IT ring refill), build w toku:**
+> **Stan na 2026-06-02 (sesja 22) — Fix 38c wdrożony (zero-copy output wired do IT), ASFW_v44.app na pulpicie:**
 >
-> **✅ Osiągnięte w sesji 21:**
-> - ✅ **Fix 33** (Rate-matched IT ring refill — eliminuje TxQ starvation):
->   - `OnRefillTickPreHW`: steady-state transfer = `samplesPerDataPacket` (6 frames/interrupt), nie burst
->   - Ring oscyluje 0–512 ramek (sawtooth), nie trafia w 0 przy każdym PerformIO
->   - Profile B: `startWaitTargetFrames` 512 → 2048 (42 ms pre-prime margin)
->   - PLL target: 2048 → 512 (`kAudioIoPeriodFrames`), eliminuje integral windup ±400 ppm
->   - Commit: `50417e9`, build `0.2.27-audio`
+> **✅ Osiągnięte w sesji 22:**
+> - ✅ **Fix 36b** (v40): Adaptive IT pump rate — `nextCallPumpFrames_` = faktyczne frames zużyte przez `InjectNearHw`. DriverKit coalesces IT IRQ do ~985 Hz (8 OHCI cycles/IRQ), więc każde wywołanie zużywa ~48 frames, nie 6.
+> - ✅ **Fix 36c** (v41): Pump zawsze aktywny — usunięcie błędnego warunku `rbFill < targetRbFillFrames`. Warunek blokował pompę gdy ring > target (np. 2951 > 2048 po pre-prime), powodując drain do 0 → 85K underrunów. Nowy guard: `rbFill < kMaxRbFillFrames`.
+> - ✅ **Fix 37** (v39): `actionForReplacingExtension` zwraca `.cancel` dla tej samej wersji — eliminuje podwójny dext po restarcie. Error code 11 (requestCanceled) traktowany jako sukces.
+> - ✅ **Fix 38** (v42): `kEnableZeroCopyOutputPath = true` w `ASFWAudioDriver.cpp` — aktywuje zero-copy path po stronie AudioDrivera.
+> - ✅ **Fix 38b** (v43): Podłączenie zero-copy w `ASFWDriver::StartIsochTransmit` — okazało się ZŁĄ ścieżką (UserClient path, MOTU jej nie używa).
+> - ✅ **Fix 38c** (v44): Podłączenie zero-copy w **`MOTUAudioBackend::StartStreaming`** — właściwa ścieżka IT dla MOTU. `nub->GetOutputAudioLocalMapping/Bytes/FrameCapacity()` zamiast `nullptr, 0, 0`.
 >
-> **Następny krok — TEST FIX 33 (sesja 21, po restarcie):**
-> - ASFW_Fix33.app na pulpicie (freshly signed)
-> - Restart Mac Studio (wymagany dla dext upgrade z aktywnym AudioDriverKit)
-> - Uruchom app, puść Spotify 30s
-> - **Sprawdzenie w logach (log stream --debug):**
->   - `IT UnderrunCount` bliski 0 (był 886/s)
->   - `Ring buffer` stabilny ok. 2048 ramek (był 0%→144%)
->   - Audio czyste, bez piku/distortion
-> - Jeśli sukces: weryfikuj czy Fix 30 IR nadal działa (IR Errs ≈ 0)
+> **Kluczowe odkrycia sesji 22:**
+> - DriverKit coalesces OHCI IT IRQ: **~985 Hz** (nie 8000 Hz), ~8 OHCI cycles/IRQ → 48 frames/call
+> - MOTU IT start path: `MOTUAudioBackend::StartStreaming` → `isoch_.StartTransmit()` — **NIGDY** przez `ASFWDriver::StartIsochTransmit` (UserClient)
+> - Zero-copy infrastruktura była kompletna ale nigdy nie podłączona (flaga `false` + `nullptr, 0, 0`)
+> - `bufferFillLevel` % w UI = procent względem `adaptiveFill_.currentTarget` (2048), nie pojemności rinbu
+>
+> **Następny krok — TEST Fix 38c (sesja 22, po restarcie):**
+> - Zainstaluj **ASFW_v44.app** z pulpitu → Restart Mac Studio
+> - Uruchom ASFW, puść Spotify z MOTU jako wyjściem
+> - **W logach szukaj:**
+>   ```
+>   [Isoch] ✅ ZERO-COPY wired! AudioBuffer base=0x... bytes=28672 frames=512 targetFill=320
+>   ```
+>   zamiast: `IT: ZERO-COPY disabled; using shared TX queue`
+> - **W UI (Debug → Isoch Transmit):** Mode = "Zero-Copy" (nie "Ring-Buffer")
+> - **Underruns** powinny spaść do ~0 (brak pompy = brak oscylacji)
+> - Jeśli zero-copy nie aktywuje → sprawdź czy `outputAudioMap` jest non-null przed `StartStreaming`
 
 ---
 
@@ -310,7 +318,10 @@ Poprawna wartość (irCh=0, itCh=1): `0xC1C00000`.
 | SYT gate bypass dla MOTU V3 | ✅ **Fix 22** (uncommitted, sesja 17) — `skipSYTGate=true`; MOTU zawsze `syt=0x0000`; IT nie będzie zabijane po 3s |
 | HALS_IORawClock re-anchoring (jitter) | ⚠️ Znany — watchdog timing nieregularny; CoreAudio adaptuje się; fix: OHCI cycle counter |
 | TxQ starvation (burst refill) | ✅ **Fix 33** (`50417e9`) — rate-matched 6 frames/interrupt, sawtooth 0–512, PLL target=512 |
-| Słyszysz dźwięk z Maca przez MOTU (TX) | ⏳ **Test po restarcie z Fix 33** — restart → Spotify → PHONES jack |
+| IT pump oscillation (DriverKit IRQ coalescing) | ✅ **Fix 36b/36c** (`80729a5`, `42d7334`) — adaptive pump + guard `kMaxRbFillFrames` |
+| Podwójny dext po restarcie | ✅ **Fix 37** — `actionForReplacingExtension` → `.cancel` dla tej samej wersji |
+| Zero-copy output path nieaktywne | ✅ **Fix 38/38c** (`6fa3de4`, `3af2591`) — flaga `true` + `MOTUAudioBackend` wired |
+| Słyszysz dźwięk z Maca przez MOTU (TX) | ⏳ **Test po restarcie z Fix 38c (v44)** — restart → Spotify → PHONES jack |
 | Pełny duplex (TX + RX) | ⏳ Kolejny etap |
 | Pełne 18ch IT / 14ch IR w CoreAudio | ⏳ Teraz tylko "2 In / 2 Out" — rozszerzenie do pełnych kanałów po potwierdzeniu audio |
 
@@ -946,7 +957,10 @@ Commit `eeb8787`. 488/488 testów ✅. Odblokuje AV/C dla ~80% rynku interfejsó
 | IR Receive walidacja pakietów | ✅ POTWIERDZONE | 11 965 pkts/s w sesji 16, override DBS=21 działa |
 | HALS_IORawClock re-anchoring | Średni | Watchdog-based PerformIO timing jittery; fix: OHCI cycle counter jako timestamp |
 | TxQ starvation / underruny IT | ✅ NAPRAWIONE | Fix 33 — rate-matched 6 frames/interrupt, PLL target=512 |
-| Brak audio na wyjściu MOTU | **Wysoki** | Fix 33 (TxQ) + Fix 30 (IR decoder) wdrożone; restart + headphone test → sesja 21 |
+| IT pump oscillation | ✅ NAPRAWIONE | Fix 36b/36c — adaptive pump (985 Hz IRQ coalescing), guard na kMaxRbFillFrames |
+| Podwójny dext po restarcie | ✅ NAPRAWIONE | Fix 37 — `.cancel` dla tej samej wersji dextu |
+| Zero-copy output nieaktywne | ✅ NAPRAWIONE | Fix 38c — `kEnableZeroCopyOutputPath=true` + wiring w MOTUAudioBackend |
+| Brak audio na wyjściu MOTU | **Wysoki** | Fix 38c (zero-copy) gotowy w v44; restart + headphone test → sesja 22 |
 | Liczba kanałów 21/21 vs rzeczywiste 18 IT / 14 IR | Niski | DBS=21 obejmuje audio + padding/MIDI sloty. Apple MOTU kext używał 18ch IT / 14ch IR. Sprawdzić mapowanie i skorygować po potwierdzeniu audio |
 | Brak nazw kanałów w CoreAudio / Audio MIDI Setup | Niski | Kanały widoczne jako numery (9, 10, 11…). Fizyczne I/O MOTU: 2 Analog (front) + 8 Analog Line + 16 ADAT + 2 S/PDIF. Implementacja: `IOAudioChannelDescription` tablicy w AudioDriverKit z nazwami per-kanał (Analog 1, ADAT A-1 itd.). Zrobić po stabilizacji audio. |
 | FCP spam do MOTU | Niski | AVC discovery pisze do MOTU co ~2s; MOTU V3 nie używa AV/C — zbędne |
