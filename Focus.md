@@ -8,33 +8,31 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ SESJA NA MAC STUDIO — Przeczytaj to na starcie
 
-> **Stan na 2026-06-02 (sesja 22) — Fix 38c wdrożony (zero-copy output wired do IT), ASFW_v44.app na pulpicie — CZEKA NA TEST HARDWARE:**
+> **Stan na 2026-06-02 (sesja 23) — Fix 39 + Fix 40 wdrożone, ASFW_v48.app na pulpicie — CZEKA NA TEST HARDWARE:**
 >
-> **🔧 Zaimplementowane w sesji 22 (NIE przetestowane na hardware):**
-> - 🔧 **Fix 36b** (v40): Adaptive IT pump rate — `nextCallPumpFrames_` = faktyczne frames zużyte przez `InjectNearHw`. DriverKit coalesces IT IRQ do ~985 Hz (8 OHCI cycles/IRQ), więc każde wywołanie zużywa ~48 frames, nie 6.
-> - 🔧 **Fix 36c** (v41): Pump zawsze aktywny — usunięcie błędnego warunku `rbFill < targetRbFillFrames`. Warunek blokował pompę gdy ring > target (np. 2951 > 2048 po pre-prime), powodując drain do 0 → 85K underrunów. Nowy guard: `rbFill < kMaxRbFillFrames`.
-> - ✅ **Fix 37** (v39): `actionForReplacingExtension` zwraca `.cancel` dla tej samej wersji — eliminuje podwójny dext po restarcie (potwierdzone logami).
-> - 🔧 **Fix 38** (v42): `kEnableZeroCopyOutputPath = true` w `ASFWAudioDriver.cpp` — aktywuje zero-copy path po stronie AudioDrivera.
-> - 🔧 **Fix 38b** (v43): Podłączenie zero-copy w `ASFWDriver::StartIsochTransmit` — okazało się ZŁĄ ścieżką (UserClient path, MOTU jej nie używa).
-> - 🔧 **Fix 38c** (v44): Podłączenie zero-copy w **`MOTUAudioBackend::StartStreaming`** — właściwa ścieżka IT dla MOTU. `nub->GetOutputAudioLocalMapping/Bytes/FrameCapacity()` zamiast `nullptr, 0, 0`.
+> **✅ Fix 39** (v47, commit `3fad643`): `SetZeroCopyOutputBuffer` musi być wywołane PO `Configure()`.
+> - Bug: `Configure()` wewnętrznie wywołuje `reconfigureAM824()` która resetuje `zeroCopyEnabled_ = false`.
+> - Przed fixem: zero-copy wyglądało aktywne w UI (flaga pipeline), ale assembler używał pustego ring-buffer → 33 759 underrunów.
+> - Po fixie: 0 underrunów, "Data flowing" zielony w UI ✅ — zero-copy naprawdę aktywne.
 >
-> **Kluczowe odkrycia sesji 22:**
-> - DriverKit coalesces OHCI IT IRQ: **~985 Hz** (nie 8000 Hz), ~8 OHCI cycles/IRQ → 48 frames/call
-> - MOTU IT start path: `MOTUAudioBackend::StartStreaming` → `isoch_.StartTransmit()` — **NIGDY** przez `ASFWDriver::StartIsochTransmit` (UserClient)
-> - Zero-copy infrastruktura była kompletna ale nigdy nie podłączona (flaga `false` + `nullptr, 0, 0`)
-> - `bufferFillLevel` % w UI = procent względem `adaptiveFill_.currentTarget` (2048), nie pojemności rinbu
+> **✅ Fix 40** (v48, uncommitted): `InjectNearHw` używał AM824 encodera na pakietach MOTU V3.
+> - Bug: `EncodePcmFramesWithAm824Placeholders` była zawsze wywoływana, niezależnie od `encoding_`.
+> - Dla MOTU V3: assembler tworzył CICHE pakiety (MOTU V3 format) przez `NextSilentPacket`, ale `InjectNearHw` nadpisywał payload AM824-encoded danymi → MOTU odbierało nieprawidłowe bloki → **cisza**.
+> - Fix: `PacketAssembler::encodeToWire()` — dispatcher do `encodeInterleavedFramesToMotuV3` lub `encodeInterleavedFramesToAm824`. `InjectNearHw` wywołuje `assembler_.encodeToWire()` zamiast hardcoded AM824.
+> - Usunięto martwy kod: `EncodePcmFramesWithAm824Placeholders` + `EncodeMidiPlaceholderSlot`.
 >
-> **Następny krok — TEST Fix 38c (sesja 22, po restarcie):**
-> - Zainstaluj **ASFW_v44.app** z pulpitu → Restart Mac Studio
-> - Uruchom ASFW, puść Spotify z MOTU jako wyjściem
+> **TEST Fix 40 — po restarcie Mac Studio:**
+> - Zainstaluj **ASFW_v48.app** z pulpitu → Restart Mac Studio
+> - Uruchom ASFW, puść Spotify z MOTU 828 MK3 jako wyjściem audio
+> - Słuchaj na gniazdku PHONES (przód MOTU) — **powinien być słyszalny dźwięk** 🎵
 > - **W logach szukaj:**
 >   ```
+>   IT: ✅ ZERO-COPY enabled! AudioBuffer base=0x... bytes=28672 frames=512 assembler=ENABLED
 >   [Isoch] ✅ ZERO-COPY wired! AudioBuffer base=0x... bytes=28672 frames=512 targetFill=320
 >   ```
->   zamiast: `IT: ZERO-COPY disabled; using shared TX queue`
-> - **W UI (Debug → Isoch Transmit):** Mode = "Zero-Copy" (nie "Ring-Buffer")
-> - **Underruns** powinny spaść do ~0 (brak pompy = brak oscylacji)
-> - Jeśli zero-copy nie aktywuje → sprawdź czy `outputAudioMap` jest non-null przed `StartStreaming`
+> - **W UI:** Underruns = 0, Mode = "Zero-Copy", "Data flowing" zielony
+> - Jeśli słyszysz dźwięk → commit Fix 39 (już commitowany) + Fix 40 → przejdź do IR side
+> - Jeśli cisza → zbierz logi: `/usr/bin/log stream --debug --info 2>/dev/null | grep "ASFWDriver.dext"` i wklej
 
 ---
 
@@ -321,7 +319,9 @@ Poprawna wartość (irCh=0, itCh=1): `0xC1C00000`.
 | IT pump oscillation (DriverKit IRQ coalescing) | ✅ **Fix 36b/36c** (`80729a5`, `42d7334`) — adaptive pump + guard `kMaxRbFillFrames` |
 | Podwójny dext po restarcie | ✅ **Fix 37** — `actionForReplacingExtension` → `.cancel` dla tej samej wersji |
 | Zero-copy output path nieaktywne | ✅ **Fix 38/38c** (`6fa3de4`, `3af2591`) — flaga `true` + `MOTUAudioBackend` wired |
-| Słyszysz dźwięk z Maca przez MOTU (TX) | ⏳ **Test po restarcie z Fix 38c (v44)** — restart → Spotify → PHONES jack |
+| SetZeroCopyOutputBuffer po Configure() | ✅ **Fix 39** (`3fad643`, v47) — `reconfigureAM824()` resetowało `zeroCopyEnabled_`; 33 759 underrunów → 0 |
+| InjectNearHw używał AM824 dla MOTU V3 | ✅ **Fix 40** (v48, uncommitted) — `encodeToWire()` dispatcher; MOTU dostawało AM824 payload zamiast V3 → cisza |
+| Słyszysz dźwięk z Maca przez MOTU (TX) | ⏳ **Test po restarcie z Fix 40 (v48)** — restart → Spotify → PHONES jack |
 | Pełny duplex (TX + RX) | ⏳ Kolejny etap |
 | Pełne 18ch IT / 14ch IR w CoreAudio | ⏳ Teraz tylko "2 In / 2 Out" — rozszerzenie do pełnych kanałów po potwierdzeniu audio |
 
@@ -960,7 +960,9 @@ Commit `eeb8787`. 488/488 testów ✅. Odblokuje AV/C dla ~80% rynku interfejsó
 | IT pump oscillation | ✅ NAPRAWIONE | Fix 36b/36c — adaptive pump (985 Hz IRQ coalescing), guard na kMaxRbFillFrames |
 | Podwójny dext po restarcie | ✅ NAPRAWIONE | Fix 37 — `.cancel` dla tej samej wersji dextu |
 | Zero-copy output nieaktywne | ✅ NAPRAWIONE | Fix 38c — `kEnableZeroCopyOutputPath=true` + wiring w MOTUAudioBackend |
-| Brak audio na wyjściu MOTU | **Wysoki** | Fix 38c (zero-copy) gotowy w v44; restart + headphone test → sesja 22 |
+| SetZeroCopyOutputBuffer przed Configure() | ✅ NAPRAWIONE | Fix 39 (`3fad643`) — `reconfigureAM824()` resetowało zero-copy; 33 759 underrunów → 0 |
+| InjectNearHw: AM824 encoder dla MOTU V3 | ✅ NAPRAWIONE | Fix 40 (v48) — `PacketAssembler::encodeToWire()` dispatcher; MOTU dostawało AM824 zamiast MOTU V3 → cisza |
+| Brak audio na wyjściu MOTU | **Wysoki** | Fix 40 (v48) powinien naprawić — test po restarcie z ASFW_v48.app |
 | Liczba kanałów 21/21 vs rzeczywiste 18 IT / 14 IR | Niski | DBS=21 obejmuje audio + padding/MIDI sloty. Apple MOTU kext używał 18ch IT / 14ch IR. Sprawdzić mapowanie i skorygować po potwierdzeniu audio |
 | Brak nazw kanałów w CoreAudio / Audio MIDI Setup | Niski | Kanały widoczne jako numery (9, 10, 11…). Fizyczne I/O MOTU: 2 Analog (front) + 8 Analog Line + 16 ADAT + 2 S/PDIF. Implementacja: `IOAudioChannelDescription` tablicy w AudioDriverKit z nazwami per-kanał (Analog 1, ADAT A-1 itd.). Zrobić po stabilizacji audio. |
 | FCP spam do MOTU | Niski | AVC discovery pisze do MOTU co ~2s; MOTU V3 nie używa AV/C — zbędne |

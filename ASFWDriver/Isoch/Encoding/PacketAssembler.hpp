@@ -203,7 +203,20 @@ public:
         if (zeroCopyCapacity_ == 0) return;
         zeroCopyReadPos_ = framePos % zeroCopyCapacity_;
     }
-    
+
+    /// Encode PCM frames using the configured encoding (AM824 or MOTU V3).
+    /// Used by InjectNearHw to encode samples directly into the DMA payload buffer
+    /// without going through assembleDataPacket (zero-copy inline path).
+    void encodeToWire(const int32_t* pcmInterleaved,
+                      uint32_t frames,
+                      uint32_t* outWireQuadlets) const noexcept {
+        if (encoding_ == PacketEncoding::kMotuV3) {
+            encodeInterleavedFramesToMotuV3(pcmInterleaved, frames, outWireQuadlets);
+        } else {
+            encodeInterleavedFramesToAm824(pcmInterleaved, frames, outWireQuadlets);
+        }
+    }
+
     /// Assemble the next packet based on current cadence position.
     ///
     /// @param syt Presentation timestamp (SYT) for DATA packets
@@ -421,9 +434,14 @@ private:
         const uint32_t chCount    = (channelCount_ < pcmSlots) ? channelCount_ : pcmSlots;
 
         for (uint32_t f = 0; f < frames; ++f) {
-            auto* block = reinterpret_cast<uint8_t*>(
-                outWireQuadlets + static_cast<size_t>(f) * am824SlotCount_);
-            std::memset(block, 0, totalBytes); // SPH=0, msg=0, padding=0
+            // Zero all quadlet slots with uint32_t writes — always 4-byte aligned.
+            // Do NOT use std::memset here: outWireQuadlets is offset by kCIPHeaderSize (8 bytes)
+            // from a page-aligned payload base → only 8-byte aligned.
+            // _platform_memset uses NEON stnp which requires 16-byte alignment → EXC_ARM_DA_ALIGN.
+            uint32_t* blockQuad = outWireQuadlets + static_cast<size_t>(f) * am824SlotCount_;
+            for (uint32_t q = 0; q < am824SlotCount_; ++q) { blockQuad[q] = 0; }
+
+            auto* block = reinterpret_cast<uint8_t*>(blockQuad);
             const int32_t* frameIn = pcmInterleaved + static_cast<size_t>(f) * channelCount_;
             for (uint32_t ch = 0; ch < chCount; ++ch) {
                 const uint32_t s = static_cast<uint32_t>(frameIn[ch]);
@@ -436,11 +454,10 @@ private:
     }
 
     void fillSilentMotuV3Frames(uint32_t frames, uint32_t* outWireQuadlets) const noexcept {
-        const uint32_t totalBytes = am824SlotCount_ * 4u;
+        // Same alignment constraint as encodeInterleavedFramesToMotuV3 — use uint32_t writes.
         for (uint32_t f = 0; f < frames; ++f) {
-            std::memset(reinterpret_cast<uint8_t*>(
-                outWireQuadlets + static_cast<size_t>(f) * am824SlotCount_),
-                0, totalBytes);
+            uint32_t* blockQuad = outWireQuadlets + static_cast<size_t>(f) * am824SlotCount_;
+            for (uint32_t q = 0; q < am824SlotCount_; ++q) { blockQuad[q] = 0; }
         }
     }
 

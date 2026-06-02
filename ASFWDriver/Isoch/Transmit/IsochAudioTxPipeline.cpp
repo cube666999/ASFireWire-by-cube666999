@@ -8,37 +8,6 @@
 
 namespace ASFW::Isoch {
 
-namespace {
-
-inline uint32_t EncodeMidiPlaceholderSlot(uint32_t midiSlotIndex) noexcept {
-    const uint8_t label = static_cast<uint8_t>(
-        Encoding::kAM824LabelMIDIConformantBase + (midiSlotIndex & 0x03u));
-    return Encoding::AM824Encoder::encodeLabelOnly(label);
-}
-
-// Positional arguments mirror PCM input then AM824 output layout.
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-inline void EncodePcmFramesWithAm824Placeholders(const int32_t* pcmInterleaved,
-                                                 uint32_t frames, // NOLINT(bugprone-easily-swappable-parameters)
-                                                 uint32_t pcmChannels,
-                                                 uint32_t am824Slots,
-                                                 uint32_t* outWireQuadlets) noexcept {
-    const uint32_t midiSlots = (am824Slots > pcmChannels) ? (am824Slots - pcmChannels) : 0;
-    for (uint32_t f = 0; f < frames; ++f) {
-        const int32_t* frameIn = pcmInterleaved + (static_cast<size_t>(f) * pcmChannels);
-        uint32_t* frameOut = outWireQuadlets + (static_cast<size_t>(f) * am824Slots);
-
-        for (uint32_t ch = 0; ch < pcmChannels; ++ch) {
-            frameOut[ch] = Encoding::AM824Encoder::encode(frameIn[ch]);
-        }
-        for (uint32_t s = 0; s < midiSlots; ++s) {
-            frameOut[pcmChannels + s] = EncodeMidiPlaceholderSlot(s);
-        }
-    }
-}
-
-} // namespace
-
 void IsochAudioTxPipeline::SetSharedTxQueue(void* base, uint64_t bytes) noexcept {
     if (!base || bytes == 0) {
         // Treat null/0 as an explicit detach so callers can safely tear down the
@@ -564,7 +533,6 @@ void IsochAudioTxPipeline::InjectNearHw(uint32_t hwPacketIndex, Tx::IsochTxDescr
 
     const uint32_t framesPerPacket = assembler_.samplesPerDataPacket();
     const uint32_t pcmChannels = assembler_.channelCount();
-    const uint32_t am824Slots = assembler_.am824SlotCount();
     uint32_t dataPacketsInjected = 0;  // for pump-rate adaptation in OnRefillTickPreHW
 
     for (uint32_t i = 0; i < toInject; ++i) {
@@ -635,7 +603,10 @@ void IsochAudioTxPipeline::InjectNearHw(uint32_t hwPacketIndex, Tx::IsochTxDescr
         }
         uint32_t* audioQuadlets = reinterpret_cast<uint32_t*>(payloadVirt + Encoding::kCIPHeaderSize);
 
-        EncodePcmFramesWithAm824Placeholders(samples, framesPerPacket, pcmChannels, am824Slots, audioQuadlets);
+        // Fix 40: dispatch to the correct encoder (AM824 or MOTU V3).
+        // Previously always called EncodePcmFramesWithAm824Placeholders — sending AM824 data
+        // to MOTU V3 devices which expect 3-byte packed PCM → silence on MOTU.
+        assembler_.encodeToWire(samples, framesPerPacket, audioQuadlets);
         ++dataPacketsInjected;
     }
 

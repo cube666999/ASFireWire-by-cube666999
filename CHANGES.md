@@ -4,8 +4,8 @@ Fork: https://github.com/cube666999/ASFireWire-by-cube666999
 Base: https://github.com/mrmidi/ASFireWire  
 Test device: MOTU 828 MK3 (target), developed with Claude Code  
 Tests: 493/493 passing  
-Version: 0.2.27-audio (build 27) — Fix 33 (rate-matched IT ring refill eliminates TxQ starvation)  
-Hardware status: MOTU 828 MK3 detected (Ready), v27+Fix33 — TxQ starvation eliminated; IT ring stable at pre-prime level
+Version: 0.2.48-audio (build 48) — Fix 40 (MOTU V3 encoding in InjectNearHw; was always AM824 → silence)  
+Hardware status: MOTU 828 MK3 detected (Ready), v48+Fix40 — MOTU V3 encoding dispatched correctly; audio output pending hardware test
 
 ---
 
@@ -25,7 +25,33 @@ Hardware status: MOTU 828 MK3 detected (Ready), v27+Fix33 — TxQ starvation eli
 
 ---
 
-## Fixes (55 commits)
+## Fixes (57 commits)
+
+### Fix 40 — InjectNearHw: MOTU V3 encoding dispatch (session 23, 2026-06-02)
+**File:** `ASFWDriver/Isoch/Encoding/PacketAssembler.hpp`, `ASFWDriver/Isoch/Transmit/IsochAudioTxPipeline.cpp`  
+**Version:** v48 (uncommitted)  
+**Status:** Built, tests 493/493 ✅
+
+`InjectNearHw` always called `EncodePcmFramesWithAm824Placeholders` regardless of the stream encoding. For MOTU V3, this produced AM824 label bytes (0x40) at positions where the MOTU expects SPH + MSG + 3-byte packed PCM. MOTU received malformed blocks → **silence on output**.
+
+`NextSilentPacket` correctly used MOTU V3 format (via `assembleDataPacketSilent` → `fillSilentMotuV3Frames`), but `InjectNearHw` overwrote the payload with AM824 data.
+
+Fix: added `PacketAssembler::encodeToWire()` — a public dispatcher that calls `encodeInterleavedFramesToMotuV3` or `encodeInterleavedFramesToAm824` based on `encoding_`. `InjectNearHw` now calls `assembler_.encodeToWire()`. Removed dead `EncodePcmFramesWithAm824Placeholders` + `EncodeMidiPlaceholderSlot`.
+
+---
+
+### Fix 39 — SetZeroCopyOutputBuffer must be called after Configure() (session 23, 2026-06-02)
+**File:** `ASFWDriver/Isoch/IsochService.cpp`  
+**Commit:** `3fad643`  **Version:** v47  
+**Status:** Committed
+
+`Configure()` internally calls `reconfigureAM824()` which resets `zeroCopyEnabled_ = false` and `zeroCopyBase_ = nullptr`. Calling `SetZeroCopyOutputBuffer` before `Configure` silently lost the zero-copy setup. Result: UI showed "Zero-Copy" mode (pipeline flag) but assembler used empty ring-buffer → 33,759 underruns + silence.
+
+Fix: moved `SetZeroCopyOutputBuffer` to after `Configure()` in `IsochService::StartTransmit`.
+
+After fix: underruns 33,759 → **0**, "Data flowing" green badge confirmed. ✅
+
+---
 
 ### build.sh tooling — version guard, --clean, --deploy (session 21, 2026-06-01)
 **File:** `build.sh`  
