@@ -12,6 +12,7 @@ import SwiftUI
 @MainActor
 class DriverViewModel: ObservableObject {
     @Published var activationStatus: String = "Idle"
+    @Published var isDriverActive: Bool = false
     @Published var isBusy: Bool = false
     @Published var logMessages: [LogEntry] = []
     @Published var driverVersion: DriverVersionInfo?
@@ -80,15 +81,17 @@ class DriverViewModel: ObservableObject {
                 switch result {
                 case .success(let message):
                     self.activationStatus = message
+                    self.isDriverActive = true
                     self.log(message, source: .app, level: .success)
                 case .failure(let error):
                     self.activationStatus = "Error: \(error.localizedDescription)"
+                    self.isDriverActive = false
                     self.log(error.localizedDescription, source: .app, level: .error)
                 }
             }
         }
     }
-    
+
     func uninstallDriver() {
         isBusy = true
         activationStatus = "Requesting deactivation..."
@@ -101,6 +104,7 @@ class DriverViewModel: ObservableObject {
                 switch result {
                 case .success(let message):
                     self.activationStatus = message
+                    self.isDriverActive = false
                     self.log(message, source: .app, level: .success)
                 case .failure(let error):
                     self.activationStatus = "Error: \(error.localizedDescription)"

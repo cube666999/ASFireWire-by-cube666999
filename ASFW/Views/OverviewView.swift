@@ -97,9 +97,9 @@ struct OverviewView: View {
     
     @ViewBuilder
     private var statusIndicator: some View {
-        let isActive = viewModel.activationStatus.contains("result: 0")
+        let isActive = viewModel.isDriverActive
         let isError = viewModel.activationStatus.contains("Error")
-        
+
         Circle()
             .fill(viewModel.isBusy ? Color.orange : (isError ? Color.red : (isActive ? Color.green : Color.gray)))
             .frame(width: 12, height: 12)
