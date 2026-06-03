@@ -130,24 +130,49 @@ public:
 
             // Check for hardware error events FIRST (these override ACK codes)
             // eventCode 0x0A = evt_timeout, 0x03 = evt_missing_ack
+            //
+            // NOTE on ackCode semantics here (RAW IEEE 1394 ack, bits[15:12] of xferStatus):
+            //   0x0 = no ack received (true timeout — device never responded)
+            //   0x1 = ack_complete   (device accepted, unified transaction, NO response packet)
+            //   0x2 = ack_pending    (split transaction, response packet will follow as AR)
+            //
+            // Some OHCI controllers (incl. Thunderbolt→FireWire adapters) generate kEvtTimeout
+            // even when ack_complete (0x1) was received, because they wait for a response
+            // packet that will never come for a unified write. The raw ackCode=0x1 stored in
+            // the descriptor is authoritative: the write WAS accepted by the device.
             if (eventCode == 0x0A || eventCode == 0x03) {
-                // Hardware timeout - but ACK code tells us what actually happened
-                // If ackCode is 0x1 (pending), the AT completed but we're waiting for AR
-                // If ackCode is 0xF or invalid, the transmission truly failed
                 ASFW_LOG(Async, "  → Hardware event: %{public}s (ackCode=0x%X)",
                          ToString(comp.eventCode), ackCode);
 
                 if (ackCode == 0x1) {
-                    // ack_pending: AT transmission succeeded, wait for AR response
-                    ASFW_LOG(Async, "  → AwaitingAR (ackPending despite hw timeout)");
-                    txn->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: hw_timeout_pending");
+                    // IEEE 1394 ack_complete — device accepted the packet as a unified transaction.
+                    // For WRITE operations: success, no response packet expected.
+                    // For READ  operations: unusual (reads normally use ack_pending); treat as
+                    //   split-transaction fallback and wait for AR.
+                    if (!txn->IsReadOperation()) {
+                        ASFW_LOG(Async, "  → Completed (ack_complete write, kEvtTimeout spurious)");
+                        if (txn->TryMarkCompleted()) {
+                            postAction = PostAction::kCompleteSuccess;
+                            transitionTag1 = "OnATCompletion: ackComplete_write";
+                            transitionTag2 = "OnATCompletion: ackComplete_write";
+                        }
+                    } else {
+                        ASFW_LOG(Async, "  → AwaitingAR (ack_complete on read, waiting for response)");
+                        txn->TransitionTo(TransactionState::ATCompleted,
+                                          "OnATCompletion: ackComplete_read_hwTimeout");
+                        txn->TransitionTo(TransactionState::AwaitingAR,
+                                          "OnATCompletion: ackComplete_read_hwTimeout");
+                    }
+                    return;
+                } else if (ackCode == 0x2) {
+                    // IEEE 1394 ack_pending — split transaction, response packet will follow.
+                    ASFW_LOG(Async, "  → AwaitingAR (ack_pending, waiting for response)");
+                    txn->TransitionTo(TransactionState::ATCompleted, "OnATCompletion: ackPending");
                     txn->TransitionTo(TransactionState::AwaitingAR, "OnATCompletion: ackPending");
                     return;
                 } else {
-                    // True hardware failure
+                    // ackCode=0x0 or other: no ack received — true timeout.
                     ASFW_LOG(Async, "  → Failed (hw timeout, ackCode=0x%X)", ackCode);
-                    
-                    // Extract transaction to complete it safely outside lock
                     postAction = PostAction::kCompleteTimeout;
                     transitionTag1 = "OnATCompletion: hw_timeout";
                     transitionTag2 = "OnATCompletion: hw_timeout";
