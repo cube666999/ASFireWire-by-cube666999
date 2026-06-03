@@ -64,6 +64,7 @@ public:
     [[nodiscard]] uint32_t FramesPerDataPacket() const noexcept { return assembler_.samplesPerDataPacket(); }
     [[nodiscard]] uint32_t ChannelCount() const noexcept { return assembler_.channelCount(); } // PCM channels
     [[nodiscard]] uint32_t Am824SlotCount() const noexcept { return assembler_.am824SlotCount(); }
+    [[nodiscard]] bool IsMotuV3() const noexcept { return assembler_.isMotuV3Encoding(); }
     [[nodiscard]] uint64_t DbcDiscontinuityCount() const noexcept { return dbcTracker_.discontinuityCount.load(std::memory_order_relaxed); }
 
     void ResetForStart() noexcept;

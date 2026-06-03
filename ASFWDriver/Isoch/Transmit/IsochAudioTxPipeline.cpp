@@ -608,25 +608,6 @@ void IsochAudioTxPipeline::InjectNearHw(uint32_t hwPacketIndex, Tx::IsochTxDescr
         // to MOTU V3 devices which expect 3-byte packed PCM → silence on MOTU.
         assembler_.encodeToWire(samples, framesPerPacket, audioQuadlets);
         ++dataPacketsInjected;
-
-        // Fix 44 diagnostic: log PCM content every ~1s to confirm audio (non-zero) vs. silence.
-        // Remove once audio confirmed working.
-        if (zeroCopySync) {
-            static uint64_t s_zcDiagPackets = 0;
-            if ((++s_zcDiagPackets % 6000) == 1) {
-                int32_t maxAbs = 0;
-                const uint32_t nCheck = framesPerPacket * pcmChannels;
-                for (uint32_t si = 0; si < nCheck; ++si) {
-                    const int32_t a = samples[si] < 0 ? -samples[si] : samples[si];
-                    if (a > maxAbs) maxAbs = a;
-                }
-                ASFW_LOG(Isoch, "IT: ZC-AUDIO diag s0=%08x s1=%08x maxAbs=%08x zcPos=%u",
-                         static_cast<uint32_t>(samples[0]),
-                         static_cast<uint32_t>(samples[1]),
-                         static_cast<uint32_t>(maxAbs),
-                         assembler_.zeroCopyReadPosition());
-            }
-        }
     }
 
     audioWriteIndex_ = audioTarget;

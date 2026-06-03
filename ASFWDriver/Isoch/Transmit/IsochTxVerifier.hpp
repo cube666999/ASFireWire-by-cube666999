@@ -35,6 +35,7 @@ public:
         bool zeroCopyEnabled{false};
         bool sharedTxQueueValid{false};
         uint32_t sharedTxQueueFillFrames{0};
+        bool isMotuV3{false};  ///< True when using MOTU V3 CIP (FMT=0x02, FDF=0x22, SPH=1)
 
         uint64_t audioInjectCursorResets{0};
         uint64_t audioInjectMissedPackets{0};

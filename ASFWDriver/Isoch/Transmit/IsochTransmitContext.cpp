@@ -379,6 +379,7 @@ void IsochTransmitContext::KickTxVerifier() noexcept {
     in.zeroCopyEnabled = audio_.IsZeroCopyEnabled();
     in.sharedTxQueueValid = audio_.SharedTxQueueValid();
     in.sharedTxQueueFillFrames = audio_.SharedTxFillLevelFrames();
+    in.isMotuV3 = audio_.IsMotuV3();
 
     const auto& audioC = audio_.RTCounters();
     const auto& ringC = ring_.RTCounters();

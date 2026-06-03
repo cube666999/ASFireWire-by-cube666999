@@ -194,6 +194,7 @@ public:
     
     /// Check if zero-copy mode is enabled
     bool isZeroCopyEnabled() const noexcept { return zeroCopyEnabled_; }
+    bool isMotuV3Encoding() const noexcept { return encoding_ == PacketEncoding::kMotuV3; }
     
     /// Get zero-copy read position (for diagnostics)
     uint32_t zeroCopyReadPosition() const noexcept { return zeroCopyReadPos_; }

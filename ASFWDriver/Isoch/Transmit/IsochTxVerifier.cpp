@@ -293,17 +293,25 @@ void IsochTxVerifier::RunWork() noexcept {
                         e.packetIndex, cip.eoh1);
             restartReasons |= IsochTxRecoveryController::kReasonCipAnomaly;
         }
-        if (cip.fmt != Encoding::kCIPFormatAM824) {
-            ASFW_LOG_RL(Isoch, "txverify/cip_fmt", 1000, OS_LOG_TYPE_DEFAULT,
-                        "IT TX VERIFY: CIP FMT mismatch pkt=%u fmt=0x%02x expected=0x%02x",
-                        e.packetIndex, cip.fmt, Encoding::kCIPFormatAM824);
-            restartReasons |= IsochTxRecoveryController::kReasonCipAnomaly;
+        {
+            const uint8_t expectedFmt = inputs_.isMotuV3
+                ? Encoding::kCIPFormatMotuV3 : Encoding::kCIPFormatAM824;
+            if (cip.fmt != expectedFmt) {
+                ASFW_LOG_RL(Isoch, "txverify/cip_fmt", 1000, OS_LOG_TYPE_DEFAULT,
+                            "IT TX VERIFY: CIP FMT mismatch pkt=%u fmt=0x%02x expected=0x%02x",
+                            e.packetIndex, cip.fmt, expectedFmt);
+                restartReasons |= IsochTxRecoveryController::kReasonCipAnomaly;
+            }
         }
-        if (cip.fdf != Encoding::kSFC_48kHz) {
-            ASFW_LOG_RL(Isoch, "txverify/cip_fdf", 1000, OS_LOG_TYPE_DEFAULT,
-                        "IT TX VERIFY: CIP FDF mismatch pkt=%u fdf=0x%02x expected=0x%02x",
-                        e.packetIndex, cip.fdf, Encoding::kSFC_48kHz);
-            restartReasons |= IsochTxRecoveryController::kReasonCipAnomaly;
+        {
+            const uint8_t expectedFdf = inputs_.isMotuV3
+                ? Encoding::kFDFMotuV3 : Encoding::kSFC_48kHz;
+            if (cip.fdf != expectedFdf) {
+                ASFW_LOG_RL(Isoch, "txverify/cip_fdf", 1000, OS_LOG_TYPE_DEFAULT,
+                            "IT TX VERIFY: CIP FDF mismatch pkt=%u fdf=0x%02x expected=0x%02x",
+                            e.packetIndex, cip.fdf, expectedFdf);
+                restartReasons |= IsochTxRecoveryController::kReasonCipAnomaly;
+            }
         }
         if (cip.dbs != expectedAm824Slots) {
             ASFW_LOG_RL(Isoch, "txverify/cip_dbs", 1000, OS_LOG_TYPE_DEFAULT,

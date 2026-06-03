@@ -19,9 +19,13 @@ namespace Encoding {
 /// FMT value for AM824 format (IEC 61883-6)
 constexpr uint8_t kCIPFormatAM824 = 0x10;
 
-/// FMT value for MOTU V3 custom format (FMT=0x00, FDF=0x00, SYT=0x0000)
-/// per amdtp-motu.c: MOTU uses its own CIP framing, not standard AM824.
-constexpr uint8_t kCIPFormatMotuV3 = 0x00;
+/// FMT value for MOTU V3 custom format.
+/// Per amdtp-motu.c CIP_FMT_MOTU=0x02, MOTU_FDF_AM824=0x22.
+/// IT (host→device): FMT=0x02, FDF=0x22, SPH=1 in Q0, SYT=0x0000 for data.
+constexpr uint8_t kCIPFormatMotuV3 = 0x02;
+
+/// FDF field for MOTU V3 IT stream (MOTU_FDF_AM824 in amdtp-motu.c).
+constexpr uint8_t kFDFMotuV3 = 0x22;
 
 /// SYT value indicating NO-DATA packet
 constexpr uint16_t kSYTNoData = 0xFFFF;
@@ -58,9 +62,9 @@ public:
     /// Get the data block size.
     uint8_t getDBS() const noexcept { return dbs_; }
 
-    /// Enable MOTU V3 CIP framing: FMT=0x00, FDF=0x00, SYT=0x0000.
-    /// Per amdtp-motu.c: MOTU V3 uses SPH in each data block for timing,
-    /// not SYT in CIP. All data packets send SYT=0x0000.
+    /// Enable MOTU V3 CIP framing.
+    /// Per amdtp-motu.c: FMT=0x02, FDF=0x22, SPH=1 in Q0, SYT=0x0000 for data.
+    /// SPH=1 tells the receiver each data block begins with a 4-byte timestamp.
     void setMotuV3Mode(bool enable) noexcept { motuV3_ = enable; }
     
     /// Build a CIP header pair.
@@ -76,7 +80,7 @@ public:
     ///   [23:16] DBS = Data block size (8 bits)
     ///   [15:14] FN = Fraction number (0 for audio)
     ///   [13:11] QPC = Quadlet padding count (0)
-    ///   [10]    SPH = Source packet header (0)
+    ///   [10]    SPH = Source packet header (0 for AM824, 1 for MOTU V3)
     ///   [9:8]   rsv = Reserved (0)
     ///   [7:0]   DBC = Data block counter (8 bits)
     ///
@@ -90,17 +94,23 @@ public:
     CIPHeader build(uint8_t dbc, uint16_t syt, bool isNoData = false) const noexcept {
         CIPHeader header;
         
-        // Q0: [EOH=00][SID:6][DBS:8][FN=00][QPC=000][SPH=0][rsv=00][DBC:8]
+        // Q0: [EOH=00][SID:6][DBS:8][FN=00][QPC=000][SPH][rsv=00][DBC:8]
+        // MOTU V3: SPH=1 (bit 10) — each data block starts with a 4-byte timestamp.
+        // Without SPH=1, MOTU interprets the SPH bytes as PCM → silence.
+        const uint32_t sphBit = motuV3_ ? (1u << 10) : 0u;
         uint32_t q0 = (static_cast<uint32_t>(sid_) << 24) |
                       (static_cast<uint32_t>(dbs_) << 16) |
+                      sphBit |
                       (static_cast<uint32_t>(dbc));
-        
+
         // Q1: [EOH=10][FMT:6][FDF:8][SYT:16]
-        // MOTU V3: FMT=0x00, FDF=0x00, SYT=0x0000 (sync via SPH in data blocks)
+        // MOTU V3 IT: FMT=0x02 (CIP_FMT_MOTU), FDF=0x22 (MOTU_FDF_AM824),
+        //             SYT=0x0000 for data (timing via SPH), SYT=0xFFFF for no-data.
+        // Reference: amdtp-motu.c — fmt=CIP_FMT_MOTU, fdf=MOTU_FDF_AM824, sph=1.
         uint16_t sytValue = isNoData ? kSYTNoData : syt;
         const uint8_t fmt = motuV3_ ? kCIPFormatMotuV3 : kCIPFormatAM824;
-        const uint8_t fdf = motuV3_ ? 0x00u : kSFC_48kHz;
-        if (motuV3_) { sytValue = 0x0000; }
+        const uint8_t fdf = motuV3_ ? kFDFMotuV3 : kSFC_48kHz;
+        if (motuV3_ && !isNoData) { sytValue = 0x0000; }
         uint32_t q1 = (0x02U << 30) |
                       (static_cast<uint32_t>(fmt) << 24) |
                       (static_cast<uint32_t>(fdf) << 16) |
