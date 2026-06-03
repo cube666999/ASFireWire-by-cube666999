@@ -44,6 +44,20 @@ When compacting this conversation, **preserve**:
 
 **⚠️ iCloud Drive + codesign:** Files on iCloud Drive carry `com.apple.quarantine` and other xattrs that break `codesign`. `--deploy` handles this by copying to `/tmp` first and stripping xattrs before signing. Sign dext first (with `ASFWDriver/ASFWDriver.entitlements`), then app with `--deep` (with `ASFW/App.entitlements`).
 
+**⚠️ iCloud Drive + DerivedData — ZAWSZE używaj `--derived /tmp/ASFWBuild`:**
+iCloud File Provider (`com.apple.fileprovider.fpfs#P`) odtwarza xattry na plikach w `./build/DerivedData`
+**natychmiast** po ich usunięciu. Xcode's własna faza codesign failuje z:
+`resource fork, Finder information, or similar detritus not allowed`.
+`xattr -cr` na lokalnym DerivedData NIE pomaga — iCloud re-dodaje je w ułamku sekundy.
+
+**Jedyne działające rozwiązanie — build poza iCloud Drive:**
+```bash
+./build.sh --no-bump --derived /tmp/ASFWBuild --deploy   # ← hardware test build
+./build.sh --derived /tmp/ASFWBuild                      # ← zwykły build
+./build.sh --derived /tmp/ASFWBuild --clean              # ← full rebuild
+```
+`/tmp` jest poza iCloud Drive → zero xattr problemów → codesign przechodzi.
+
 **Generate `compile_commands.json`** (for clangd, static analysis):
 ```bash
 ./build.sh --commands
