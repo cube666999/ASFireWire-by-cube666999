@@ -233,6 +233,13 @@ void IsochTransmitContext::DoRefillOnce() noexcept {
         return;
     }
 
+    // Fix 46: Update MOTU V3 SPH timestamp from OHCI CycleTimer before encoding.
+    // Each data block's bytes 0-3 carry the presentation timestamp; without a real
+    // value MOTU receives SPH=0 (cycle 0 = way in the past) → timing artifacts.
+    if (audio_.IsMotuV3()) {
+        audio_.UpdateSPH(hardware_->ReadCycleTime());
+    }
+
     audio_.OnRefillTickPreHW();
 
     Tx::IsochTxCaptureHook* capture = nullptr;

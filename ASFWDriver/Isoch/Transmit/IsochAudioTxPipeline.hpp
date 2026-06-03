@@ -54,6 +54,9 @@ public:
     void SetZeroCopyOutputBuffer(void* base, uint64_t bytes, uint32_t frameCapacity) noexcept;
     [[nodiscard]] bool IsZeroCopyEnabled() const noexcept { return zeroCopyEnabled_; }
 
+    /// Update MOTU V3 SPH from OHCI CycleTimer. Call before OnRefillTickPreHW().
+    void UpdateSPH(uint32_t ohciCycleTime) noexcept;
+
     [[nodiscard]] Encoding::StreamMode RequestedStreamMode() const noexcept { return requestedStreamMode_; }
     [[nodiscard]] Encoding::StreamMode EffectiveStreamMode() const noexcept { return effectiveStreamMode_; }
 

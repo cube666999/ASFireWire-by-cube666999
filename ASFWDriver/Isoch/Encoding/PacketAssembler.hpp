@@ -195,6 +195,13 @@ public:
     /// Check if zero-copy mode is enabled
     bool isZeroCopyEnabled() const noexcept { return zeroCopyEnabled_; }
     bool isMotuV3Encoding() const noexcept { return encoding_ == PacketEncoding::kMotuV3; }
+
+    /// Update the OHCI cycle time used for MOTU V3 SPH timestamps.
+    /// Call once per refill tick (before encodeToWire) from IsochAudioTxPipeline::UpdateSPH().
+    /// Formula per Linux amdtp-motu.c: combines cycleSeconds[2:0] and cycleCount[12:0].
+    void setCurrentCycleTime(uint32_t ohciCycleTime) noexcept {
+        currentCycleTime_ = ohciCycleTime;
+    }
     
     /// Get zero-copy read position (for diagnostics)
     uint32_t zeroCopyReadPosition() const noexcept { return zeroCopyReadPos_; }
@@ -423,7 +430,10 @@ private:
     /// MOTU V3 packet encoding: 3-byte packed PCM per amdtp-motu.c.
     ///
     /// Data block layout (am824SlotCount_ quadlets = am824SlotCount_×4 bytes):
-    ///   Byte  0– 3: SPH = 0x00000000 (presentation timestamp, zero for initial impl)
+    ///   Byte  0– 3: SPH — presentation timestamp (big-endian uint32_t), derived from OHCI CycleTimer.
+    ///               Formula per amdtp-motu.c: sph = ((ct & 0x0e000000) >> 13) | ((ct & 0x01fff000) >> 12)
+    ///               Encodes cycleSeconds[2:0] at bits[14:12] and cycleCount[12:0] at bits[12:0].
+    ///               Updated once per refill tick via setCurrentCycleTime().
     ///   Byte  4– 9: 2 × msg_chunk (3 bytes each, MIDI/control — zeros = no MIDI)
     ///   Byte 10-10+N×3-1: PCM channels 0..N-1 (3 bytes each, 24-bit big-endian)
     ///   Remaining: zero padding to quadlet boundary
@@ -434,6 +444,11 @@ private:
         const uint32_t pcmSlots   = (totalBytes - 10u) / 3u; // how many 3-byte slots fit
         const uint32_t chCount    = (channelCount_ < pcmSlots) ? channelCount_ : pcmSlots;
 
+        // SPH per amdtp-motu.c: combines cycleSeconds[2:0] and cycleCount[12:0].
+        // Same value for all data blocks in this packet (Linux does the same).
+        const uint32_t ct = currentCycleTime_;
+        const uint32_t sph = ((ct & 0x0e000000u) >> 13u) | ((ct & 0x01fff000u) >> 12u);
+
         for (uint32_t f = 0; f < frames; ++f) {
             // Zero all quadlet slots with uint32_t writes — always 4-byte aligned.
             // Do NOT use std::memset here: outWireQuadlets is offset by kCIPHeaderSize (8 bytes)
@@ -443,6 +458,13 @@ private:
             for (uint32_t q = 0; q < am824SlotCount_; ++q) { blockQuad[q] = 0; }
 
             auto* block = reinterpret_cast<uint8_t*>(blockQuad);
+
+            // Bytes 0–3: SPH (big-endian). Upper 2 bytes are always 0 (sph ≤ 0x7FFF).
+            block[0] = 0;
+            block[1] = 0;
+            block[2] = static_cast<uint8_t>((sph >> 8u) & 0xFFu);
+            block[3] = static_cast<uint8_t>( sph        & 0xFFu);
+
             const int32_t* frameIn = pcmInterleaved + static_cast<size_t>(f) * channelCount_;
             for (uint32_t ch = 0; ch < chCount; ++ch) {
                 const uint32_t s = static_cast<uint32_t>(frameIn[ch]);
@@ -466,6 +488,7 @@ private:
     uint32_t am824SlotCount_{2};             ///< Wire slots per event (CIP DBS)
     PacketEncoding encoding_{PacketEncoding::kAM824}; ///< Wire encoding format
     uint32_t midiSlotsPerEvent_{0};          ///< Extra AM824 slots after PCM (MIDI, etc.)
+    uint32_t currentCycleTime_{0};           ///< OHCI CycleTimer snapshot for MOTU V3 SPH (updated per refill tick)
     uint64_t currentCycleNumber() const noexcept {
         switch (streamMode_) {
             case StreamMode::kBlocking:

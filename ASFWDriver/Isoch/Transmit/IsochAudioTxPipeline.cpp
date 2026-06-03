@@ -8,6 +8,10 @@
 
 namespace ASFW::Isoch {
 
+void IsochAudioTxPipeline::UpdateSPH(uint32_t ohciCycleTime) noexcept {
+    assembler_.setCurrentCycleTime(ohciCycleTime);
+}
+
 void IsochAudioTxPipeline::SetSharedTxQueue(void* base, uint64_t bytes) noexcept {
     if (!base || bytes == 0) {
         // Treat null/0 as an explicit detach so callers can safely tear down the
