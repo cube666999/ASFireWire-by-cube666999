@@ -198,7 +198,7 @@ public:
 
     /// Update the OHCI cycle time used for MOTU V3 SPH timestamps.
     /// Call once per refill tick (before encodeToWire) from IsochAudioTxPipeline::UpdateSPH().
-    /// Formula per Linux amdtp-motu.c: combines cycleSeconds[2:0] and cycleCount[12:0].
+    /// SPH per Linux amdtp-motu.c write_sph(): sph = (cycleCount<<12)|cycleOffset = ct & 0x01FFFFFF.
     void setCurrentCycleTime(uint32_t ohciCycleTime) noexcept {
         currentCycleTime_ = ohciCycleTime;
     }
@@ -431,8 +431,8 @@ private:
     ///
     /// Data block layout (am824SlotCount_ quadlets = am824SlotCount_×4 bytes):
     ///   Byte  0– 3: SPH — presentation timestamp (big-endian uint32_t), derived from OHCI CycleTimer.
-    ///               Formula per amdtp-motu.c: sph = ((ct & 0x0e000000) >> 13) | ((ct & 0x01fff000) >> 12)
-    ///               Encodes cycleSeconds[2:0] at bits[14:12] and cycleCount[12:0] at bits[12:0].
+    ///               Formula per amdtp-motu.c write_sph(): sph = (cycleCount << 12) | cycleOffset
+    ///                 = ct & 0x01FFFFFF  (cycleCount=ct[24:12], cycleOffset=ct[11:0])
     ///               Updated once per refill tick via setCurrentCycleTime().
     ///   Byte  4– 9: 2 × msg_chunk (3 bytes each, MIDI/control — zeros = no MIDI)
     ///   Byte 10-10+N×3-1: PCM channels 0..N-1 (3 bytes each, 24-bit big-endian)
@@ -444,10 +444,12 @@ private:
         const uint32_t pcmSlots   = (totalBytes - 10u) / 3u; // how many 3-byte slots fit
         const uint32_t chCount    = (channelCount_ < pcmSlots) ? channelCount_ : pcmSlots;
 
-        // SPH per amdtp-motu.c: combines cycleSeconds[2:0] and cycleCount[12:0].
-        // Same value for all data blocks in this packet (Linux does the same).
+        // SPH per amdtp-motu.c write_sph(): sph = (cycleCount << 12) | cycleOffset
+        //   where cycleCount = ct[24:12], cycleOffset = ct[11:0]
+        //   = (ct & 0x01FFF000) | (ct & 0x00000FFF) = ct & 0x01FFFFFF
+        // Same value for all data blocks in this packet.
         const uint32_t ct = currentCycleTime_;
-        const uint32_t sph = ((ct & 0x0e000000u) >> 13u) | ((ct & 0x01fff000u) >> 12u);
+        const uint32_t sph = ct & 0x01FFFFFFu;
 
         for (uint32_t f = 0; f < frames; ++f) {
             // Zero all quadlet slots with uint32_t writes — always 4-byte aligned.
@@ -459,11 +461,12 @@ private:
 
             auto* block = reinterpret_cast<uint8_t*>(blockQuad);
 
-            // Bytes 0–3: SPH (big-endian). Upper 2 bytes are always 0 (sph ≤ 0x7FFF).
-            block[0] = 0;
-            block[1] = 0;
-            block[2] = static_cast<uint8_t>((sph >> 8u) & 0xFFu);
-            block[3] = static_cast<uint8_t>( sph        & 0xFFu);
+            // Bytes 0–3: SPH big-endian uint32 per Linux cpu_to_be32(sph).
+            // sph ≤ 0x01FFFFFF (25 bits): byte[0] = 0x00 or 0x01.
+            block[0] = static_cast<uint8_t>((sph >> 24u) & 0xFFu);
+            block[1] = static_cast<uint8_t>((sph >> 16u) & 0xFFu);
+            block[2] = static_cast<uint8_t>((sph >>  8u) & 0xFFu);
+            block[3] = static_cast<uint8_t>( sph         & 0xFFu);
 
             const int32_t* frameIn = pcmInterleaved + static_cast<size_t>(f) * channelCount_;
             for (uint32_t ch = 0; ch < chCount; ++ch) {
