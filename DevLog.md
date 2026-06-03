@@ -490,3 +490,473 @@ codesign --force --options runtime --sign "Apple Development: j.slipiec@gmail.co
 | `ASFW/App.entitlements` | Post-build re-sign entitlements (pełne) |
 | `ASFWDriver/ASFWDriver.entitlements` | Dext entitlements (pełne) |
 | `ASFW.xcodeproj/xcshareddata/xcschemes/ASFW.xcscheme` | Post-action: re-sign app → dext |
+
+---
+
+## Sesja 5 — 2026-05-25 (Fix A, B — FETCH_PCM_FRAMES + ISOC_COMM_CONTROL)
+
+### Fix A — FETCH_PCM_FRAMES przed StartTransmit
+
+MOTU V3 wymaga **obu** operacji zanim zacznie wysyłać IR:
+1. `ISOC_COMM_CONTROL` — które kanały isoch
+2. `CLOCK_STATUS | FETCH_PCM_FRAMES` — **to wyzwala nadawanie IR przez MOTU**
+
+Linux robi `begin_session()` + `switch_fetching_mode(true)` oba przed startem DMA.
+
+### Fix B — zamiana kanałów w ISOC_COMM_CONTROL
+
+Rejestr 0x0b00 używa nazewnictwa z perspektywy MOTU (device-centric):
+- bity [29:24] = "RX" = MOTU **odbiera** = host→device = nasz **IT** kanał
+- bity [21:16] = "TX" = MOTU **nadaje** = device→host = nasz **IR** kanał
+
+Poprzedni błąd: `irCh` w polu RX, `itCh` w polu TX — MOTU nadawało IR na kanale 1,
+nasze IR DMA słuchało kanału 0 → zero pakietów. Fix: zamieniono miejscami.
+Poprawna wartość (irCh=0, itCh=1): `0xC1C00000`.
+
+---
+
+## Sesja 6 — 2026-05-26 (Fix C, D — AudioClockEngine + double-start guard)
+
+### Fix C — UpdateCurrentZeroTimestamp(0, 0) → (0, currentTime)
+
+`AudioClockEngine.cpp` `PrepareClockEngineForStart()` ustawiał anchor na `(sampleTime=0, hostTime=0)`.
+CoreAudio interpretuje to jako "sample 0 był w chwili 0" (dawn of time) → liczy zaległe IO cycles
+→ chaos → "not consecutive" → IO stop po ~5s.
+Fix: `UpdateCurrentZeroTimestamp(0, mach_absolute_time())` — anchor jest teraz.
+
+### Fix D — double-start guard w StartDevice
+
+Jeśli CoreAudio ma dwa klientów jednocześnie, wywołuje `StartDevice` dwa razy. Drugie wywołanie
+resetowało anchor do `(0,0)` podczas gdy sampleTime był na ~1,7M → skok wstecz = "not consecutive".
+Fix: early return gdy `isRunning == true`.
+
+**Jak poprawnie czytać logi drivera:**
+`log` w zsh to wbudowana funkcja matematyczna — zawsze używaj pełnej ścieżki `/usr/bin/log`.
+
+---
+
+## Etap 10 — MOTU V3 Protocol Backend (2026-05-24) ✅
+
+### Odkrycie
+
+MOTU 828 MK3 używa **własnego protokołu rejestrowego V3** — bez AV/C, bez FCP, bez CMP.
+Potwierdzone przez analizę Linux kernel driver `sound/firewire/motu/motu-protocol-v3.c`.
+Dotychczasowa sekwencja (AV/C → FCP block write) NIGDY nie mogła działać:
+MOTU nie implementuje FCP mimo deklarowania AV/C units w Config ROM.
+
+### Co zostało zaimplementowane
+
+**Nowe pliki:**
+- `ASFWDriver/Audio/Backends/MOTUAudioBackend.hpp`
+- `ASFWDriver/Audio/Backends/MOTUAudioBackend.cpp`
+
+**Zmodyfikowane pliki:**
+- `ASFWDriver/Protocols/Audio/DeviceProtocolFactory.hpp` — dodano `kMOTUV3`, vendor 0x0001F2, model IDs
+- `ASFWDriver/Audio/AudioCoordinator.hpp/.cpp` — dodano `motuV3_`, `SetBusOps`, routing
+- `ASFWDriver/ASFWDriver.cpp` — `audioCoordinator->SetBusOps(&ctx.controller->Bus())`
+
+### Sekwencja StartStreaming (MOTUAudioBackend) — aktualna po Fix I + Fix II
+
+```
+1. ReadRegister(0x0b14)         → odczyt CLOCK_STATUS (log sample rate)
+2. IRM AllocateResources        → kanały irCh + itCh + bandwidth
+3. WriteRegister(0x0b10, fmt)   → PACKET_FORMAT: speed S400 + exclude differed
+4. isoch_.StartReceive(irCh)    → start IR OHCI DMA
+5. WriteRegister(0x0b00, ctrl)  → ISOC_COMM_CONTROL: aktywuj oba kanały    ← Fix I: PRZED StartTransmit!
+6. ReadModifyWrite(0x0b14)      → CLOCK_STATUS: ustaw FETCH_PCM_FRAMES      ← Fix I: PRZED StartTransmit!
+7. isoch_.StartTransmit(itCh)   → start IT OHCI DMA  ← Fix II: SYT wait PO uruchomieniu IT DMA
+```
+
+### Routing urządzeń (DeviceProtocolFactory)
+
+| Urządzenie | Vendor | Model | Backend |
+|------------|--------|-------|---------|
+| MOTU 828 MK3 FW | 0x0001F2 | 0x000015 | `motuV3_` |
+| MOTU 828 MK3 Hybrid | 0x0001F2 | 0x000035 | `motuV3_` |
+| MOTU 896 MK3 | 0x0001F2 | 0x000016 | `motuV3_` |
+| MOTU Traveler MK3 | 0x0001F2 | 0x000017 | `motuV3_` |
+| MOTU UltraLite MK3 | 0x0001F2 | 0x000019 | `motuV3_` |
+
+---
+
+## ROZWIĄZANE — Model ID MOTU w Config ROM (2026-05-24)
+
+**Potwierdzono na Sequoia z System Information:**
+- Root directory `Model = 0x106800` (nie `0x000015`)
+- Unit directory `Unit_SW_Vers = 0x15` = `0x000015` ← właściwe pole!
+- GUID = `0x1F20000087236` ✅
+
+**Przyczyna bugu:** `BackendForGuid` używał `record->modelId` (root dir = `0x106800`) zamiast
+`record->unitSwVersion` (unit dir = `0x000015`). MOTU nie wstawia modelu do root directory.
+
+**Fix:** `DeviceProtocolFactory::EffectiveModelId()` — dla vendor `0x0001F2` zwraca `unitSwVersion`.
+Commit `abc75ea`. 488/488 testów ✅.
+
+---
+
+## ZWERYFIKOWANE — Analiza kexta MOTUFireWireAudio (2026-05-24)
+
+Zdisassemblowano kext `/Library/Extensions/MOTUFireWireAudio.kext` na Sequoia (slice x86_64).
+
+| Stała | Wartość kext | Nasza wartość | Status |
+|-------|-------------|---------------|--------|
+| CLOCK_STATUS addr | `0xf0000b14` (w tablicy data) | `kClockStatusOff = 0x0b14` | ✅ |
+| V3_FETCH_PCM_FRAMES | `0x02000000` | `kFetchPCMFrames = 0x02000000` | ✅ |
+| Rate code mask | `andl $0x700` → bits[10:8] | `kClockRateMask = 0x00000700` | ✅ |
+| PACKET_FORMAT addr | `0xf0000b10` | `kPacketFmtOff = 0x0b10` | ✅ |
+| PACKET_FORMAT value | bit7=TX_excl, bit6=RX_excl, bits[1:0]=speed | `0xC2 = 0x80\|0x40\|0x02` | ✅ |
+| ISOC_COMM_CONTROL addr | `0xf0000b00` | `kIsocCtrlOff = 0x0b00` | ✅ |
+
+Kolejność init MK3: Read CLOCK_STATUS → SetupStreams → WritePacketFormat → WriteIsocCtrl → SetFetchPCMFrames.
+`kClockRateMask` poprawiony z `0x0000ff00` na `0x00000700` (3 bity [10:8]).
+
+---
+
+## ROZWIĄZANE — AT DMA block write (tCode=0x1) (2026-05-24)
+
+**Plik:** `ASFWDriver/Async/Contexts/ATContextBase.hpp` — `ScanCompletion()`
+
+**Problem:** Po zakończeniu PATH1 no-branch chain (FCP write) OHCI ustawia RUN=1, Active=0, CommandPtr=0.
+Stary `isOrphaned` miał dwa człony — oba false w tym stanie → `ScanCompletion` zwracał `nullopt`
+jakby hardware wciąż pracował → timeout każdego block write.
+
+**Fix:** Dodano trzecią klauzulę `completedAndIdle = (isRunning && !isActive && commandPtrAddr == 0)`.
+Przy OUTPUT_MORE precursorze: `continue` zamiast `return nullopt` → OUTPUT_LAST przetwarzany
+w tym samym wywołaniu. Commit `eeb8787`. 488/488 testów ✅.
+
+---
+
+## Sesja hardware 2026-05-25 część 1 — Pierwsze potwierdzenia
+
+**Potwierdzenia:**
+- Async reads (ReadQuad) na rejestrach MOTU działają ✅ — rCode=Complete
+- Async writes (WriteQuad) na rejestrach MOTU działają ✅ — rCode=Complete
+- ASFWAudioNub pojawia się w IORegistry ✅
+- MOTU 828 MK3 pojawia się w macOS Sound settings jako "FireWire" ✅
+- `MOTUAudioBackend::StartStreaming` JEST wywoływany przez ścieżkę CoreAudio ✅
+
+**Kluczowe odkrycie — PACKET_FORMAT jest write-only:**
+Rejestr `0x0b10` zwraca `0x00000000` przy odczycie niezależnie od zapisu. Analogicznie inne rejestry
+MOTU mogą mieć podobne właściwości (odczyt 0 ≠ nie zapisane).
+
+---
+
+## Sesja hardware 2026-05-25 część 2 — IR DMA ręczny vs CoreAudio
+
+**Kluczowe odkrycia:**
+
+```bash
+# Jedyna działająca metoda logów (potwierdzona Tahoe 2026-05-25):
+/usr/bin/log stream --debug --info 2>/dev/null | grep "ASFWDriver.dext"
+# Dext logi: kernel: (net.mrmidi.ASFW.ASFWDriver.dext) [Kategoria] Treść
+```
+
+**IR DMA uruchomiony przez RĘCZNY KLIK, nie CoreAudio:**
+```
+[Isoch] ✅ Started IR Context 0 for Channel 0!   ← 11:19:50 — ręczny klik Isoch Metrics
+[Isoch] RxStats Pkts=0 every ~700ms              ← 0 pakietów mimo running IR
+```
+CoreAudio NIE wywołało `StartDevice` przez cały czas obserwacji — MOTU widoczne w Sound Settings,
+status "Idle". Przyczyna: dext startował z `timestampTimer == nullptr`.
+
+**DMA Slab IOVA na Tahoe/Apple Silicon = `0x80000000`** — valid non-zero. DMA mapping działa.
+
+---
+
+## Sesja hardware 2026-05-25 część 3 — Dwa bugi w ASFWAudioDriver
+
+### Bug 1 — Race condition: timer tworzony PO `RegisterService()` [KRYTYCZNY]
+
+```
+Start():
+  AddObject(audioDevice)      ← device widoczny
+  RegisterService()            ← CoreAudio może dzwonić StartDevice!  ← OKIENKO RYZYKA
+  IOTimerDispatchSource::Create(...)  ← timer jeszcze nie istnieje
+```
+
+Jeśli Spotify grało gdy dext się restartował (kill -9 → auto-restart), CoreAudio natychmiast
+wywołało `StartDevice` po `RegisterService()`. W tym momencie `timestampTimer == nullptr`
+→ `StartDevice` zwracało `kIOReturnNotReady` → CoreAudio rezygnuje → urządzenie na stałe "Idle".
+
+**Fix:** timer i akcja tworzone **przed** `RegisterService()`.
+
+### Bug 2 — Brak `SUPERDISPATCH` w `StartDevice` i `StopDevice`
+
+`StartDevice` i `StopDevice` używały plain C++ override bez SUPERDISPATCH — framework ADK
+nigdy nie był notyfikowany o starcie IO. Fix: `StartDevice`/`StopDevice` → `IMPL` + `SUPERDISPATCH`.
+
+---
+
+## Sesja hardware 2026-05-25 część 4 — IRM fix + ISOC_COMM_CONTROL deadlock
+
+### Fix — IRM self-addressed async transactions (IRMClient)
+
+Gdy Mac jest jedynym IRM-em, `ReadIRMQuadlet` i `CompareSwapIRMQuadlet` wysyłały async transakcje
+do siebie samego przez OHCI. OHCI nie routuje AT→AR dla self-addressed transakcji → timeout.
+
+**Rozwiązanie:** shadow registers (`shadowBandwidth_=4915`, `shadowChannelsLo/Hi_=0xFFFF`).
+Gdy `IsLocalIRM()`, operacje wykonywane lokalnie bez transakcji async.
+
+**Potwierdzone:**
+```
+[IRM] IRMClient: local-IRM CAS addr=0xf0000220 old=0x00001333 ... OK
+[IRM] Bandwidth allocation succeeded (294 units)
+[IRM] Channel 0 allocation succeeded
+[IRM] Channel 1 allocation succeeded
+```
+
+**Pliki:** `ASFWDriver/IRM/IRMClient.hpp`, `IRMClient.cpp`, `Controller/ControllerCoreDiscovery.cpp`
+
+### Potwierdzone milestony po sesji 2026-05-25
+
+- ✅ MOTU 828 MK3 widoczny w System Settings → Sound jako "FireWire"
+- ✅ CoreAudio wywołuje StartDevice → StartAudioStreaming → MOTUAudioBackend
+- ✅ IRM alokacja działa bez timeoutów
+- ✅ IR DMA startuje (OHCI context aktywny na kanale 0)
+
+---
+
+## Sesja 14 — Fix 19 blocker: SYT gate + deactivate-before-activate
+
+**Potwierdzony objaw:** `Streaming stopped` ale nigdy `Streaming started`.
+→ `StartTransmit` zwraca `kIOReturnTimeout` bo MOTU nie nadaje IR na ch=0.
+
+**Fix 19 (commit `68823bf`):**
+1. **Deactivate przed activate** — jeśli MOTU jest w stale state (lower bits `0x1900` zamiast idle `0x3000`),
+   bezpośredni activate może być zignorowany. Two-step: deactivate (20ms) → activate.
+2. **SYT gate: 500ms → 3000ms** — MOTU może potrzebować więcej czasu na lock PLL po odebraniu
+   pierwszych IT pakietów.
+
+**Diagnostyka po naprawie SYT:**
+```
+seq=0  → MOTU NIE nadaje IR wcale (problem rejestrowy lub hardware)
+seq>0, established=0 → MOTU nadaje IR, ale CIPHeader::Decode odrzuca (format CIP)
+```
+
+```
+IR Poll[0] ch=0: 0 pkts in last 500 polls        ← MOTU milczy (scenariusz A)
+IR Poll[0] ch=0: 47 pkts in last 500 polls       ← MOTU wysyła!
+IR HW[0] ch=0: ctl=0x9400 run=1 active=1 dead=0 ← context żywy (dobry stan)
+IR HW[0] ch=0: ctl=0x0800 run=0 active=0 dead=1 ← context DEAD — problem deskryptorów (scenariusz C)
+```
+
+---
+
+## Sesja 16 — 2026-05-28 (Fix 21, AudioDeviceStart ✅, HALS_IORawClock)
+
+### Fix 21 — IT wire DBS override (MOTUAudioBackend.cpp)
+
+**Objaw:** Brak audio mimo że IT DMA nadaje. MOTU 828 MK3 milczy.
+
+**Przyczyna:** `StartTransmit` używał `config.outputChannelCount` (=2) dla `requestedAm824Slots`.
+CIP header miał `DBS=2`. MOTU oczekuje `DBS=21` (14 PCM + overhead = 21 quadlety/event).
+Pakiety z DBS=2 były ignorowane.
+
+**Fix:** `requestedAm824Slots` zmieniony na `kMOTUV3WireDbs48k` (=21). Commit po potwierdzeniu audio.
+
+### HALS_IORawClock re-anchoring — zidentyfikowane, nienaprawione
+
+**Objaw:**
+```
+HALS_IORawClock::Update: Re-anchoring IO timeline.
+Sample time is consecutive, host time is not consecutive.
+```
+Co ~2-3s na początku, potem co 20-50s+ (CoreAudio adaptuje się). System **nie crashuje**.
+
+**Przyczyna:** `PerformIO` wyzwalany przez `IOTimerDispatchSource` z 1ms interwałem.
+Kernel może opóźniać timery do ~1.5ms+. CoreAudio widzi: sampleTime rośnie równo, hostTime skacze.
+
+**Fix (TODO):** Zastąpić `mach_absolute_time()` czytaniem OHCI `CurrentIsochronousCycleTime` (offset `0x1E8`):
+```cpp
+// bits[25:12] = cycleCount (0-7999), bits[11:0] = cycleOffset
+// Convert: cycleCount/8000 × timebaseFreq + cycleOffset × (timebaseFreq/24576000)
+```
+
+### Czego NIE robi front panel MOTU 828 MK3
+
+- **Metry poziomów** na panelu przednim = tylko analog hardware inputs. Nie pokazują poziomu FireWire IT.
+- **Test definitywny:** Słuchawki do gniazda `PHONES` (6.35mm, przód) — zawiera mix z FireWire IT.
+- **Isoch Transmit zakładka w ASFW:** Szara gdy IT jest zarządzany przez CoreAudio — normalny stan.
+- **Przycisk Stop nie działa w Isoch Metrics:** IR zarządzany przez CoreAudio — to dobry znak.
+
+### Potwierdzenia sesji 16
+
+- `AudioDeviceStart (err 0)` — CoreAudio HAL uruchamia urządzenie ✅
+- IO aktywne przez **3+ minuty** bez `AudioDeviceStop` ✅
+- IR pakiety: **11 965 pkts/s** ✅
+
+---
+
+## Sesja 17 — 2026-05-28 (Fix 22 — SYT gate bypass dla MOTU V3)
+
+### Fix 22 — SYT gate bypass (IsochService.cpp + MOTUAudioBackend.cpp)
+
+**Objaw:** Chwilowy pisk na słuchawkach przez ~3 sekundy, potem cisza:
+```
+IT: run=1 active=1 pkts=26644
+❌ StartTransmit SYT timeout: IT is running but MOTU not responding
+   (waited 3000ms seq=10 syt=0x0000 fdf=0x02 dbs=21 ageMs=2046 active=1 established=0)
+IT: Stopped. Stats: 26908 pkts (20181D/6727N)
+```
+
+**Analiza:** IT wysłało **20 181 data packets** z prawdziwym dźwiękiem Spotify — pisk to był prawdziwy dźwięk.
+`IsochService::StartTransmit` czekało 3000ms na `externalSyncBridge_.clockEstablished`. Ta flaga wymaga
+**16 kolejnych pakietów IR** z `fdf == 0x02 AND syt != 0x0000 AND syt != 0xFFFF`.
+MOTU 828 MK3 **zawsze wysyła `syt=0x0000`** — nigdy nie osadza IEEE 1394 SYT timestamps.
+Linux `snd-firewire-motu` w ogóle nie sprawdza SYT → `clockEstablished` nigdy nie mogła być ustawiona.
+
+**Rozwiązanie:**
+```cpp
+// IsochService.hpp
+kern_return_t StartTransmit(..., bool skipSYTGate = false);
+
+// IsochService.cpp
+if (skipSYTGate) {
+    ASFW_LOG(Controller, "[Isoch] SYT gate bypassed (device uses syt=0x0000 — MOTU V3 mode)");
+} else { /* polling loop 3000ms */ }
+
+// MOTUAudioBackend.cpp
+const kern_return_t kr = isoch_.StartTransmit(
+    itChannel, hardware_, sid, streamModeRaw,
+    config.outputChannelCount, kMOTUV3WireDbs48k,
+    txMem, txBytes, nullptr, 0, 0,
+    /*skipSYTGate=*/true);  // ← Fix 22
+```
+
+---
+
+## Sesja 18 — 2026-05-28 (Fix 21+22+23 — IT DBS + SYT bypass + TX Profile B)
+
+### Diagnoza: przyczyna pisku
+
+Fix 22 pozwolił nadawać przez 56s → **49 632 underrunów** = 14,77% data packets dostaje ciszę.
+Underrun rate: 886/s → co ~1ms ring buffer pusty → 14.77% ciszy moduluje dźwięk → pisk.
+**Przyczyna:** Profile A target=512 frames = 10,67ms — zerowy margines jittera.
+
+### Fix 23 — TX Profile B (AudioTxProfiles.hpp)
+
+Ring buffer target 512→1024, max 768→1536 frames (~21ms marginu na jitter CoreAudio).
+`kTxTuningProfileRaw = 1`, pre-prime unbounded.
+
+### Potwierdzony stan
+
+- ✅ Fix 19 (`68823bf`): deactivate+activate + SYT gate 3000ms
+- ✅ Fix 20 (`597f3c8`): override wire DBS=21 dla MOTU V3
+- ✅ Fix 21 (uncommitted): IT DBS=21 override — `requestedAm824Slots = kMOTUV3WireDbs48k`
+- ✅ Fix 22 (uncommitted): SYT gate bypass — `skipSYTGate=true`
+- ✅ Fix 23 (uncommitted): TX Profile B — target=1024, max=1536 frames
+
+---
+
+## Sesja 19 SUMMARY — Fix 26+27+29 (2026-06-01)
+
+### Fix 26 — OHCI Cycle-Time Clock Synchronization
+
+Zmiana z poll-count gate (1000 pollów ≈ 2s) na bus-time gate (100ms).
+CycleCorr ratio: 1.000022 (stabilna synchronizacja z MOTU crystal).
+
+### Fix 27 — TX Ring Buffer Expansion
+
+Zwiększenie max frames: 1536 → 4096 (32ms → 85ms).
+
+### Fix 29 — MOTU V3 Packet Encoding (GŁÓWNY FIX sesji 19)
+
+Zmiana formatu IT z AM824 (4B/slot z label 0x40) na MOTU V3 (3-byte packed PCM).
+
+**Diagnoza — dlaczego AM824 nie działał:**
+- Wysyłaliśmy: `[label 0x40][PCM 24-bit] × 21 slotów`
+- MOTU V3 oczekiwała: `[SPH][msg][msg][PCM×3B×18+]`
+- MOTU odbierała nasze pakiety jako śmieci → ignorowała IT → ring buffer zawsze pusty
+
+**Rozwiązanie:**
+```cpp
+// Stara (AM824 — ZŁA dla MOTU V3):
+[label 0x40][PCM 24-bit] × 21 slotów × 4B = 84 bajty
+
+// Nowa (MOTU V3 — PRAWIDŁOWA):
+[SPH 4B] [msg 3B] [msg 3B] [PCM 3B×18+] = 82 bajty → pad do 84 (21×4)
+
+// CIP nagłówek MOTU V3 (Fix 29 — przed Fix 45):
+Q1: FMT=0x00 (nie 0x10), FDF=0x00 (nie SFC), SYT=0x0000 (zawsze)
+```
+
+Nowe funkcje: `encodeInterleavedFramesToMotuV3()`, `fillSilentMotuV3Frames()`.
+Propagacja: `PacketEncoding::kMotuV3` przez wszystkie warstwy.
+Źródło: `amdtp-motu.c` z Linux kernel (commit f5e5d35). Wszystkie 493 testy ✅.
+
+---
+
+## Sesja 20 — 2026-06-01 (Fix 30 — IR MOTU V3 Decoder)
+
+### Fix 30 — IR MOTU V3 Decoder
+
+**Diagnoza — dlaczego IR miało 215K błędów:**
+IR packets zawierały MOTU V3 format `[SPH][msg][PCM×3B]` ale kod dekodował jako AM824 `[label][PCM×24bit]`.
+Co 4-byte slot przechodził do next channel offset → kompletny misalignment.
+
+**Fix:**
+- Nowy plik: `MotuV3Decoder.hpp` — dekodowanie 3-byte packed PCM bez label bytes
+- `StreamProcessor::ProcessPacket()`: check `FDF==0x00` → MOTU V3 mode
+- `DecodeDataBlock()`: czyta `[SPH 4B][msg 6B][PCM 3B×N]`, zwraca PCM samples
+
+Override DBS=21 już ustawiony w MOTUAudioBackend.cpp.
+IT encoding (Fix 29) ✅ + IR decoding (Fix 30) = pełna duplex MOTU V3 ✓.
+
+---
+
+## Sesja 24 — 2026-06-02 (Fix 40+41 — MOTU V3 encoder + EXC_ARM_DA_ALIGN)
+
+### Fix 40 — InjectNearHw używał AM824 dla MOTU V3
+
+**Bug:** `PacketAssembler::encodeToWire()` zawsze wywoływała `EncodePcmFramesWithAm824Placeholders`,
+niezależnie od `encoding_`. MOTU dostawało AM824 payload zamiast V3 → cisza.
+
+**Fix:** `encodeToWire()` — dispatcher: `encodeInterleavedFramesToMotuV3` lub `encodeInterleavedFramesToAm824`.
+Commit `5049c19`.
+
+### Fix 41 — EXC_ARM_DA_ALIGN kernel panic
+
+**Bug:** `std::memset(block, 0, 84)` gdzie `block = payloadVirt + kCIPHeaderSize (8 bytes)`.
+Payload buffer jest page-aligned → `payloadVirt + 8` = tylko **8-byte aligned**.
+`_platform_memset` w DriverKit używa ARM64 `stnp` (non-temporal store pair) = wymaga **16-byte** → `EXC_ARM_DA_ALIGN` → crash po ~10 razach → kernel panic.
+
+**Fix:** zastąpiono `std::memset` pętlą `uint32_t` zero-fill (zawsze 4-byte aligned).
+Dotyczy `encodeInterleavedFramesToMotuV3` i `fillSilentMotuV3Frames`.
+Crash report: `/Library/Logs/DiagnosticReports/net.mrmidi.ASFW.ASFWDriver-2026-06-02-163054.ips`
+Commit `5049c19`. Testy: 493/493 ✅.
+
+---
+
+## Stan po sesjach 9–24 — tabela kompletnych fixów
+
+| Fix | Commit | Opis | Status |
+|-----|--------|------|--------|
+| Fix A | — | FETCH_PCM_FRAMES przed StartTransmit | ✅ |
+| Fix B | — | Zamiana kanałów IT/IR w ISOC_COMM_CONTROL | ✅ |
+| Fix C | — | AudioClockEngine anchor = (0, currentTime) | ✅ |
+| Fix D | — | double-start guard w StartDevice | ✅ |
+| Fix E | `935d3ff` | IR cycleMatchEnable bit 30 usunięty | ✅ |
+| Fix F | `5554280` | Work queue deadlock — StartStreaming na background queue | ✅ |
+| Fix G | — | Auto-aktywacja dextu przy starcie apki | ✅ |
+| Fix H | — | Zombie dext przy upgrade — reboot wymagany | ✅ |
+| Fix I | `662ca0d` | ISOC_COMM_CONTROL + FETCH_PCM_FRAMES przed StartTransmit | ✅ |
+| Fix II | `2dc6600` | SYT wait przeniesiony po Start() w IsochService | ✅ |
+| Fix III | `3241bd2` | Allow requestedChannels > queueChannels | ✅ |
+| Fix 17 | `c13132b` | `rawPollCount_` pre-lock | ✅ |
+| Fix 18 | `c13132b` | CIPHeader OHCI double-swap usunięty | ✅ |
+| Fix 19 | `68823bf` | Deactivate+activate ISOC_COMM_CONTROL + SYT gate 3000ms | ✅ |
+| Fix 20 | `597f3c8` | Override wire DBS=21 dla MOTU V3 (StreamProcessor) | ✅ |
+| Fix 21 | (w `5049c19`) | IT DBS=21 override — `requestedAm824Slots=kMOTUV3WireDbs48k` | ✅ |
+| Fix 22 | (w `5049c19`) | SYT gate bypass — `skipSYTGate=true` | ✅ |
+| Fix 23 | (w `5049c19`) | TX Profile B — target=1024, max=1536 frames | ✅ |
+| Fix 26 | — | OHCI cycle-time gate zamiast poll-count (100ms) | ✅ |
+| Fix 27 | — | TX Ring Buffer Expansion (max 4096 frames) | ✅ |
+| Fix 29 | — | MOTU V3 Packet Encoding (3-byte packed PCM) | ✅ |
+| Fix 30 | — | IR MOTU V3 Decoder (MotuV3Decoder.hpp) | ✅ |
+| Fix 33 | `50417e9` | TxQ rate-matched 6 frames/interrupt, PLL target=512 | ✅ |
+| Fix 36b/c | `80729a5`,`42d7334` | Adaptive pump + guard kMaxRbFillFrames | ✅ |
+| Fix 37 | — | Podwójny dext — `.cancel` dla tej samej wersji | ✅ |
+| Fix 38c | `6fa3de4`,`3af2591` | Zero-copy output path — `kEnableZeroCopyOutputPath=true` | ✅ |
+| Fix 39 | `3fad643` | SetZeroCopyOutputBuffer — `reconfigureAM824()` reset guard | ✅ |
+| Fix 40 | `5049c19` | InjectNearHw encoder dispatcher (MOTU V3 vs AM824) | ✅ |
+| Fix 41 | `5049c19` | EXC_ARM_DA_ALIGN — uint32_t zero-fill zamiast memset | ✅ |
