@@ -8,40 +8,24 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ SESJA NA MAC STUDIO — Przeczytaj to na starcie
 
-> **Stan na 2026-06-03 (sesja 26) — Fix 45 zaimplementowany, build pending:**
+> **Stan na 2026-06-03 (sesja 27) — Fix 45+46 zaimplementowane, build v60 na pulpicie:**
 >
-> **✅ Fix 40** (v51, commit `5049c19`): `InjectNearHw` używał AM824 encodera na pakietach MOTU V3.
-> - `PacketAssembler::encodeToWire()` — dispatcher do `encodeInterleavedFramesToMotuV3` lub `encodeInterleavedFramesToAm824`.
+> **✅ Fix 45** (sesja 25/26, commit `fb5425f`) — CIP header: SPH bit + FMT/FDF dla MOTU V3:
+> - `kCIPFormatMotuV3=0x02`, `kFDFMotuV3=0x22`, `sphBit=(1u<<10)` w `CIPHeaderBuilder::build()`.
+> - Bez SPH=1 w Q0: MOTU interpretuje SPH bytes jako PCM ch0 (zero) → cisza.
 >
-> **✅ Fix 41** (v51, commit `5049c19`): `EXC_ARM_DA_ALIGN` kernel panic przy `encodeInterleavedFramesToMotuV3`.
-> - `std::memset(block, 0, 84)` na 8-byte aligned ptr → ARM64 `stnp` wymaga 16-byte → crash. Fix: uint32_t zero-fill.
-> - Crash report: `/Library/Logs/DiagnosticReports/net.mrmidi.ASFW.ASFWDriver-2026-06-02-163054.ips`
+> **✅ Fix 46** (sesja 27, commit `e517882`, v60) — OHCI CycleTimer → MOTU V3 SPH timestamps:
+> - **Root cause pisku:** SPH bytes 0-3 w każdym data blocku = 0x00000000 (timestamp "cycle 0 = way in the past") → timing artifacts.
+> - **Fix:** `DoRefillOnce()` czyta `hardware_->ReadCycleTime()` (rejestr 0x0F0) przed `OnRefillTickPreHW()`.
+> - Konwersja per Linux `amdtp-motu.c`: `sph = ((ct & 0x0e000000) >> 13) | ((ct & 0x01fff000) >> 12)`.
+> - Zapis big-endian do bytes 0-3 każdego data blocku w `encodeInterleavedFramesToMotuV3`.
+> - Pliki: `PacketAssembler.hpp`, `IsochAudioTxPipeline.hpp/.cpp`, `IsochTransmitContext.cpp`.
 >
-> **✅ POTWIERDZONY STAN po Fix 41 (v51, sesja 24, 2026-06-02 ~23:37):**
-> - IT: **8000 pkts/sec**, **0 underrunów**, **Zero-Copy: CoreAudio direct** ✅
-> - IR: **8001 pkts/sec** od MOTU ✅ · `StopDevice` + `StartDevice` cykl OK ✅ · Testy: **493/493** ✅
->
-> **✅ DIAGNOZA (2026-06-03, sesja 25) — "75% IR drops" to NIE był błąd:**
-> - IT stats: 75% DATA / 25% NO-DATA = **poprawny mechanizm NDDD cadence** dla 48kHz @ 8kHz izoch.
-> - `48000÷8=6000 DATA/s → 6000/8000=75%` DATA. `cadence=NDDD` w logach IT potwierdzał od początku.
-> - Nie ma żadnego problemu z pierścieniem IR DMA. Ring (512 desc) działa poprawnie.
->
-> **⚠️ Fix 45** (sesja 25/26) — CIP header: SPH bit + FMT/FDF dla MOTU V3:
-> - **Root cause ciszy:** `CIPHeaderBuilder` budował Q0 z SPH=0. MOTU V3 interpretuje pierwsze 4 bajty data bloku jako PCM ch0 (zero) → cisza.
-> - Z 0xDE fill: bit 10 Q0 = 1 przez przypadek → MOTU poprawnie pomijało SPH → pisk słyszalny.
-> - **Fix:** `kCIPFormatMotuV3=0x02`, `kFDFMotuV3=0x22`, `sphBit=(1u<<10)` w `CIPHeaderBuilder::build()`.
-> - Pliki: `CIPHeaderBuilder.hpp`, `IsochTxVerifier.hpp/.cpp`, `PacketAssembler.hpp`, `IsochAudioTxPipeline.hpp/.cpp`, `IsochTransmitContext.cpp`.
->
-> **⚠️ BUILD — post-action codesign fail (iCloud Drive xattr):**
-> - Error: `resource fork, Finder information, or similar detritus not allowed`
-> - Dext binary nie jest produkowany — post-action blokuje link.
-> - Fix: `./build.sh --deploy` (stripuje xattry przed codesign, kopiuje do `/tmp` najpierw).
->
-> **⏳ TEST AUDIO — Fix 45 po udanym buildzie:**
+> **⏳ TEST AUDIO — Fix 45+46 (v60) na Mac Studio:**
 > - Restart Mac Studio (wymagany dla dext upgrade z aktywnym AudioDriverKit)
-> - Uruchom ASFW.app → Spotify → słuchaj na PHONES
+> - Uruchom ASFW.app v60 z pulpitu → Apple Music → słuchaj na PHONES/MAIN
 > - Szukaj w logach: `[Isoch] SYT gate bypassed` + brak `❌ StartTransmit SYT timeout`
-> - **Oczekiwany wynik:** Dźwięk z MOTU 🎵
+> - **Oczekiwany wynik:** Czyste audio z MOTU (bez pisku) 🎵
 
 ---
 
@@ -93,7 +77,7 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 | ~~SetZeroCopyOutputBuffer przed Configure()~~ | ✅ NAPRAWIONE | Fix 39 (`3fad643`) — 33 759 underrunów → 0 |
 | ~~InjectNearHw: AM824 encoder dla MOTU V3~~ | ✅ NAPRAWIONE | Fix 40 (`5049c19`) |
 | ~~EXC_ARM_DA_ALIGN przy MOTU V3 encoding~~ | ✅ NAPRAWIONE | Fix 41 (`5049c19`) — uint32_t zero-fill |
-| Brak audio na wyjściu MOTU | ⏳ **FIX 45 — do testu** | CIP SPH=0 → MOTU czyta SPH bytes jako PCM ch0 → cisza. Fix: SPH=1, FMT=0x02, FDF=0x22 |
+| Brak/zniekształcone audio na wyjściu MOTU | ⏳ **FIX 45+46 (v60) — do testu** | Fix 45: SPH=1, FMT=0x02, FDF=0x22. Fix 46: real CycleTimer SPH timestamps → czyste audio |
 | HALS_IORawClock re-anchoring | Średni | `mach_absolute_time()` zamiast OHCI cycle counter jako hostTime |
 | Liczba kanałów 2/2 vs 18 IT / 14 IR | Niski | Po potwierdzeniu audio: `outputChannelCount=18`, `inputChannelCount=14` |
 | Brak nazw kanałów w CoreAudio | Niski | `IOAudioChannelDescription` per-kanał (Analog 1, ADAT A-1 itd.) |
