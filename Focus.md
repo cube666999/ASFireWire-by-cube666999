@@ -72,6 +72,86 @@ Zastąpić `mach_absolute_time()` w `PerformIO` czytaniem OHCI `CurrentIsochrono
 
 ---
 
+## Diagnostyka na macOS Sequoia (MacBook w domu)
+
+> Sequoia ma oryginalny sterownik MOTU (`MOTUAudio.kext`) — możemy podsłuchać co on wysyła
+> lub rozkodować jego binarny kod. Nie wymaga Tahoe ani Mac Studio.
+
+### Opcja A — DTrace: podejrzyj co wysyła MOTU kext (wymaga podłączonego MOTU)
+
+```bash
+# 1. Podłącz MOTU przez TB→FW adapter, uruchom ASFW lub poczekaj aż macOS załaduje MOTUAudio.kext
+# 2. Sprawdź czy kext jest załadowany:
+kextstat | grep -i motu
+
+# 3. Podejrzyj wywołania funkcji kextu (wymaga SIP disabled lub tylko w dev mode):
+sudo dtrace -n '
+  fbt::*MOTU*::entry {
+    printf("%s\n", probefunc);
+  }'
+
+# 4. Podejrzyj payload pierwszych pakietów IT (co MOTU kext WYSYŁA do urządzenia):
+sudo dtrace -n '
+  fbt::*IsochChannel*::entry,
+  fbt::*WriteIsoch*::entry {
+    printf("fn=%s arg0=0x%x\n", probefunc, arg0);
+    tracemem(arg1, 128);
+  }'
+```
+
+### Opcja B — Ghidra: rozkoduj MOTU kext bez podłączania sprzętu
+
+```bash
+# Znajdź binarny kext na Sequoia:
+find /System/Library/Extensions /Library/Extensions -name "*.kext" 2>/dev/null | xargs -I{} find {} -name "MOTUAudio" -o -name "MOTUFireWire" 2>/dev/null
+
+# Lub przez kextstat:
+kextstat | grep -i motu
+# → pokaże ścieżkę, np. /Library/Extensions/MOTUAudio.kext/Contents/MacOS/MOTUAudio
+
+# Wyexportuj symbole (bez Ghidry):
+nm -u /Library/Extensions/MOTUAudio.kext/Contents/MacOS/MOTUAudio | grep -iE "(isoch|packet|write|channel|sph|dbs)"
+otool -tv /Library/Extensions/MOTUAudio.kext/Contents/MacOS/MOTUAudio > motu_disasm.txt
+```
+
+Następnie wrzuć binarny plik do **Ghidra** (https://ghidra-sre.org, darmowe):
+- `File → Import File` → binarka MOTUAudio
+- Szukaj funkcji: `buildITPacket`, `writePayload`, `setDBS`, `setSPH`
+- Sprawdź jak buduje data block (byte offsets, PCM packing)
+
+### Opcja C — IORegistry: sprawdź parametry aktywnego streamingu
+
+```bash
+# Podłącz MOTU, uruchom streaming (np. odtwórz audio przez MOTU),
+# potem sprawdź co kext zarejestrował w IORegistry:
+ioreg -l -r -c IOFireWireUnit | grep -A 20 -i motu
+ioreg -l -r -c IOAudioDevice  | grep -A 40 -i motu
+
+# Szukaj: sampleRate, channelCount, DBS, streamFormat, packetSize
+```
+
+### Opcja D — log stream: logi MOTU kext podczas streamingu
+
+```bash
+# Uruchom streaming przez MOTU na Sequoia, zbierz logi:
+/usr/bin/log stream --debug --info 2>/dev/null | grep -iE "(motu|firewire|isoch|1394)" | head -100
+
+# Po zatrzymaniu:
+/usr/bin/log show --last 5m --debug --info 2>/dev/null | grep -iE "(motu|firewire)" > ~/Desktop/motu_sequoia.txt
+```
+
+### Co chcemy znaleźć
+
+| Pytanie | Gdzie szukać |
+|---------|-------------|
+| Jaki DBS wysyła kext do MOTU 828 MK3? | Ghidra / DTrace payload |
+| Jaki `pcm_byte_offset` (10 czy inny)? | Ghidra: `buildPayload` / `writePCM` |
+| Jak buduje SPH (czy używa CycleTimer)? | Ghidra: `setSPH` / `buildDataBlock` |
+| Ile kanałów PCM koduje do IT stream? | IORegistry: channelCount |
+| Co słychać na prawym kanale przy streamingu? | Test audio na Sequoia z MOTU |
+
+---
+
 ## Stan implementacji (maj 2026)
 
 | Subsystem | Status | Uwagi |
