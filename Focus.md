@@ -8,32 +8,67 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ SESJA NA MAC STUDIO — Przeczytaj to na starcie
 
-> **Stan na 2026-06-03 (sesja 27) — Fix 45+46 zaimplementowane, build v60 na pulpicie:**
+> **Stan na 2026-06-04 (sesja 28) — Fix 47 zaimplementowany, build v61 na pulpicie:**
 >
 > **✅ Fix 45** (sesja 25/26, commit `fb5425f`) — CIP header: SPH bit + FMT/FDF dla MOTU V3:
 > - `kCIPFormatMotuV3=0x02`, `kFDFMotuV3=0x22`, `sphBit=(1u<<10)` w `CIPHeaderBuilder::build()`.
 > - Bez SPH=1 w Q0: MOTU interpretuje SPH bytes jako PCM ch0 (zero) → cisza.
 >
 > **✅ Fix 46** (sesja 27, commit `e517882`, v60) — OHCI CycleTimer → MOTU V3 SPH timestamps:
-> - **Root cause pisku:** SPH bytes 0-3 w każdym data blocku = 0x00000000 (timestamp "cycle 0 = way in the past") → timing artifacts.
 > - **Fix:** `DoRefillOnce()` czyta `hardware_->ReadCycleTime()` (rejestr 0x0F0) przed `OnRefillTickPreHW()`.
-> - Konwersja per Linux `amdtp-motu.c`: `sph = ((ct & 0x0e000000) >> 13) | ((ct & 0x01fff000) >> 12)`.
-> - Zapis big-endian do bytes 0-3 każdego data blocku w `encodeInterleavedFramesToMotuV3`.
 > - Pliki: `PacketAssembler.hpp`, `IsochAudioTxPipeline.hpp/.cpp`, `IsochTransmitContext.cpp`.
 >
-> **⏳ TEST AUDIO — Fix 45+46 (v60) na Mac Studio:**
+> **✅ Fix 47** (sesja 28, commit `3f3d18a`, v61) — Poprawna formuła SPH per Linux `write_sph()`:
+> - **Dwa błędy** w formule Fix 46: (1) overlap bit 12 w OR-owaniu dwóch wyrażeń, (2) kodował cycleSeconds zamiast cycleOffset.
+> - **Stara (błędna):** `sph = ((ct & 0x0e000000) >> 13) | ((ct & 0x01fff000) >> 12)` — bit 12 ustawiany dwukrotnie!
+> - **Nowa (poprawna):** `sph = ct & 0x01FFFFFFu` = `(cycleCount<<12) | cycleOffset` — identyczna z `write_sph()` w Linux.
+> - Zapis SPH jako pełne 4 bajty big-endian (poprzednio tylko 2 bajty, górne 2 hardcoded na 0).
+> - Plik: `ASFWDriver/Isoch/Encoding/PacketAssembler.hpp`.
+>
+> **⚠️ OBSERWACJA (sesja 28):** Test v60 wykazał **pisk w prawym kanale** przy odtwarzaniu przez MOTU.
+> - IT działa poprawnie: 8003 pkts/s, 0 underruns, 75% DATA, Zero-Copy aktywne.
+> - IR ma **168 865 dropów** — prawdopodobnie niezwiązane z piskiem (IR = input, pisk na output).
+> - Przyczyna pisku w prawym kanale **nieustalona** — Fix 47 (SPH) może pomóc, ale symetrycznie.
+>
+> **⏳ TEST AUDIO — Fix 47 (v61) na Mac Studio:**
 > - Restart Mac Studio (wymagany dla dext upgrade z aktywnym AudioDriverKit)
-> - Uruchom ASFW.app v60 z pulpitu → Apple Music → słuchaj na PHONES/MAIN
-> - Szukaj w logach: `[Isoch] SYT gate bypassed` + brak `❌ StartTransmit SYT timeout`
-> - **Oczekiwany wynik:** Czyste audio z MOTU (bez pisku) 🎵
+> - Uruchom ASFW.app **v61** z pulpitu → Apple Music → słuchaj na PHONES/MAIN
+> - Pytania diagnostyczne: czy pisk jest w obu kanałach? Czy zsynchronizowany z muzyką? Czy w ciszy też?
 
 ---
 
-## Następne priorytety (po potwierdzeniu audio)
+## Następne priorytety
 
-1. **HALS_IORawClock** — zastąpić `mach_absolute_time()` w `PerformIO` czytaniem OHCI `CurrentIsochronousCycleTime` (rejestr `0x1E8`). Bits[25:12]=cycleCount(0–7999), bits[11:0]=cycleOffset.
-2. **Rozszerzyć do 18ch IT / 14ch IR** — `ASFWAudioNub` publikuje teraz tylko "2 In / 2 Out". Zmiana: `outputChannelCount=18`, `inputChannelCount=14`.
-3. **Kontrolki głośności (F11/F12/Mute)** — `IOUserAudioLevelControl` + `IOUserAudioToggleControl` w `ASFWAudioDriver`. Szczegóły w sekcji "Planowane funkcje".
+### Priorytet 0 — Diagnoza pisku w prawym kanale
+Jeśli v61 nie naprawia pisku, następny krok: **raw IR packet logging**:
+```cpp
+// StreamProcessor.hpp — dodać na początku OnPacketReceived():
+if (packetCount_++ < 3) {
+    const uint8_t* raw = reinterpret_cast<const uint8_t*>(payload);
+    ASFW_LOG(IR, "RAW[%u]: SPH=%02x%02x%02x%02x msg=%02x%02x%02x%02x%02x%02x pcm0=%02x%02x%02x pcm1=%02x%02x%02x",
+             packetCount_, raw[0],raw[1],raw[2],raw[3],
+             raw[4],raw[5],raw[6],raw[7],raw[8],raw[9],
+             raw[10],raw[11],raw[12], raw[13],raw[14],raw[15]);
+}
+```
+To powie czy MOTU używa SPH, jaki DBS naprawdę wysyła, i gdzie zaczyna się PCM.
+
+Alternatywa: **DTrace na Sequoia** (`sudo dtrace -n 'fbt::*MOTU*::entry { tracemem(arg0,128); }'`)
+lub **Ghidra** na binarce `/System/Library/Extensions/MOTUAudio.kext`.
+
+### Priorytet 1 — IR drops (168 865 dropów)
+Widoczne w screenshocie sesji 28. IR context traci ~75% pakietów. Sprawdzić:
+- Czy ring buffer IR jest za mały?
+- Czy `overrideWireDbs_` dla IR jest poprawny?
+
+### Priorytet 2 — HALS_IORawClock
+Zastąpić `mach_absolute_time()` w `PerformIO` czytaniem OHCI `CurrentIsochronousCycleTime` (rejestr `0x1E8`). Bits[25:12]=cycleCount(0–7999), bits[11:0]=cycleOffset.
+
+### Priorytet 3 — Rozszerzyć do 18ch IT / 14ch IR
+`ASFWAudioNub` publikuje teraz tylko "2 In / 2 Out". Zmiana: `outputChannelCount=18`, `inputChannelCount=14`.
+
+### Priorytet 4 — Kontrolki głośności (F11/F12/Mute)
+`IOUserAudioLevelControl` + `IOUserAudioToggleControl` w `ASFWAudioDriver`. Szczegóły w sekcji "Planowane funkcje".
 
 ---
 
@@ -49,7 +84,7 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 | Isoch Transmit (IT) | ✅ Działa | MOTU V3 DBS=21, SYT gate bypass, Zero-Copy |
 | Isoch Receive (IR) | ✅ Odbiera | 8001 pkts/s od MOTU, DBS override=21 |
 | AudioDriverKit | ✅ AudioDeviceStart | IO 3+ min; clock jitter (HALS_IORawClock) |
-| **MOTU V3 Backend** | ⏳ Audio pending | Fix 45 (SPH bit) → rebuild → test audio |
+| **MOTU V3 Backend** | ⏳ Pisk prawy kanał | Fix 45+46+47 wdrożone (v61). Lewy gra ✓, prawy pisk. Diagnoza w toku. |
 
 ---
 
@@ -77,7 +112,8 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 | ~~SetZeroCopyOutputBuffer przed Configure()~~ | ✅ NAPRAWIONE | Fix 39 (`3fad643`) — 33 759 underrunów → 0 |
 | ~~InjectNearHw: AM824 encoder dla MOTU V3~~ | ✅ NAPRAWIONE | Fix 40 (`5049c19`) |
 | ~~EXC_ARM_DA_ALIGN przy MOTU V3 encoding~~ | ✅ NAPRAWIONE | Fix 41 (`5049c19`) — uint32_t zero-fill |
-| Brak/zniekształcone audio na wyjściu MOTU | ⏳ **FIX 45+46 (v60) — do testu** | Fix 45: SPH=1, FMT=0x02, FDF=0x22. Fix 46: real CycleTimer SPH timestamps → czyste audio |
+| Pisk w prawym kanale MOTU | ⏳ **FIX 47 (v61) — do testu** | Fix 45: SPH bit. Fix 46: OHCI CycleTimer. Fix 47: poprawna formuła SPH (ct & 0x01FFFFFF). Przyczyna asymetryczna (prawy) nieustalona. |
+| IR drops (168 865) | ⏳ Zbadać | IR context traci ~75% pakietów — ring buffer? overrideWireDbs_? |
 | HALS_IORawClock re-anchoring | Średni | `mach_absolute_time()` zamiast OHCI cycle counter jako hostTime |
 | Liczba kanałów 2/2 vs 18 IT / 14 IR | Niski | Po potwierdzeniu audio: `outputChannelCount=18`, `inputChannelCount=14` |
 | Brak nazw kanałów w CoreAudio | Niski | `IOAudioChannelDescription` per-kanał (Analog 1, ADAT A-1 itd.) |
