@@ -286,19 +286,26 @@ Uses Swift 6 strict concurrency. All cross-actor data must be `Sendable`. Use `a
 
 ## Development Environment
 
-**MacBook Pro (M3 Max) — dwie partycje:**
-- **Wewnętrzny SSD:** macOS Sequoia — dev machine (build, testy jednostkowe, Ghidra/DTrace na MOTU kext)
-- **Zewnętrzny SSD:** macOS Tahoe 26.5.1 — środowisko hardware testów z MOTU 828mk3
+**MacBook Pro (M3 Max) — aktywna konfiguracja (od sesji 29):**
 
-**Od sesji 29 (2026-06-05): hardware testy na MacBooku z Tahoe (zewnętrzny SSD), nie na Mac Studio.**
+| Partycja | System | Rola |
+|----------|--------|------|
+| Zewnętrzny SSD | **macOS Tahoe 26.5.1** | ✅ **Aktywne** — build + hardware testy + Claude Code |
+| Wewnętrzny SSD | macOS Sequoia | Diagnostyka MOTU kext (DTrace/IORegistry) — nieaktywny |
 
-Boot-args na Tahoe (MacBook): `amfi_get_out_of_my_way=1 cs_enforcement_disable=1`
+**Boot-args na Tahoe:** `amfi_get_out_of_my_way=1 cs_enforcement_disable=1`
 
-Cert na Tahoe: `Apple Development: j.slipiec@gmail.com (239NB3LFDQ)` (MacBook Pro, team `4MJNRC8SW5`).
+**Cert na Tahoe:** `Apple Development: j.slipiec@gmail.com (239NB3LFDQ)` (MacBook Pro, team `4MJNRC8SW5`).
 Po świeżej instalacji wymagane pobranie Apple intermediate CA:
 ```bash
 curl -s https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer | security import /dev/stdin -k ~/Library/Keychains/login.keychain-db
 ```
+
+**Zainstalowane narzędzia na Tahoe (sesja 31, 2026-06-05):**
+- `brew install node@22` — Node.js 22.22.3
+- `npm install -g @anthropic-ai/claude-code` → `~/.npm-global/bin/claude` (v2.1.165)
+- `npm install -g --prefix /opt/homebrew @colbymchenry/codegraph` → `/opt/homebrew/bin/codegraph` (v0.9.9)
+- CodeGraph index: `.codegraph/` (614 plików, 11,502 nodów)
 
 **Mac Studio** (macOS Tahoe, wewnętrzny) — backup, nieużywany aktywnie od sesji 29.
 
@@ -317,7 +324,33 @@ ctest --test-dir build/tests_build -V -R IsochRxDmaRing
 
 ## CodeGraph MCP
 
-The project is indexed with CodeGraph (local SQLite graph of all symbols). Index lives in `.codegraph/codegraph.db`. The MCP server is configured in `../.mcp.json` (one level above ASFireWire, in the FireWire project root).
+The project is indexed with CodeGraph (local SQLite graph of all symbols). Index lives in `.codegraph/`. The MCP server is configured in `../.mcp.json` (one level above ASFireWire, in the FireWire project root).
+
+**Instalacja na świeżej maszynie (Tahoe, 2026-06-05):**
+```bash
+# 1. Node.js przez Homebrew (jeśli brak)
+brew install node@22
+
+# 2. Claude Code CLI
+export PATH="/opt/homebrew/opt/node@22/bin:$PATH"
+mkdir -p "$HOME/.npm-global" && npm config set prefix "$HOME/.npm-global"
+npm install -g @anthropic-ai/claude-code
+
+# 3. CodeGraph CLI → musi lądować w /opt/homebrew/bin/ (tam wskazuje .mcp.json)
+npm install -g --prefix /opt/homebrew @colbymchenry/codegraph
+
+# 4. Zbuduj indeks projektu
+export PATH="/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:$PATH"
+cd "/Users/cube666/Library/Mobile Documents/com~apple~CloudDocs/FireWire/ASFireWire"
+NODE_OPTIONS="--max-old-space-size=4096" codegraph index .
+```
+
+**Re-index after adding/moving files:**
+```bash
+export PATH="/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:$PATH"
+NODE_OPTIONS="--max-old-space-size=4096" codegraph index .
+# (stara komenda 'codegraph build --no-incremental' nie istnieje w v0.9.9+)
+```
 
 ## ⛔ BEZWZGLĘDNY ZAKAZ: grep / find / Bash do szukania kodu
 
@@ -337,20 +370,11 @@ Jedyne dozwolone narzędzia do lokalizacji symboli i plików:
 
 **WAŻNE — zawsze przekazuj `projectPath`:** MCP serwer jest skonfigurowany w `../.mcp.json` (katalog `FireWire/`), więc jego CWD to `FireWire/`, nie `ASFireWire/`. Bez explicit `projectPath` CodeGraph szuka bazy w złym katalogu i zwraca "not initialized". Każde wywołanie musi mieć:
 ```
-# Mac Studio (kuba, hardware test):
-projectPath: "/Users/kuba/Library/Mobile Documents/com~apple~CloudDocs/FireWire/ASFireWire"
-
-# Dev machine (cube666, development):
+# MacBook Pro Tahoe (cube666, aktywne środowisko build+test):
 projectPath: "/Users/cube666/Library/Mobile Documents/com~apple~CloudDocs/FireWire/ASFireWire"
 ```
 
-**Re-index after adding/moving files:**
-```bash
-export PATH="$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:$PATH"
-NODE_OPTIONS="--max-old-space-size=4096" codegraph build --no-incremental .
-```
-
-**Current index stats:** 624 files · 18 300 nodes · 26 342 edges (codegraph 3.10.0, graph.db).
+**Current index stats (Tahoe, 2026-06-05):** 614 files · 11 502 nodes · 21 774 edges (codegraph @colbymchenry/codegraph v0.9.9).
 
 
 Wytyczne Behawioralne
