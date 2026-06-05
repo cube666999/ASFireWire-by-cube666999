@@ -352,22 +352,28 @@ void PrepareClockEngineForStart(AudioClockEngineState& state) {
             }
             state.clockSync->targetFillLevel = target;
         } else {
-            // Fix 33: PLL target = kAudioIoPeriodFrames = 512 frames.
+            // Fix 53: PLL target = kAudioIoPeriodFrames / 2 = 256 frames.
             //
-            // With rate-matched refill (Fix 33 in OnRefillTickPreHW), TxSharedQueue drains
-            // at exactly samplesPerDataPacket (6 frames) per OHCI interrupt = 48000 fps,
-            // matching the PerformIO write rate.  The natural TxQ sawtooth is:
-            //   +512 every 10.67ms (one PerformIO write), -6 per 125µs interrupt
-            //   → oscillates 0–512, average ≈ 256 frames.
+            // With Fix 36b (DriverKit IRQ coalescing ≈985 Hz, 48 frames/IRQ),
+            // TxSharedQueue drains at 48 frames/IRQ × 985 IRQ/s ≈ 47,280 fps.
+            // PerformIO writes 512 frames every 10.67ms = 48,000 fps.
+            // Sawtooth: +512 per period, −48 per IRQ over ~10.5 IRQs.
+            // Natural TxQ oscillation: peaks at ~512 just after PerformIO,
+            // drains to ~0 just before next PerformIO.
+            //   → Sawtooth average ≈ 256 frames = kAudioIoPeriodFrames / 2.
             //
-            // PLL target must match this natural average to avoid integral windup.
-            // Setting target = kAudioIoPeriodFrames (= 512, the sawtooth peak) keeps
-            // the average error near zero.  The PLL then corrects only for long-term
-            // CPU/OHCI drift (≈300 ppm), not for the harmless sawtooth oscillation.
+            // PLL target MUST match the natural average to avoid integral windup:
+            //   target = 512 (old Fix 33 value, the sawtooth PEAK, not average)
+            //   → permanent error = 256 − 512 = −256
+            //   → I-term winds to −500k → PLL maxes at −400 ppm → CoreAudio
+            //     slows → PerformIO period creeps up → TxQ drains slightly faster
+            //     → average drops below 256 → worse error → positive feedback.
             //
-            // Previous target=2048 (v5): average TxQ ≈ 256 → permanent error=-1792 →
-            // I-term wound to -500k → integral windup → same oscillation as before.
-            state.clockSync->targetFillLevel = ASFW::Isoch::Config::kAudioIoPeriodFrames;
+            // Fix 33 comment was written before Fix 36b changed pump rate from
+            // 6 fps/IRQ (8000 Hz) to 48 fps/IRQ (985 Hz). The old 6/8000 sawtooth
+            // had the same average = 256, but the comment incorrectly set target
+            // to 512 (peak). Fix 53 corrects target to match the true average.
+            state.clockSync->targetFillLevel = ASFW::Isoch::Config::kAudioIoPeriodFrames / 2;
         }
     } else {
         state.clockSync->targetFillLevel = 2048;

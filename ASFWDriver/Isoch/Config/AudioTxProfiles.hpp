@@ -43,12 +43,17 @@ inline constexpr TxBufferProfile kTxProfileA{
 
 inline constexpr TxBufferProfile kTxProfileB{
     "B",
-    2048,  // startWaitTargetFrames  (Fix 33: raised from 512 — with rate-matched refill, pre-primes ring
-           //                        to 2048 frames = 42ms jitter tolerance; no TxQ overflow risk because
-           //                        steady-state transfer is rate-matched not burst-draining)
-    0,     // startupPrimeLimitFrames (unbounded)
-    2048,  // legacyRbTargetFrames  (Fix 27: was 1024)
-    4096,  // legacyRbMaxFrames     (Fix 27: was 1536 — kAudioRingBufferFrames=4096)
+    4096,  // startWaitTargetFrames  (Fix 53: raised from 2048 → 4096.
+           //                        Requires 8 PerformIO writes before IT start (~85ms).
+           //                        Pre-prime fills ring with 2048 (startupPrimeLimitFrames),
+           //                        leaving 2048 frames in TxQ for immediate pump use.
+           //                        Eliminates startup starvation: old value=2048 left
+           //                        TxQ=0 after pre-prime, pump starved for first 10ms.)
+    2048,  // startupPrimeLimitFrames (Fix 53: was 0 (unbounded). Limit pre-prime to 2048
+           //                        so that TxQ retains startWait−2048=2048 frames after
+           //                        pre-prime. Pump has 2048 frames available immediately.)
+    2048,  // legacyRbTargetFrames
+    4096,  // legacyRbMaxFrames     (kAudioRingBufferFrames=4096)
     8,     // legacyMaxChunksPerRefill (8×256=2048 frames max per IRQ)
     96,    // safetyOffsetFrames (2A)
     48     // minPrimeDataPackets (2B)
