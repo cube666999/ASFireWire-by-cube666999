@@ -6,34 +6,58 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ---
 
-## ⚡ SESJA NA MAC STUDIO — Przeczytaj to na starcie
+## ⚡ AKTUALNY STAN — Przeczytaj to na starcie
 
-> **Stan na 2026-06-04 (sesja 28) — Fix 47 zaimplementowany, build v61 na pulpicie:**
+> **Stan na 2026-06-05 (sesja 29) — Fix 48 zaimplementowany, build v63 na pulpicie MacBooka**
+
+### Środowisko testowe (ZMIANA od sesji 29)
+
+| Maszyna | System | Rola |
+|---------|--------|------|
+| **MacBook Pro (M3 Max)** | **macOS Tahoe 26.5.1 (zewnętrzny SSD)** | **Aktywne środowisko — build + test hardware** |
+| Mac Studio | macOS Tahoe (wewnętrzny) | Backup — nieużywany w tej sesji |
+| MacBook Pro (M3 Max) | macOS Sequoia (wewnętrzny SSD) | Diagnostyka MOTU kext (DTrace/IORegistry) |
+
+**Boot-args na MacBooku (Tahoe/zewnętrzny SSD):**
+```
+amfi_get_out_of_my_way=1 cs_enforcement_disable=1
+```
+
+**Podpisywanie na MacBooku Tahoe:**
+- Cert: `Apple Development: j.slipiec@gmail.com (239NB3LFDQ)` (MacBook Pro, team `4MJNRC8SW5`)
+- Po `./build.sh --no-bump --derived /tmp/ASFWBuild --deploy` wymagany ręczny re-sign:
+```bash
+CERT="Apple Development: j.slipiec@gmail.com (239NB3LFDQ)"
+codesign --force --sign "$CERT" --entitlements "ASFWDriver/ASFWDriver.entitlements" --timestamp=none \
+  "/Users/cube666/Desktop/ASFW_vNN.app/Contents/Library/SystemExtensions/net.mrmidi.ASFW.ASFWDriver.dext"
+codesign --force --sign "$CERT" --entitlements "ASFW/App.entitlements" --timestamp=none \
+  "/Users/cube666/Desktop/ASFW_vNN.app"
+```
+- Pośredni CA potrzebny po świeżej instalacji: `curl -s https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer | security import /dev/stdin -k ~/Library/Keychains/login.keychain-db`
+
+---
+
+### Ostatnie fixy
+
+> **✅ Fix 45** (sesja 25/26) — CIP header: SPH bit + FMT/FDF dla MOTU V3
+> **✅ Fix 46** (sesja 27, v60) — OHCI CycleTimer → MOTU V3 SPH timestamps
+> **✅ Fix 47** (sesja 28, v61) — Poprawna formuła SPH per Linux `write_sph()`: `sph = ct & 0x01FFFFFFu`
 >
-> **✅ Fix 45** (sesja 25/26, commit `fb5425f`) — CIP header: SPH bit + FMT/FDF dla MOTU V3:
-> - `kCIPFormatMotuV3=0x02`, `kFDFMotuV3=0x22`, `sphBit=(1u<<10)` w `CIPHeaderBuilder::build()`.
-> - Bez SPH=1 w Q0: MOTU interpretuje SPH bytes jako PCM ch0 (zero) → cisza.
->
-> **✅ Fix 46** (sesja 27, commit `e517882`, v60) — OHCI CycleTimer → MOTU V3 SPH timestamps:
-> - **Fix:** `DoRefillOnce()` czyta `hardware_->ReadCycleTime()` (rejestr 0x0F0) przed `OnRefillTickPreHW()`.
-> - Pliki: `PacketAssembler.hpp`, `IsochAudioTxPipeline.hpp/.cpp`, `IsochTransmitContext.cpp`.
->
-> **✅ Fix 47** (sesja 28, commit `3f3d18a`, v61) — Poprawna formuła SPH per Linux `write_sph()`:
-> - **Dwa błędy** w formule Fix 46: (1) overlap bit 12 w OR-owaniu dwóch wyrażeń, (2) kodował cycleSeconds zamiast cycleOffset.
-> - **Stara (błędna):** `sph = ((ct & 0x0e000000) >> 13) | ((ct & 0x01fff000) >> 12)` — bit 12 ustawiany dwukrotnie!
-> - **Nowa (poprawna):** `sph = ct & 0x01FFFFFFu` = `(cycleCount<<12) | cycleOffset` — identyczna z `write_sph()` w Linux.
-> - Zapis SPH jako pełne 4 bajty big-endian (poprzednio tylko 2 bajty, górne 2 hardcoded na 0).
-> - Plik: `ASFWDriver/Isoch/Encoding/PacketAssembler.hpp`.
->
-> **⚠️ OBSERWACJA (sesja 28):** Test v60 wykazał **pisk w prawym kanale** przy odtwarzaniu przez MOTU.
-> - IT działa poprawnie: 8003 pkts/s, 0 underruns, 75% DATA, Zero-Copy aktywne.
-> - IR ma **168 865 dropów** — prawdopodobnie niezwiązane z piskiem (IR = input, pisk na output).
-> - Przyczyna pisku w prawym kanale **nieustalona** — Fix 47 (SPH) może pomóc, ale symetrycznie.
->
-> **⏳ TEST AUDIO — Fix 47 (v61) na Mac Studio:**
-> - Restart Mac Studio (wymagany dla dext upgrade z aktywnym AudioDriverKit)
-> - Uruchom ASFW.app **v61** z pulpitu → Apple Music → słuchaj na PHONES/MAIN
-> - Pytania diagnostyczne: czy pisk jest w obu kanałach? Czy zsynchronizowany z muzyką? Czy w ciszy też?
+> **✅ Fix 48** (sesja 29, v63) — Bit shift PCM encoding: górne 24 bity int32
+> - **Problem:** `encodeInterleavedFramesToMotuV3` brało bity `[23:0]` z int32.
+>   AudioDriverKit dostarcza **high-aligned** int32 (audio w bitach `[31:8]`), jak potwierdza MOTU kext (`shrl $0x18`).
+>   Efekt: amplituda 1/256 → praktyczna cisza, okazjonalny pisk z szumu.
+> - **Fix:** zmiana shift w `PacketAssembler.hpp` i `AM824Encoder.hpp`:
+>   `dst[0]=(s>>24)`, `dst[1]=(s>>16)`, `dst[2]=(s>>8)` — identycznie jak kext MOTU.
+> - Pliki: `ASFWDriver/Isoch/Encoding/PacketAssembler.hpp`, `AM824Encoder.hpp`
+
+### ⏳ TEST AUDIO — Fix 48 (v63) na MacBooku Tahoe
+
+- **v63** jest na pulpicie MacBooka (`ASFW_v63.app`)
+- Wymagany **restart** (dext upgrade z aktywnym AudioDriverKit)
+- Po restarcie: otwórz v63 → System Settings → Sound → wybierz MOTU 828mk3 → Spotify
+- Oczekiwany rezultat: **dźwięk** przez MOTU (jeśli high-aligned = poprawna hipoteza)
+- Jeśli nadal cisza/pisk → AudioDriverKit może dostarczać low-aligned → przywróć stary shift i szukaj dalej
 
 ---
 

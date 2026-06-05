@@ -472,9 +472,9 @@ private:
             for (uint32_t ch = 0; ch < chCount; ++ch) {
                 const uint32_t s = static_cast<uint32_t>(frameIn[ch]);
                 uint8_t* dst = block + 10u + ch * 3u;
-                dst[0] = static_cast<uint8_t>((s >> 16) & 0xFFu); // MSB
-                dst[1] = static_cast<uint8_t>((s >>  8) & 0xFFu);
-                dst[2] = static_cast<uint8_t>( s        & 0xFFu); // LSB
+                dst[0] = static_cast<uint8_t>((s >> 24) & 0xFFu); // MSB — high-aligned int32 (ADK format, bits [31:24])
+                dst[1] = static_cast<uint8_t>((s >> 16) & 0xFFu);
+                dst[2] = static_cast<uint8_t>((s >>  8) & 0xFFu); // LSB — bits [15:8]
             }
         }
     }

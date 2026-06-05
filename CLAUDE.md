@@ -284,9 +284,23 @@ Pass `count=0` to `ReadRootDirQuadlets()` to enable autosize: the reader issues 
 
 Uses Swift 6 strict concurrency. All cross-actor data must be `Sendable`. Use `actor` isolation correctly. The app is required to install DriverKit extensions via `systemextensionsctl`.
 
-## Development Environment (macOS Sequoia, no Tahoe)
+## Development Environment
 
-Tests run on macOS Sequoia — no Tahoe machine available. Hardware testing requires a separate setup (Tahoe + TB3→FW adapter + MOTU device).
+**MacBook Pro (M3 Max) — dwie partycje:**
+- **Wewnętrzny SSD:** macOS Sequoia — dev machine (build, testy jednostkowe, Ghidra/DTrace na MOTU kext)
+- **Zewnętrzny SSD:** macOS Tahoe 26.5.1 — środowisko hardware testów z MOTU 828mk3
+
+**Od sesji 29 (2026-06-05): hardware testy na MacBooku z Tahoe (zewnętrzny SSD), nie na Mac Studio.**
+
+Boot-args na Tahoe (MacBook): `amfi_get_out_of_my_way=1 cs_enforcement_disable=1`
+
+Cert na Tahoe: `Apple Development: j.slipiec@gmail.com (239NB3LFDQ)` (MacBook Pro, team `4MJNRC8SW5`).
+Po świeżej instalacji wymagane pobranie Apple intermediate CA:
+```bash
+curl -s https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer | security import /dev/stdin -k ~/Library/Keychains/login.keychain-db
+```
+
+**Mac Studio** (macOS Tahoe, wewnętrzny) — backup, nieużywany aktywnie od sesji 29.
 
 **cmake** is installed via Homebrew and NOT on the default PATH. Always prefix or export:
 ```bash

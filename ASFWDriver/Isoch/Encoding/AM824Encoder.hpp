@@ -37,9 +37,9 @@ struct AM824Encoder {
     ///   Output: 0x40f3729e (label 0x40 + sample) → byte-swapped for wire
     ///
     static constexpr uint32_t encode(int32_t pcmSample) noexcept {
-        // Extract 24-bit sample from LOWER bits of 32-bit container
-        // AudioDriverKit uses sign-extended 24-in-32: sample in bits [23:0]
-        uint32_t sample24 = static_cast<uint32_t>(pcmSample) & 0x00FFFFFF;
+        // Extract 24-bit sample from UPPER bits of 32-bit container
+        // AudioDriverKit provides high-aligned int32: sample in bits [31:8] (matches MOTU kext shrl $0x18)
+        uint32_t sample24 = static_cast<uint32_t>(pcmSample) >> 8;
         
         // Combine with AM824 label in MSB position
         uint32_t quadlet = (static_cast<uint32_t>(kAM824LabelMBLA) << 24) | sample24;
