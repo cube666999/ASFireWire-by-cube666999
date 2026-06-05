@@ -343,7 +343,30 @@ npm install -g --prefix /opt/homebrew @colbymchenry/codegraph
 export PATH="/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:$PATH"
 cd "/Users/cube666/Library/Mobile Documents/com~apple~CloudDocs/FireWire/ASFireWire"
 NODE_OPTIONS="--max-old-space-size=4096" codegraph index .
+
+# 5. Zatwierdź MCP w Claude Code CLI (wymagane raz po instalacji)
+#    Uruchom claude z katalogu FireWire/ (gdzie jest .mcp.json):
+cd "/Users/cube666/Library/Mobile Documents/com~apple~CloudDocs/FireWire"
+claude
+#    → pojawi się "New MCP server found: codegraph" → wybierz opcję 2 (Use this and all future)
+#    → /mcp powinien pokazać "codegraph · ✓ connected · 8 tools"
+#    → /exit
 ```
+
+**Konfiguracja `.mcp.json` (FireWire/.mcp.json) — poprawna forma:**
+```json
+{
+  "mcpServers": {
+    "codegraph": {
+      "command": "/opt/homebrew/bin/node",
+      "args": ["/opt/homebrew/bin/codegraph", "serve", "--mcp", "--path",
+               "/Users/cube666/Library/Mobile Documents/com~apple~CloudDocs/FireWire/ASFireWire"],
+      "env": {}
+    }
+  }
+}
+```
+⚠️ Komenda to `serve --mcp`, NIE `mcp` (nie istnieje w v0.9.9+).
 
 **Re-index after adding/moving files:**
 ```bash
