@@ -32,7 +32,7 @@
 #include <cstring>
 #include <utility>
 
-static constexpr bool kEnableZeroCopyOutputPath = true;  // Fix 38: enable zero-copy output path
+static constexpr bool kEnableZeroCopyOutputPath = false;  // Fix 49: disable zero-copy for MOTU V3 (packed 3-byte PCM requires encoding, cannot zero-copy raw PCM)
 
 // Report only hardware/presentation pipeline latency to HAL.
 // Software queue/ring buffering should not be baked into device latency fields.
@@ -489,9 +489,13 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
         auto fillFormat = [](IOUserAudioStreamBasicDescription& fmt, double sampleRate, uint32_t channels) {
             fmt.mSampleRate = sampleRate;
             fmt.mFormatID = IOUserAudioFormatID::LinearPCM;
+            // Fix 52: FormatFlagIsAlignedHigh — IORegistry (Sequoia/MOTU kext) confirms
+            // IOAudioStreamAlignment=1 (kIOAudioStreamAlignmentHighByte). ADK delivers
+            // 24-bit samples in bits [31:8] (upper 24 bits), NOT bits [23:0].
             fmt.mFormatFlags = static_cast<IOUserAudioFormatFlags>(
             static_cast<uint32_t>(IOUserAudioFormatFlags::FormatFlagIsSignedInteger) |
-            static_cast<uint32_t>(IOUserAudioFormatFlags::FormatFlagsNativeEndian));
+            static_cast<uint32_t>(IOUserAudioFormatFlags::FormatFlagsNativeEndian)   |
+            static_cast<uint32_t>(IOUserAudioFormatFlags::FormatFlagIsAlignedHigh));
             // 24-bit audio in 32-bit containers (standard for pro audio)
             fmt.mBytesPerPacket = sizeof(int32_t) * channels;
             fmt.mFramesPerPacket = 1;

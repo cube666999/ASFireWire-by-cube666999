@@ -313,11 +313,24 @@ void IsochAudioTxPipeline::OnRefillTickPreHW() noexcept {
             ? Encoding::kDataPacketsPer8Cycles            // = 6 (NDDD cadence)
             : Encoding::kNonBlockingDataPacketsPer8Cycles; // = 8 (DATA every cycle)
         const uint32_t avgFramesPerCycle = (perCycle * dataPacketsPer8) / 8; // = 6 at 48kHz
-        const uint32_t pumpEstimate = (nextCallPumpFrames_ > 0) ? nextCallPumpFrames_ : avgFramesPerCycle;
+        // Fix 51: startup fallback accounts for DriverKit IRQ coalescing (~8 OHCI cycles/IRQ).
+        // Old fallback = avgFramesPerCycle = 6 (one OHCI cycle worth). With 8 cycles/IRQ,
+        // pump needs to move ~48 frames/IRQ to match OHCI consumption. Using 6 as fallback
+        // causes TxQ to fill from 0 to 4096 in ~100ms before nextCallPumpFrames_ adapts,
+        // triggering a burst of encodingOverruns right at startup.
+        constexpr uint32_t kEstimatedCyclesPerIRQ = 8;
+        const uint32_t startupFallback = avgFramesPerCycle * kEstimatedCyclesPerIRQ; // = 48
+        const uint32_t pumpEstimate = (nextCallPumpFrames_ > 0) ? nextCallPumpFrames_ : startupFallback;
         const uint32_t want_steady = pumpEstimate;        // = ~48 frames/call at 985 Hz
+        // Fix 51: cap burst pump to 4× steady rate to prevent draining TxQ in one shot.
+        // Old: wantPerInterrupt = max(want_burst, want_steady) — with want_burst up to 8192,
+        // this drains TxQ completely per IRQ, leaving pump starved for the next ~10 IRQs
+        // (until PerformIO writes again) → PacketAssembler ring drains → underruns.
         const uint32_t want_burst  = (targetRbFillFrames > rbFill) ? (targetRbFillFrames - rbFill) : 0;
-        // Always pump at least want_steady; burst if ring is below target.
-        const uint32_t wantPerInterrupt = (want_burst > want_steady) ? want_burst : want_steady;
+        const uint32_t burstCap = want_steady * 4;
+        const uint32_t wantPerInterrupt = (want_burst > want_steady)
+            ? ((want_burst < burstCap) ? want_burst : burstCap)
+            : want_steady;
 
         if (wantPerInterrupt > 0 && rbFill < kMaxRbFillFrames) {
             skipped = false;

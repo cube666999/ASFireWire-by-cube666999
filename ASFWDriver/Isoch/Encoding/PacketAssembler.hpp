@@ -469,10 +469,23 @@ private:
             block[3] = static_cast<uint8_t>( sph         & 0xFFu);
 
             const int32_t* frameIn = pcmInterleaved + static_cast<size_t>(f) * channelCount_;
+            // DEBUG: log first 2 channels of first frame once to verify bit alignment
+            if (f == 0 && frames > 0 && chCount > 0) {
+                static uint32_t dbgCount = 0;
+                if (dbgCount < 8) {
+                    ++dbgCount;
+                    const uint32_t s0 = static_cast<uint32_t>(frameIn[0]);
+                    const uint32_t s1 = (chCount > 1) ? static_cast<uint32_t>(frameIn[1]) : 0u;
+                    ASFW_LOG(Isoch, "[DBG] MOTU-V3 ch0=0x%08x(lo=0x%06x) ch1=0x%08x(lo=0x%06x) chCount=%u frames=%u",
+                             s0, s0 & 0x00FFFFFFu, s1, s1 & 0x00FFFFFFu, chCount, frames);
+                }
+            }
             for (uint32_t ch = 0; ch < chCount; ++ch) {
                 const uint32_t s = static_cast<uint32_t>(frameIn[ch]);
                 uint8_t* dst = block + 10u + ch * 3u;
-                dst[0] = static_cast<uint8_t>((s >> 24) & 0xFFu); // MSB — high-aligned int32 (ADK format, bits [31:24])
+                // Fix 52: high-aligned int32 (ADK with FormatFlagIsAlignedHigh → bits [31:8])
+                // IORegistry confirms: IOAudioStreamAlignment=1 (kIOAudioStreamAlignmentHighByte)
+                dst[0] = static_cast<uint8_t>((s >> 24) & 0xFFu); // MSB — bits [31:24]
                 dst[1] = static_cast<uint8_t>((s >> 16) & 0xFFu);
                 dst[2] = static_cast<uint8_t>((s >>  8) & 0xFFu); // LSB — bits [15:8]
             }

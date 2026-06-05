@@ -33,7 +33,7 @@ TEST(AM824EncoderTests, EncodesZeroSample) {
 
 // Positive sample
 TEST(AM824EncoderTests, EncodesPositiveSample) {
-    // 24-bit sample 0x123456 in HIGH bits of 32-bit container (ADK high-aligned: 0xXXXXXX00)
+    // Fix 52: 24-bit sample 0x123456 in HIGH bits (FormatFlagIsAlignedHigh): 0x12345600
     int32_t sample = 0x12345600;
     uint32_t result = AM824Encoder::encode(sample);
 
@@ -45,7 +45,7 @@ TEST(AM824EncoderTests, EncodesPositiveSample) {
 
 // Negative sample (two's complement)
 TEST(AM824EncoderTests, EncodesNegativeSample) {
-    // 24-bit sample 0xFEDCBA (negative in 24-bit two's complement) in high bits
+    // Fix 52: 24-bit sample 0xFEDCBA in high bits: 0xFEDCBA00
     int32_t sample = static_cast<int32_t>(0xFEDCBA00);
     uint32_t result = AM824Encoder::encode(sample);
 
@@ -57,7 +57,7 @@ TEST(AM824EncoderTests, EncodesNegativeSample) {
 
 // Maximum positive 24-bit value
 TEST(AM824EncoderTests, EncodesMaxPositive) {
-    // 0x7FFFFF in high bits = 0x7FFFFF00
+    // Fix 52: 0x7FFFFF in high bits: 0x7FFFFF00
     int32_t sample = 0x7FFFFF00;
     uint32_t result = AM824Encoder::encode(sample);
 
@@ -69,7 +69,7 @@ TEST(AM824EncoderTests, EncodesMaxPositive) {
 
 // Maximum negative 24-bit value
 TEST(AM824EncoderTests, EncodesMaxNegative) {
-    // 0x800000 in high bits = 0x80000000
+    // Fix 52: 0x800000 in high bits: 0x80000000
     int32_t sample = static_cast<int32_t>(0x80000000);
     uint32_t result = AM824Encoder::encode(sample);
 
@@ -85,22 +85,20 @@ TEST(AM824EncoderTests, EncodesMaxNegative) {
 //==============================================================================
 
 // Channel 0 sample from capture: 0x40000056
+// Fix 52: high-aligned → input is 0x56000000 (0x56 in bits [31:24])
 TEST(AM824EncoderTests, MatchesFireBugCapture_QuantizationNoise) {
-    // Sample value 0x56 (86 decimal) - quantization noise
-    // In high-aligned format: 0x00005600 (24-bit value 0x000056 shifted left 8)
-    int32_t sample = 0x00005600;
+    int32_t sample = 0x56000000;
     uint32_t result = AM824Encoder::encode(sample);
 
-    // encode extracts bits [31:8]: 0x00005600 >> 8 = 0x00000056
-    // Wire order bytes: 40 00 00 56
-    // As little-endian uint32: 0x56000040
-    EXPECT_EQ(result, 0x56000040);
+    // encode extracts bits [31:8]: 0x56000000 >> 8 = 0x00560000
+    // Wire order bytes: 40 56 00 00
+    // As little-endian uint32: 0x00005640
+    EXPECT_EQ(result, 0x00005640);
 }
 
 // Channel 1 sample from capture: 0x40E55654
+// Fix 52: high-aligned → input is 0xE5565400
 TEST(AM824EncoderTests, MatchesFireBugCapture_RealAudio) {
-    // Sample value 0xE55654 - real audio
-    // In high-aligned format: 0xE5565400
     int32_t sample = static_cast<int32_t>(0xE5565400);
     uint32_t result = AM824Encoder::encode(sample);
 
@@ -111,9 +109,8 @@ TEST(AM824EncoderTests, MatchesFireBugCapture_RealAudio) {
 }
 
 // Another channel 1 sample: 0x40DBD499
+// Fix 52: high-aligned → input is 0xDBD49900
 TEST(AM824EncoderTests, MatchesFireBugCapture_RealAudio2) {
-    // Sample value 0xDBD499
-    // In high-aligned format: 0xDBD49900
     int32_t sample = static_cast<int32_t>(0xDBD49900);
     uint32_t result = AM824Encoder::encode(sample);
 
@@ -173,9 +170,9 @@ TEST(AM824EncoderTests, LabelInCorrectPosition) {
 //==============================================================================
 
 TEST(AM824EncoderTests, IsConstexpr) {
-    // These should compile if encode() is truly constexpr
+    // Fix 52: high-aligned input 0x12345600
     constexpr uint32_t silence = AM824Encoder::encodeSilence();
-    constexpr uint32_t sample = AM824Encoder::encode(0x12345600);  // high-aligned
+    constexpr uint32_t sample = AM824Encoder::encode(0x12345600);
 
     EXPECT_EQ(silence, 0x00000040);
     EXPECT_EQ(sample, 0x56341240);

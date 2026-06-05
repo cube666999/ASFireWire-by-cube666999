@@ -8,7 +8,7 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ AKTUALNY STAN — Przeczytaj to na starcie
 
-> **Stan na 2026-06-05 (sesja 29) — Fix 48 zaimplementowany, build v63 na pulpicie MacBooka**
+> **Stan na 2026-06-05 (sesja 30) — Fix 51+52 zaimplementowane, build v70 na pulpicie MacBooka**
 
 ### Środowisko testowe (ZMIANA od sesji 29)
 
@@ -37,27 +37,30 @@ codesign --force --sign "$CERT" --entitlements "ASFW/App.entitlements" --timesta
 
 ---
 
-### Ostatnie fixy
+### Ostatnie fixy (sesja 30)
 
-> **✅ Fix 45** (sesja 25/26) — CIP header: SPH bit + FMT/FDF dla MOTU V3
-> **✅ Fix 46** (sesja 27, v60) — OHCI CycleTimer → MOTU V3 SPH timestamps
-> **✅ Fix 47** (sesja 28, v61) — Poprawna formuła SPH per Linux `write_sph()`: `sph = ct & 0x01FFFFFFu`
+> **✅ Fix 49** (sesja 30, v65) — Wyłączenie zero-copy: `kEnableZeroCopyOutputPath = false`
+> - MOTU V3 wymaga encodingu (packed 3-byte PCM), nie może zero-copy raw PCM.
 >
-> **✅ Fix 48** (sesja 29, v63) — Bit shift PCM encoding: górne 24 bity int32
-> - **Problem:** `encodeInterleavedFramesToMotuV3` brało bity `[23:0]` z int32.
->   AudioDriverKit dostarcza **high-aligned** int32 (audio w bitach `[31:8]`), jak potwierdza MOTU kext (`shrl $0x18`).
->   Efekt: amplituda 1/256 → praktyczna cisza, okazjonalny pisk z szumu.
-> - **Fix:** zmiana shift w `PacketAssembler.hpp` i `AM824Encoder.hpp`:
->   `dst[0]=(s>>24)`, `dst[1]=(s>>16)`, `dst[2]=(s>>8)` — identycznie jak kext MOTU.
-> - Pliki: `ASFWDriver/Isoch/Encoding/PacketAssembler.hpp`, `AM824Encoder.hpp`
+> **✅ Fix 51** (sesja 30, v68) — Startup pump fallback + cap burst pump
+> - Startup fallback: `avgFramesPerCycle * 8` = 48 frames/IRQ (było 6 → TxQ przepełniał się w 100ms)
+> - Burst cap: `want_steady * 4` — burst pump nie drenuje TxQ w jednym IRQ
+> - Efekt: underruns 110k→60k, Buffer Fill 160%→96%, TX Throughput ciągły
+> - Plik: `ASFWDriver/Isoch/Transmit/IsochAudioTxPipeline.cpp`
+>
+> **✅ Fix 52** (sesja 30, v70) — Bit alignment: high-aligned int32 (GÓRNE 24 bity)
+> - **Dowód:** IORegistry na Sequoia z MOTU kext: `IOAudioStreamAlignment=1` = `kIOAudioStreamAlignmentHighByte`
+> - **Fix:** `FormatFlagIsAlignedHigh` w formacie ADK + `>> 8` w AM824Encoder + `(s>>24),(s>>16),(s>>8)` w PacketAssembler
+> - Cofnięcie błędnego Fix 50 (który cofnął poprawny kierunek Fix 48, bo brakowało `FormatFlagIsAlignedHigh`)
+> - Pliki: `ASFWAudioDriver.cpp`, `AM824Encoder.hpp`, `PacketAssembler.hpp`, `AM824EncoderTests.cpp`
 
-### ⏳ TEST AUDIO — Fix 48 (v63) na MacBooku Tahoe
+### ⏳ TEST AUDIO — Fix 52 (v70) na MacBooku Tahoe
 
-- **v63** jest na pulpicie MacBooka (`ASFW_v63.app`)
+- **v70** jest na pulpicie MacBooka (`ASFW_v70.app`)
 - Wymagany **restart** (dext upgrade z aktywnym AudioDriverKit)
-- Po restarcie: otwórz v63 → System Settings → Sound → wybierz MOTU 828mk3 → Spotify
-- Oczekiwany rezultat: **dźwięk** przez MOTU (jeśli high-aligned = poprawna hipoteza)
-- Jeśli nadal cisza/pisk → AudioDriverKit może dostarczać low-aligned → przywróć stary shift i szukaj dalej
+- Po restarcie: otwórz v70 → System Settings → Sound → wybierz MOTU 828mk3 → Spotify
+- Oczekiwany rezultat: **muzyka** przez MOTU bez pisku
+- Jeśli nadal pisk: zbadać routing kanałów (IOAudioStreamStartingChannelID) i pcm_byte_offset
 
 ---
 
