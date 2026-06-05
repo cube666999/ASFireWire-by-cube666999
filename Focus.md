@@ -8,7 +8,7 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ AKTUALNY STAN — Przeczytaj to na starcie
 
-> **Stan na 2026-06-05 (sesja 30) — Fix 51+52 zaimplementowane, build v70 na pulpicie MacBooka**
+> **Stan na 2026-06-05 (sesja 31) — Fix 53 zaimplementowany, build v71 na pulpicie MacBooka**
 
 ### Środowisko testowe (ZMIANA od sesji 29)
 
@@ -37,7 +37,7 @@ codesign --force --sign "$CERT" --entitlements "ASFW/App.entitlements" --timesta
 
 ---
 
-### Ostatnie fixy (sesja 30)
+### Ostatnie fixy (sesja 30–31)
 
 > **✅ Fix 49** (sesja 30, v65) — Wyłączenie zero-copy: `kEnableZeroCopyOutputPath = false`
 > - MOTU V3 wymaga encodingu (packed 3-byte PCM), nie może zero-copy raw PCM.
@@ -53,14 +53,39 @@ codesign --force --sign "$CERT" --entitlements "ASFW/App.entitlements" --timesta
 > - **Fix:** `FormatFlagIsAlignedHigh` w formacie ADK + `>> 8` w AM824Encoder + `(s>>24),(s>>16),(s>>8)` w PacketAssembler
 > - Cofnięcie błędnego Fix 50 (który cofnął poprawny kierunek Fix 48, bo brakowało `FormatFlagIsAlignedHigh`)
 > - Pliki: `ASFWAudioDriver.cpp`, `AM824Encoder.hpp`, `PacketAssembler.hpp`, `AM824EncoderTests.cpp`
+>
+> **✅ Fix 53** (sesja 31, v71) — PLL target + startup TxQ headroom
+> - **Problem 1 (PLL):** `targetFillLevel=512` = peak sawtooth, ale naturalna średnia = 256 (od Fix 36b).
+>   Stały błąd -256 → I-term winds do -500k → PLL zacina na -400ppm.
+>   **Fix:** `targetFillLevel = kAudioIoPeriodFrames / 2 = 256`
+>   Plik: `ASFWDriver/Isoch/Audio/AudioClockEngine.cpp`
+> - **Problem 2 (startup):** `startWaitTargetFrames=2048` + `startupPrimeLimitFrames=0` (unbounded)
+>   → pre-prime kopiowało ALL 2048 do ring → TxQ=0 → pump głodził przez pierwsze ~10ms.
+>   **Fix:** `startWaitTargetFrames=4096`, `startupPrimeLimitFrames=2048`
+>   → czeka na 8 × PerformIO (~85ms), pre-prime bierze 2048, TxQ=2048 pozostaje dla pumpa.
+>   Plik: `ASFWDriver/Isoch/Config/AudioTxProfiles.hpp`
 
-### ⏳ TEST AUDIO — Fix 52 (v70) na MacBooku Tahoe
+### ⏳ TEST AUDIO — Fix 53 (v71) na MacBooku Tahoe
 
-- **v70** jest na pulpicie MacBooka (`ASFW_v70.app`)
+- **v71** jest na pulpicie MacBooka (`ASFW_v71.app`)
 - Wymagany **restart** (dext upgrade z aktywnym AudioDriverKit)
-- Po restarcie: otwórz v70 → System Settings → Sound → wybierz MOTU 828mk3 → Spotify
-- Oczekiwany rezultat: **muzyka** przez MOTU bez pisku
-- Jeśli nadal pisk: zbadać routing kanałów (IOAudioStreamStartingChannelID) i pcm_byte_offset
+- Po restarcie: otwórz v71 → System Settings → Sound → wybierz MOTU 828mk3 → Spotify
+- Oczekiwany rezultat: **mniej underrunów**, stabilniejszy Buffer Fill, muzyka przez MOTU
+- ⚠️ Startup IT wolniejszy o ~85ms (czekamy na 8 PerformIO) — niezauważalne dla użytkownika
+- Obserwowane liczby (v70): 364k underrunów w 8min, Buffer Fill 0→152%, 2.8M IR drops
+
+### Znane obserwacje z v70 (hardware test sesja 31)
+
+| Metrika | v70 (8 min) | Oczekiwane v71 |
+|---------|-------------|----------------|
+| IT underruns | 364k (754/sec) | mniej |
+| IT Buffer Fill | 0→152% (oscyluje) | stabilniejszy |
+| IR drops | 2.8M (75%!) | bez zmian (osobny problem) |
+| Kanały | 14 Out / 18 In | bez zmian |
+| DBS IT | 21 (hardcoded) | bez zmian |
+
+**IR drops 2.8M** = osobny problem — IR ring nie jest opróżniany wystarczająco szybko.
+Do zbadania oddzielnie po stabilizacji IT.
 
 ---
 
