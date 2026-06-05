@@ -45,13 +45,17 @@ inline constexpr TxBufferProfile kTxProfileB{
     "B",
     4096,  // startWaitTargetFrames  (Fix 53: raised from 2048 → 4096.
            //                        Requires 8 PerformIO writes before IT start (~85ms).
-           //                        Pre-prime fills ring with 2048 (startupPrimeLimitFrames),
-           //                        leaving 2048 frames in TxQ for immediate pump use.
-           //                        Eliminates startup starvation: old value=2048 left
-           //                        TxQ=0 after pre-prime, pump starved for first 10ms.)
-    2048,  // startupPrimeLimitFrames (Fix 53: was 0 (unbounded). Limit pre-prime to 2048
-           //                        so that TxQ retains startWait−2048=2048 frames after
-           //                        pre-prime. Pump has 2048 frames available immediately.)
+           //                        Fix 54: pre-prime now consumes ALL 4096 TxQ frames
+           //                        (startupPrimeLimitFrames=4096), so TxQ=0 after prime.
+           //                        Natural TxQ sawtooth average = 256 = PLL targetFillLevel.
+           //                        PLL sees zero steady-state error → no saturation.)
+    4096,  // startupPrimeLimitFrames (Fix 54: was 2048. Was leaving TxQ=2048 after prime,
+           //                        causing PLL to see persistent error = 2048-256 = +1792
+           //                        → PLL saturated at -400 ppm → slowed PerformIO 19 fps →
+           //                        TxQ drained in ~107s → underruns → adaptive fill burst
+           //                        (192 fps/call) → TxQ drained faster → runaway oscillation.
+           //                        Fix: consume ALL TxQ during pre-prime. Post-prime TxQ=0,
+           //                        natural average = 256 = target. PLL at neutral. Stable.)
     2048,  // legacyRbTargetFrames
     4096,  // legacyRbMaxFrames     (kAudioRingBufferFrames=4096)
     8,     // legacyMaxChunksPerRefill (8×256=2048 frames max per IRQ)
