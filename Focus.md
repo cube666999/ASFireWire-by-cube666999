@@ -8,7 +8,7 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ AKTUALNY STAN — Przeczytaj to na starcie
 
-> **Stan na 2026-06-05 (sesja 31) — Fix 54 zaimplementowany, build v72 na pulpicie MacBooka. Test w toku.**
+> **Stan na 2026-06-06 (sesja 32) — Fix 55 zaimplementowany, build v73 na pulpicie MacBooka. Test w toku.**
 
 ### Środowisko testowe (ZMIANA od sesji 29)
 
@@ -37,7 +37,7 @@ codesign --force --sign "$CERT" --entitlements "ASFW/App.entitlements" --timesta
 
 ---
 
-### Ostatnie fixy (sesja 30–31)
+### Ostatnie fixy (sesje 30–32)
 
 > **✅ Fix 49** (sesja 30, v65) — Wyłączenie zero-copy: `kEnableZeroCopyOutputPath = false`
 >
@@ -52,7 +52,15 @@ codesign --force --sign "$CERT" --entitlements "ASFW/App.entitlements" --timesta
 > - `targetFillLevel 512 → 256`, `startWaitTargetFrames=4096`, `startupPrimeLimitFrames=2048`
 > - Plik: `AudioClockEngine.cpp`, `AudioTxProfiles.hpp`
 >
+
 > **✅ Fix 54** (sesja 31, v72) — startupPrimeLimitFrames 2048 → 4096: eliminacja PLL saturacji
+>
+> **✅ Fix 55** (sesja 32, v73) — legacyRbTargetFrames 2048 → 256: przełamanie burst-pump death loop
+> - **Root cause:** target=2048 nieosiągalny z 512-klatkowego TxQ. Burst pump (cap 192fps/IRQ) drenuje
+>   TxQ w 2.67ms, ring zyskuje 384 net = tyle samo ile OHCI drenuje. Ring utknięty na ~100 klatkach.
+> - **Fix:** target=256 < pojedynczy burst yield (~455 klatek) → ring wychodzi z burst mode, stabilizuje.
+>   Przy normalnym starcie (pre-prime → ring ~3584) >> 256 = brak burst mode w ogóle.
+> - Plik: `ASFWDriver/Isoch/Config/AudioTxProfiles.hpp`
 > - **Root cause:** `primeLimitFrames=2048` zostawiało TxQ=2048 po pre-prime. PLL target=256.
 >   Stały error = +1792 → PLL saturacja -400ppm → PerformIO zwalniał 19fps → TxQ drenował 107s.
 >   Gdy TxQ=0: underruny → adaptive fill burst (192fps/call) → runaway oscillacja co 1.47s.
@@ -60,25 +68,56 @@ codesign --force --sign "$CERT" --entitlements "ASFW/App.entitlements" --timesta
 >   naturalna śr. = 256 = target. PLL na zero-error. Brak saturacji. Brak runaway.
 > - Plik: `ASFWDriver/Isoch/Config/AudioTxProfiles.hpp`, `AudioClockEngine.cpp`
 
-### ⏳ TEST AUDIO — Fix 54 (v72) na MacBooku Tahoe
+### ⏳ TEST AUDIO — Fix 55 (v73) na MacBooku Tahoe
 
-- **v72** jest na pulpicie MacBooka (`ASFW_v72.app`)
+- **v73** jest na pulpicie MacBooka (`ASFW_v73.app`)
 - Wymagany **restart** (dext upgrade z aktywnym AudioDriverKit)
-- Po restarcie: otwórz v72 → System Settings → Sound → wybierz MOTU 828mk3 → Spotify
-- **Oczekiwane:** Buffer Fill stabilny ~50%, underruny < 100, brak pisku, muzyka przez MOTU
+- Po restarcie: otwórz v73 → System Settings → Sound → wybierz MOTU 828mk3 → Spotify
+- **Oczekiwane:** Buffer Fill stabilny ~87%+, underruny < 50/okno 1.55s, brak pisku
 
-### Obserwacje z v70/v71 (sesja 31)
+### Obserwacje z v70–v73 (sesje 31–32)
 
-| Metrika | v70 | v71 (Fix 53) | Oczekiwane v72 |
-|---------|-----|--------------|----------------|
-| IT underruns | 364k (754/s) | 18k (oscylacja 1.47s) | ~0 |
-| IT Buffer Fill | 0→152% | 0→192% | stabilny ~50% |
-| txFill przy underrunie | — | 0 (prawie zawsze) | >256 |
-| Muzyka | brak | pisk 1 kanał | poprawna |
-| IR drops | 2.8M (75%!) | — | bez zmian (osobny) |
+| Metrika | v70 | v71 (Fix 53) | v72 (Fix 54) | Oczekiwane v73 |
+|---------|-----|--------------|--------------|----------------|
+| IT underruns | 364k (754/s) | 18k (osc. 1.47s) | 56k (osc. 1.55s) | ~0 |
+| IT Buffer Fill | 0→152% | 0→192% | 0→144% | stabilny ~87% |
+| rbFill przy underrunie | — | — | 48–144 | >3500 |
+| txFill przy underrunie | — | — | 0 (zawsze) | 0–512 (sawtooth) |
+| Muzyka | brak | pisk 1 kanał | pisk 1 kanał | poprawna? |
+| IR drops | 2.8M (75%!) | — | 300k (75%) | bez zmian (osobny) |
 
-**v71 vs v70:** underruny 20× mniejsze ✅, ale oscylacja 1.47s pozostała → Fix 54 naprawia root cause.
-**IR drops 2.8M** = osobny problem — IR ring nie jest opróżniany wystarczająco szybko. Do zbadania po stabilizacji IT.
+**v72 analiza (root cause Fix 55):** ring przy 48–144 klatek (zamiast ~3584). TxQ=0 zawsze przy logu.
+Burst pump z target=2048 drenuje TxQ w 3ms, ale ring zyskuje tylko 384 klatek net/okres — tyle samo ile
+OHCI drenuje. Ring utknął na ~100 klatkach na zawsze (death loop). Fix: target 2048→256 jest osiągalny
+w jednym burście (zysk ~455 klatek), ring wychodzi z burst mode i stabilizuje się.
+
+**IR drops 75%** = osobny problem — IR ring nie jest opróżniany wystarczająco szybko.
+
+---
+
+### 🔬 Referencja El Capitan — MOTU 828 MK3 z oryginalnym sterownikiem (sesja 32)
+
+Pliki: `/Users/cube666/Desktop/OS EI Capitan/` (ioreg_motu2.txt, ioreg_audio.txt)
+
+| Parametr | Wartość (El Capitan, 48kHz) | Nasz driver |
+|---|---|---|
+| IOAudioEngineState | **1** (running) | 1 ✓ |
+| Sample Rate | **48 000 Hz** | 48 000 Hz ✓ |
+| NumSampleFramesPerBuffer | **4096** | 4096 ✓ |
+| SampleOffset | **24** | sprawdzić |
+| OutputSampleLatency | **16** | sprawdzić |
+| InputSampleLatency | **19** | sprawdzić |
+| AudioOnlyMode | **1** (brak ADAT/optyki) | nie implementujemy |
+| Output channels (IT) | **10** (2ch stereo + 8ch analog) | **2** ← za mało |
+| Input channels (IR) | **2** (stereo) | **2** ✓ |
+
+**Kluczowe odkrycie — AudioOnlyMode=1:**
+MOTU działa bez ADAT (`OpticalInput=255`, `OpticalOutput=255`). Oryginalny sterownik wysyła **10 kanałów**
+na IT (nie 18). To może zmieniać oczekiwany DBS. Jeśli MOTU bez optyki oczekuje DBS≠21, a my wysyłamy
+DBS=21 → MOTU dekoduje złe offsety → śmieć na jednym kanale → **pisk**.
+
+**Następny krok po stabilizacji underrunów:** weryfikacja DBS przy AudioOnlyMode — czytamy
+`docs/linux/motu/amdtp-motu.c` i `motu-protocol-v3.c` żeby ustalić właściwy DBS bez ADAT.
 
 ---
 
