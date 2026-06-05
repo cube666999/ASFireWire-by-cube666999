@@ -8,7 +8,7 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ AKTUALNY STAN — Przeczytaj to na starcie
 
-> **Stan na 2026-06-05 (sesja 31) — Fix 53 zaimplementowany, build v71 na pulpicie MacBooka**
+> **Stan na 2026-06-05 (sesja 31) — Fix 54 zaimplementowany, build v72 na pulpicie MacBooka. Test w toku.**
 
 ### Środowisko testowe (ZMIANA od sesji 29)
 
@@ -40,52 +40,45 @@ codesign --force --sign "$CERT" --entitlements "ASFW/App.entitlements" --timesta
 ### Ostatnie fixy (sesja 30–31)
 
 > **✅ Fix 49** (sesja 30, v65) — Wyłączenie zero-copy: `kEnableZeroCopyOutputPath = false`
-> - MOTU V3 wymaga encodingu (packed 3-byte PCM), nie może zero-copy raw PCM.
 >
 > **✅ Fix 51** (sesja 30, v68) — Startup pump fallback + cap burst pump
-> - Startup fallback: `avgFramesPerCycle * 8` = 48 frames/IRQ (było 6 → TxQ przepełniał się w 100ms)
-> - Burst cap: `want_steady * 4` — burst pump nie drenuje TxQ w jednym IRQ
-> - Efekt: underruns 110k→60k, Buffer Fill 160%→96%, TX Throughput ciągły
-> - Plik: `ASFWDriver/Isoch/Transmit/IsochAudioTxPipeline.cpp`
+> - Startup fallback: 48 frames/IRQ; burst cap: `want_steady × 4`
+> - Efekt: underruns 110k→60k, Buffer Fill 160%→96%
 >
-> **✅ Fix 52** (sesja 30, v70) — Bit alignment: high-aligned int32 (GÓRNE 24 bity)
-> - **Dowód:** IORegistry na Sequoia z MOTU kext: `IOAudioStreamAlignment=1` = `kIOAudioStreamAlignmentHighByte`
-> - **Fix:** `FormatFlagIsAlignedHigh` w formacie ADK + `>> 8` w AM824Encoder + `(s>>24),(s>>16),(s>>8)` w PacketAssembler
-> - Cofnięcie błędnego Fix 50 (który cofnął poprawny kierunek Fix 48, bo brakowało `FormatFlagIsAlignedHigh`)
-> - Pliki: `ASFWAudioDriver.cpp`, `AM824Encoder.hpp`, `PacketAssembler.hpp`, `AM824EncoderTests.cpp`
+> **✅ Fix 52** (sesja 30, v70) — Bit alignment: high-aligned int32
+> - `FormatFlagIsAlignedHigh` + `>> 8` w AM824Encoder + `(s>>24),(s>>16),(s>>8)` w PacketAssembler
 >
-> **✅ Fix 53** (sesja 31, v71) — PLL target + startup TxQ headroom
-> - **Problem 1 (PLL):** `targetFillLevel=512` = peak sawtooth, ale naturalna średnia = 256 (od Fix 36b).
->   Stały błąd -256 → I-term winds do -500k → PLL zacina na -400ppm.
->   **Fix:** `targetFillLevel = kAudioIoPeriodFrames / 2 = 256`
->   Plik: `ASFWDriver/Isoch/Audio/AudioClockEngine.cpp`
-> - **Problem 2 (startup):** `startWaitTargetFrames=2048` + `startupPrimeLimitFrames=0` (unbounded)
->   → pre-prime kopiowało ALL 2048 do ring → TxQ=0 → pump głodził przez pierwsze ~10ms.
->   **Fix:** `startWaitTargetFrames=4096`, `startupPrimeLimitFrames=2048`
->   → czeka na 8 × PerformIO (~85ms), pre-prime bierze 2048, TxQ=2048 pozostaje dla pumpa.
->   Plik: `ASFWDriver/Isoch/Config/AudioTxProfiles.hpp`
+> **✅ Fix 53** (sesja 31, v71) — PLL target = 256 (naturalna średnia sawtooth)
+> - `targetFillLevel 512 → 256`, `startWaitTargetFrames=4096`, `startupPrimeLimitFrames=2048`
+> - Plik: `AudioClockEngine.cpp`, `AudioTxProfiles.hpp`
+>
+> **✅ Fix 54** (sesja 31, v72) — startupPrimeLimitFrames 2048 → 4096: eliminacja PLL saturacji
+> - **Root cause:** `primeLimitFrames=2048` zostawiało TxQ=2048 po pre-prime. PLL target=256.
+>   Stały error = +1792 → PLL saturacja -400ppm → PerformIO zwalniał 19fps → TxQ drenował 107s.
+>   Gdy TxQ=0: underruny → adaptive fill burst (192fps/call) → runaway oscillacja co 1.47s.
+> - **Fix:** `primeLimitFrames 2048 → 4096` — pre-prime konsumuje CAŁE TxQ. Post-prime TxQ=0,
+>   naturalna śr. = 256 = target. PLL na zero-error. Brak saturacji. Brak runaway.
+> - Plik: `ASFWDriver/Isoch/Config/AudioTxProfiles.hpp`, `AudioClockEngine.cpp`
 
-### ⏳ TEST AUDIO — Fix 53 (v71) na MacBooku Tahoe
+### ⏳ TEST AUDIO — Fix 54 (v72) na MacBooku Tahoe
 
-- **v71** jest na pulpicie MacBooka (`ASFW_v71.app`)
+- **v72** jest na pulpicie MacBooka (`ASFW_v72.app`)
 - Wymagany **restart** (dext upgrade z aktywnym AudioDriverKit)
-- Po restarcie: otwórz v71 → System Settings → Sound → wybierz MOTU 828mk3 → Spotify
-- Oczekiwany rezultat: **mniej underrunów**, stabilniejszy Buffer Fill, muzyka przez MOTU
-- ⚠️ Startup IT wolniejszy o ~85ms (czekamy na 8 PerformIO) — niezauważalne dla użytkownika
-- Obserwowane liczby (v70): 364k underrunów w 8min, Buffer Fill 0→152%, 2.8M IR drops
+- Po restarcie: otwórz v72 → System Settings → Sound → wybierz MOTU 828mk3 → Spotify
+- **Oczekiwane:** Buffer Fill stabilny ~50%, underruny < 100, brak pisku, muzyka przez MOTU
 
-### Znane obserwacje z v70 (hardware test sesja 31)
+### Obserwacje z v70/v71 (sesja 31)
 
-| Metrika | v70 (8 min) | Oczekiwane v71 |
-|---------|-------------|----------------|
-| IT underruns | 364k (754/sec) | mniej |
-| IT Buffer Fill | 0→152% (oscyluje) | stabilniejszy |
-| IR drops | 2.8M (75%!) | bez zmian (osobny problem) |
-| Kanały | 14 Out / 18 In | bez zmian |
-| DBS IT | 21 (hardcoded) | bez zmian |
+| Metrika | v70 | v71 (Fix 53) | Oczekiwane v72 |
+|---------|-----|--------------|----------------|
+| IT underruns | 364k (754/s) | 18k (oscylacja 1.47s) | ~0 |
+| IT Buffer Fill | 0→152% | 0→192% | stabilny ~50% |
+| txFill przy underrunie | — | 0 (prawie zawsze) | >256 |
+| Muzyka | brak | pisk 1 kanał | poprawna |
+| IR drops | 2.8M (75%!) | — | bez zmian (osobny) |
 
-**IR drops 2.8M** = osobny problem — IR ring nie jest opróżniany wystarczająco szybko.
-Do zbadania oddzielnie po stabilizacji IT.
+**v71 vs v70:** underruny 20× mniejsze ✅, ale oscylacja 1.47s pozostała → Fix 54 naprawia root cause.
+**IR drops 2.8M** = osobny problem — IR ring nie jest opróżniany wystarczająco szybko. Do zbadania po stabilizacji IT.
 
 ---
 
