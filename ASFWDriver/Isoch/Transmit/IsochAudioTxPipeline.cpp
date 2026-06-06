@@ -102,7 +102,19 @@ kern_return_t IsochAudioTxPipeline::Configure(uint8_t sid,
 
     uint32_t am824Slots = queueChannels;
     if (requestedAm824Slots != 0) {
-        if (requestedAm824Slots < queueChannels) {
+        // Fix 57: MOTU V3 uses 3-byte packed PCM — DBS=13 fits 14 channels (52 bytes = SPH+MSG+14×3).
+        // Validate by byte capacity instead of slot count for MOTU V3.
+        // For AM824: 1 slot = 1 channel (4 bytes each), so slots >= channels required.
+        const bool isMotuV3 = (encoding == Encoding::PacketEncoding::kMotuV3);
+        if (isMotuV3) {
+            const uint32_t requiredBytes = 10u + queueChannels * 3u; // SPH(4)+MSG(6)+PCM(N×3)
+            if (requestedAm824Slots * 4u < requiredBytes) {
+                ASFW_LOG(Isoch,
+                         "IT: Configure failed - MOTU V3: DBS=%u (frame=%u bytes) < required %u bytes for %u PCM ch",
+                         requestedAm824Slots, requestedAm824Slots * 4u, requiredBytes, queueChannels);
+                return kIOReturnBadArgument;
+            }
+        } else if (requestedAm824Slots < queueChannels) {
             ASFW_LOG(Isoch,
                      "IT: Configure failed - requestedAm824Slots=%u < queuePcm=%u",
                      requestedAm824Slots,
@@ -179,6 +191,7 @@ void IsochAudioTxPipeline::ResetForStart() noexcept {
 
     audioWriteIndex_ = 0;
     nextCallPumpFrames_ = 0;  // will be set after first InjectNearHw call
+    injectDbc_ = 0;  // Fix 67: reset running DBC counter (matches PrimeRing slot-0 DBC)
 
     dbcTracker_.lastDbc = 0;
     dbcTracker_.lastDataBlockCount = 0;
@@ -618,12 +631,22 @@ void IsochAudioTxPipeline::InjectNearHw(uint32_t hwPacketIndex, Tx::IsochTxDescr
         if (!payloadVirt) {
             continue;
         }
+
+        // Fix 67: Keep CIP DBC consistent across ring wraps.
+        // PrimeRing writes CIP Q0 big-endian: payloadVirt[3] = DBC (LSByte of Q0 in wire order).
+        // After each full ring pass (200 pkts × 150 data × 8 frames = 1200 → 1200 % 256 = 176),
+        // slot 0 would have stale DBC=0 from Prime → MOTU sees -176 DBC jump → mute/resync.
+        // Overwrite with the running counter before encoding audio.
+        payloadVirt[3] = injectDbc_;
+
         uint32_t* audioQuadlets = reinterpret_cast<uint32_t*>(payloadVirt + Encoding::kCIPHeaderSize);
 
         // Fix 40: dispatch to the correct encoder (AM824 or MOTU V3).
         // Previously always called EncodePcmFramesWithAm824Placeholders — sending AM824 data
         // to MOTU V3 devices which expect 3-byte packed PCM → silence on MOTU.
         assembler_.encodeToWire(samples, framesPerPacket, audioQuadlets);
+
+        injectDbc_ = static_cast<uint8_t>(injectDbc_ + static_cast<uint8_t>(framesPerPacket));
         ++dataPacketsInjected;
     }
 
