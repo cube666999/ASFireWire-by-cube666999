@@ -262,26 +262,23 @@ IOReturn MOTUAudioBackend::StartStreaming(uint64_t guid) noexcept {
             const uint32_t correctIrDbs = ComputeV3Dbs(irPcm);
             const uint32_t correctItDbs = ComputeV3Dbs(itPcm);
 
-            ASFW_LOG(Audio,
-                "MOTUAudioBackend: *** DBS DIAGNOSTIC ***\n"
-                "  V3_OPT_IFACE_MODE=0x%08x\n"
-                "  OptIN_A=%u(adat=%u) OptIN_B=%u(adat=%u) → IR PCM=%u → IR DBS=%u (hardcoded=%u)\n"
-                "  OptOUT_A=%u(adat=%u) OptOUT_B=%u(adat=%u) → IT PCM=%u → IT DBS=%u (hardcoded=%u)\n"
-                "  %{public}s",
-                optMode,
-                (optMode & kV3EnableOptInIfaceA)  ? 1u : 0u,
+            // OS_LOG truncates at first \n — use separate log calls.
+            ASFW_LOG(Audio, "DBS-DIAG: V3_OPT_IFACE_MODE=0x%08x", optMode);
+            ASFW_LOG(Audio, "DBS-DIAG: OptIN_A=%u(adat=%u) OptIN_B=%u(adat=%u) irPcm=%u irDBS=%u hardcoded=%u",
+                (optMode & kV3EnableOptInIfaceA)    ? 1u : 0u,
                 (optMode & kV3UseOptInIfaceAAsAdat) ? 1u : 0u,
-                (optMode & kV3EnableOptInIfaceB)  ? 1u : 0u,
+                (optMode & kV3EnableOptInIfaceB)    ? 1u : 0u,
                 (optMode & kV3UseOptInIfaceBAsAdat) ? 1u : 0u,
-                irPcm, correctIrDbs, static_cast<uint32_t>(kMOTUV3WireDbs48k_IR),
-                (optMode & kV3EnableOptOutIfaceA) ? 1u : 0u,
+                irPcm, correctIrDbs, static_cast<uint32_t>(kMOTUV3WireDbs48k_IR));
+            ASFW_LOG(Audio, "DBS-DIAG: OptOUT_A=%u(adat=%u) OptOUT_B=%u(adat=%u) itPcm=%u itDBS=%u hardcoded=%u",
+                (optMode & kV3EnableOptOutIfaceA)    ? 1u : 0u,
                 (optMode & kV3UseOptOutIfaceAAsAdat) ? 1u : 0u,
-                (optMode & kV3EnableOptOutIfaceB) ? 1u : 0u,
+                (optMode & kV3EnableOptOutIfaceB)    ? 1u : 0u,
                 (optMode & kV3UseOptOutIfaceBAsAdat) ? 1u : 0u,
-                itPcm, correctItDbs, static_cast<uint32_t>(kMOTUV3WireDbs48k),
-                (correctItDbs == kMOTUV3WireDbs48k)
-                    ? "IT DBS MATCH ✅"
-                    : "IT DBS MISMATCH ❌ — fix kMOTUV3WireDbs48k!");
+                itPcm, correctItDbs, static_cast<uint32_t>(kMOTUV3WireDbs48k));
+            ASFW_LOG(Audio, "DBS-DIAG: IT DBS %{public}s (correct=%u hardcoded=%u)",
+                (correctItDbs == kMOTUV3WireDbs48k) ? "MATCH OK" : "MISMATCH !!!",
+                correctItDbs, static_cast<uint32_t>(kMOTUV3WireDbs48k));
         } else {
             ASFW_LOG_WARNING(Audio,
                 "MOTUAudioBackend: V3_OPT_IFACE_MODE read failed — using hardcoded DBS IR=%u IT=%u",
