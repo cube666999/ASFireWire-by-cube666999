@@ -54,13 +54,6 @@ public:
     static kern_return_t PrepareInterrupts(ASFWDriver& service, IOService* provider, ::ServiceContext& ctx);
     static kern_return_t PrepareWatchdog(ASFWDriver& service, ::ServiceContext& ctx);
     static void CleanupStartFailure(::ServiceContext& ctx);
-
-    // Safely tear down the provider termination-notification dispatch source.
-    // IODispatchSource::Cancel is asynchronous; passing a NULL handler and/or releasing
-    // the source+action before the cancel completes crashes inside Cancel_Impl
-    // (EXC_BAD_ACCESS at null+8). This detaches the OSSharedPtrs and releases them only
-    // from the cancel-completion block. Idempotent: a second call is a no-op.
-    static void TeardownProviderNotifications(::ServiceContext& ctx);
 };
 
 } // namespace ASFW::Driver

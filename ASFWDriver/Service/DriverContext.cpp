@@ -53,7 +53,12 @@ void ServiceContext::Reset() {
     statusPublisher.Reset();
     watchdog.Reset();
 #ifndef ASFW_HOST_TEST
-    ASFW::Driver::DriverWiring::TeardownProviderNotifications(*this);
+    if (providerNotifications) {
+        providerNotifications->SetEnableWithCompletion(false, nullptr);
+        providerNotifications->Cancel(nullptr);
+    }
+    providerNotifications.reset();
+    providerNotificationAction.reset();
 #endif
     workQueue.reset();
     interruptAction.reset();
@@ -333,34 +338,15 @@ void DriverWiring::CleanupStartFailure(::ServiceContext& ctx) {
     ctx.interruptAction.reset();
     ctx.watchdog.Reset();
 #ifndef ASFW_HOST_TEST
-    DriverWiring::TeardownProviderNotifications(ctx);
+    if (ctx.providerNotifications) {
+        ctx.providerNotifications->SetEnableWithCompletion(false, nullptr);
+        ctx.providerNotifications->Cancel(nullptr);
+    }
+    ctx.providerNotifications.reset();
+    ctx.providerNotificationAction.reset();
 #endif
     ctx.workQueue.reset();
     ctx.statusPublisher.Reset();
-}
-
-void DriverWiring::TeardownProviderNotifications(::ServiceContext& ctx) {
-#ifndef ASFW_HOST_TEST
-    if (!ctx.providerNotifications) {
-        ctx.providerNotificationAction.reset();
-        return;
-    }
-    // Detach keeps the existing +1 refs on the raw pointers; the OSSharedPtr members
-    // become empty so a second call is a safe no-op. The cancel-completion block holds
-    // the refs and releases them only after cancellation finishes on the work queue —
-    // this is the documented IODispatchSource teardown idiom and avoids the null-handler
-    // deref (EXC_BAD_ACCESS at null+8) seen with Cancel(nullptr).
-    IOServiceNotificationDispatchSource* src = ctx.providerNotifications.detach();
-    OSAction* act = ctx.providerNotificationAction.detach();
-    src->SetEnableWithCompletion(false, nullptr);
-    src->Cancel(^{
-        // src/act are const block copies; release directly (no NULL-assignment).
-        if (act) act->release();
-        if (src) src->release();
-    });
-#else
-    (void)ctx;
-#endif
 }
 
 } // namespace ASFW::Driver
