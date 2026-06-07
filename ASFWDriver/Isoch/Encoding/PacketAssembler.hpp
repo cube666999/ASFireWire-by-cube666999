@@ -201,9 +201,6 @@ public:
     /// SPH per Linux amdtp-motu.c write_sph(): sph = (cycleCount<<12)|cycleOffset = ct & 0x01FFFFFF.
     void setCurrentCycleTime(uint32_t ohciCycleTime) noexcept {
         currentCycleTime_ = ohciCycleTime;
-        // Fix 62: seeding moved to writeMotuV3SphAndAdvance (first packet assembly).
-        // Seeding here caused cycle=8 anchoring at driver init time vs actual TX cycle ~1100+,
-        // resulting in SPH timestamps ~140ms in the past → MOTU rejected every frame.
     }
     
     /// Get zero-copy read position (for diagnostics)
@@ -218,23 +215,10 @@ public:
     /// Encode PCM frames using the configured encoding (AM824 or MOTU V3).
     /// Used by InjectNearHw to encode samples directly into the DMA payload buffer
     /// without going through assembleDataPacket (zero-copy inline path).
-    ///
-    /// Fix 68: for MOTU V3, also writes fresh SPH using a separate inject cursor.
-    /// PrimeRing advanced sphTickCursor_ through all ring slots at startup; InjectNearHw
-    /// overwrites only PCM bytes, leaving PrimeRing's stale SPH in each slot.  After
-    /// one ring wrap (~25 ms) MOTU sees SPH jump back ~102 ms → frames mis-timed →
-    /// silence / squeal.  The inject cursor (injectSphCursor_ / injectSphSeeded_) seeds
-    /// from currentCycleTime_ on the first InjectNearHw write and advances monotonically,
-    /// independent of the prime cursor so there is no double-advance.
     void encodeToWire(const int32_t* pcmInterleaved,
                       uint32_t frames,
                       uint32_t* outWireQuadlets) const noexcept {
         if (encoding_ == PacketEncoding::kMotuV3) {
-            // Update SPH for each frame before writing PCM.
-            for (uint32_t f = 0; f < frames; ++f) {
-                uint32_t* blockQuad = outWireQuadlets + static_cast<size_t>(f) * am824SlotCount_;
-                writeMotuV3InjectSphAndAdvance(reinterpret_cast<uint8_t*>(blockQuad));
-            }
             encodeInterleavedFramesToMotuV3(pcmInterleaved, frames, outWireQuadlets);
         } else {
             encodeInterleavedFramesToAm824(pcmInterleaved, frames, outWireQuadlets);
@@ -304,12 +288,8 @@ public:
         dbcGen_.reset();
         ringBuffer_.reset();
         zeroCopyReadPos_ = 0;  // Reset zero-copy read position
-        sphSeeded_ = false;         // Fix 61: re-anchor SPH cursor on next write
-        sphTickCursor_ = 0;
-        injectSphSeeded_ = false;   // Fix 68: re-anchor inject cursor on next InjectNearHw
-        injectSphCursor_ = 0;
     }
-
+    
     /// Reset with specific initial DBC value.
     void reset(uint8_t initialDbc) noexcept {
         blockingCadence_.reset();
@@ -317,10 +297,6 @@ public:
         dbcGen_.reset(initialDbc);
         ringBuffer_.reset();
         zeroCopyReadPos_ = 0;  // Reset zero-copy read position
-        sphSeeded_ = false;         // Fix 61: re-anchor SPH cursor on next write
-        sphTickCursor_ = 0;
-        injectSphSeeded_ = false;   // Fix 68: re-anchor inject cursor on next InjectNearHw
-        injectSphCursor_ = 0;
     }
     
 private:
@@ -379,10 +355,6 @@ private:
         // Encode samples: AM824 or MOTU V3 packed format
         uint32_t* audioQuadlets = reinterpret_cast<uint32_t*>(packet.data + kCIPHeaderSize);
         if (encoding_ == PacketEncoding::kMotuV3) {
-            // Fix 61: non-zero-copy fallback. Lay down SPH (+ zero MSG/PCM, advance cursor)
-            // first, then overwrite only the PCM bytes — mirrors the zero-copy two-phase write
-            // so the SPH cursor advances exactly once per data packet here too.
-            fillSilentMotuV3Frames(framesPerPacket, audioQuadlets);
             encodeInterleavedFramesToMotuV3(samples, framesPerPacket, audioQuadlets);
         } else {
             encodeInterleavedFramesToAm824(samples, framesPerPacket, audioQuadlets);
@@ -472,26 +444,40 @@ private:
         const uint32_t pcmSlots   = (totalBytes - 10u) / 3u; // how many 3-byte slots fit
         const uint32_t chCount    = (channelCount_ < pcmSlots) ? channelCount_ : pcmSlots;
 
-        // Fix 61: write ONLY the PCM bytes. SPH (bytes 0-3) and MSG (bytes 4-9) are written by
-        // the silent pre-fill (fillSilentMotuV3Frames) which owns the monotonic per-block SPH
-        // cursor. This path overwrites the PCM region only, so the SPH cursor is never
-        // double-advanced and stays monotonic in transmit order — the prior code rewrote SPH
-        // here, resetting it to the per-refill base each packet → backward jumps → MOTU
-        // rejected every frame (total silence). Unused PCM slots stay zero from the pre-fill.
+        // SPH per amdtp-motu.c write_sph(): sph = (cycleCount << 12) | cycleOffset
+        //   where cycleCount = ct[24:12], cycleOffset = ct[11:0]
+        //   = (ct & 0x01FFF000) | (ct & 0x00000FFF) = ct & 0x01FFFFFF
+        // Same value for all data blocks in this packet.
+        const uint32_t ct = currentCycleTime_;
+        const uint32_t sph = ct & 0x01FFFFFFu;
+
         for (uint32_t f = 0; f < frames; ++f) {
+            // Zero all quadlet slots with uint32_t writes — always 4-byte aligned.
+            // Do NOT use std::memset here: outWireQuadlets is offset by kCIPHeaderSize (8 bytes)
+            // from a page-aligned payload base → only 8-byte aligned.
+            // _platform_memset uses NEON stnp which requires 16-byte alignment → EXC_ARM_DA_ALIGN.
             uint32_t* blockQuad = outWireQuadlets + static_cast<size_t>(f) * am824SlotCount_;
+            for (uint32_t q = 0; q < am824SlotCount_; ++q) { blockQuad[q] = 0; }
+
             auto* block = reinterpret_cast<uint8_t*>(blockQuad);
 
+            // Bytes 0–3: SPH big-endian uint32 per Linux cpu_to_be32(sph).
+            // sph ≤ 0x01FFFFFF (25 bits): byte[0] = 0x00 or 0x01.
+            block[0] = static_cast<uint8_t>((sph >> 24u) & 0xFFu);
+            block[1] = static_cast<uint8_t>((sph >> 16u) & 0xFFu);
+            block[2] = static_cast<uint8_t>((sph >>  8u) & 0xFFu);
+            block[3] = static_cast<uint8_t>( sph         & 0xFFu);
+
             const int32_t* frameIn = pcmInterleaved + static_cast<size_t>(f) * channelCount_;
-            // DEBUG: log first 2 channels of first frame once to verify bit alignment + SPH cursor
+            // DEBUG: log first 2 channels of first frame once to verify bit alignment
             if (f == 0 && frames > 0 && chCount > 0) {
                 static uint32_t dbgCount = 0;
                 if (dbgCount < 8) {
                     ++dbgCount;
                     const uint32_t s0 = static_cast<uint32_t>(frameIn[0]);
                     const uint32_t s1 = (chCount > 1) ? static_cast<uint32_t>(frameIn[1]) : 0u;
-                    ASFW_LOG(Isoch, "[DBG] MOTU-V3 ch0=0x%08x ch1=0x%08x chCount=%u frames=%u sph0=0x%06x",
-                             s0, s1, chCount, frames, block[0] << 16 | block[1] << 8 | block[2]);
+                    ASFW_LOG(Isoch, "[DBG] MOTU-V3 ch0=0x%08x(lo=0x%06x) ch1=0x%08x(lo=0x%06x) chCount=%u frames=%u",
+                             s0, s0 & 0x00FFFFFFu, s1, s1 & 0x00FFFFFFu, chCount, frames);
                 }
             }
             for (uint32_t ch = 0; ch < chCount; ++ch) {
@@ -508,78 +494,10 @@ private:
 
     void fillSilentMotuV3Frames(uint32_t frames, uint32_t* outWireQuadlets) const noexcept {
         // Same alignment constraint as encodeInterleavedFramesToMotuV3 — use uint32_t writes.
-        // Fix 61: this path owns the monotonic SPH cursor. Every transmitted data block (silent
-        // or, after PCM overwrite, audio) gets a presentation timestamp advancing one sample
-        // period (512 ticks @ 48 kHz). Called in transmit/fill order (Prime + Refill Phase 2),
-        // so the cursor stays monotonic across packets — MOTU V3 needs this to time-align and
-        // place fetched PCM frames into its channel matrix.
         for (uint32_t f = 0; f < frames; ++f) {
             uint32_t* blockQuad = outWireQuadlets + static_cast<size_t>(f) * am824SlotCount_;
             for (uint32_t q = 0; q < am824SlotCount_; ++q) { blockQuad[q] = 0; }
-            writeMotuV3SphAndAdvance(reinterpret_cast<uint8_t*>(blockQuad));
         }
-    }
-
-    /// Write the next monotonic SPH (big-endian) into a data block's first 4 bytes and advance
-    /// the cursor by one sample period. amdtp-motu.c: tick = cycle*3072 + offset, advancing
-    /// 512 ticks/sample @ 48 kHz; cycle wraps at 8000 (TICKS_PER_SECOND = 3072*8000).
-    void writeMotuV3SphAndAdvance(uint8_t* block) const noexcept {
-        constexpr uint32_t kTicksPerCycle   = 3072u;
-        constexpr uint32_t kCyclesPerSecond = 8000u;
-        constexpr uint64_t kTicksPerSecond  =
-            static_cast<uint64_t>(kTicksPerCycle) * kCyclesPerSecond;
-        constexpr uint32_t kTicksPerSample  = 512u; // 48 kHz: 3072*8000/48000
-
-        // Fix 62: seed at first packet assembly using currentCycleTime_ (updated each refill tick).
-        // Previously seeded in setCurrentCycleTime which fires at driver init (cycle≈8), long
-        // before actual TX starts (cycle≈1100+) → SPH was ~140ms in the past → MOTU rejected.
-        if (!sphSeeded_) {
-            const uint32_t cyc = (currentCycleTime_ >> 12) & 0x1FFFu;
-            const uint32_t off = currentCycleTime_ & 0x0FFFu;
-            sphTickCursor_ = static_cast<uint64_t>((cyc % kCyclesPerSecond) * kTicksPerCycle + off)
-                           + 2ull * kTicksPerCycle;
-            sphSeeded_ = true;
-        }
-
-        const uint64_t tick = sphTickCursor_ % kTicksPerSecond;
-        const uint32_t cyc  = static_cast<uint32_t>((tick / kTicksPerCycle) % kCyclesPerSecond);
-        const uint32_t off  = static_cast<uint32_t>(tick % kTicksPerCycle);
-        const uint32_t sph  = (cyc << 12) | off;
-        block[0] = static_cast<uint8_t>((sph >> 24) & 0xFFu);
-        block[1] = static_cast<uint8_t>((sph >> 16) & 0xFFu);
-        block[2] = static_cast<uint8_t>((sph >>  8) & 0xFFu);
-        block[3] = static_cast<uint8_t>( sph        & 0xFFu);
-        sphTickCursor_ += kTicksPerSample;
-    }
-
-    /// Fix 68: separate SPH cursor for InjectNearHw path.
-    /// Identical logic to writeMotuV3SphAndAdvance but uses injectSphCursor_ /
-    /// injectSphSeeded_ so the prime cursor (sphTickCursor_) is never advanced
-    /// from the inject path — avoids the double-advance that caused Fix 65 to regress.
-    void writeMotuV3InjectSphAndAdvance(uint8_t* block) const noexcept {
-        constexpr uint32_t kTicksPerCycle   = 3072u;
-        constexpr uint32_t kCyclesPerSecond = 8000u;
-        constexpr uint64_t kTicksPerSecond  =
-            static_cast<uint64_t>(kTicksPerCycle) * kCyclesPerSecond;
-        constexpr uint32_t kTicksPerSample  = 512u;
-
-        if (!injectSphSeeded_) {
-            const uint32_t cyc = (currentCycleTime_ >> 12) & 0x1FFFu;
-            const uint32_t off = currentCycleTime_ & 0x0FFFu;
-            injectSphCursor_ = static_cast<uint64_t>((cyc % kCyclesPerSecond) * kTicksPerCycle + off)
-                             + 2ull * kTicksPerCycle;
-            injectSphSeeded_ = true;
-        }
-
-        const uint64_t tick = injectSphCursor_ % kTicksPerSecond;
-        const uint32_t cyc  = static_cast<uint32_t>((tick / kTicksPerCycle) % kCyclesPerSecond);
-        const uint32_t off  = static_cast<uint32_t>(tick % kTicksPerCycle);
-        const uint32_t sph  = (cyc << 12) | off;
-        block[0] = static_cast<uint8_t>((sph >> 24) & 0xFFu);
-        block[1] = static_cast<uint8_t>((sph >> 16) & 0xFFu);
-        block[2] = static_cast<uint8_t>((sph >>  8) & 0xFFu);
-        block[3] = static_cast<uint8_t>( sph        & 0xFFu);
-        injectSphCursor_ += kTicksPerSample;
     }
 
     uint32_t channelCount_{2};               ///< Number of PCM audio channels
@@ -587,10 +505,6 @@ private:
     PacketEncoding encoding_{PacketEncoding::kAM824}; ///< Wire encoding format
     uint32_t midiSlotsPerEvent_{0};          ///< Extra AM824 slots after PCM (MIDI, etc.)
     uint32_t currentCycleTime_{0};           ///< OHCI CycleTimer snapshot for MOTU V3 SPH (updated per refill tick)
-    mutable uint64_t sphTickCursor_{0};      ///< Fix 61: monotonic SPH tick cursor (prime path), +512/sample
-    mutable bool sphSeeded_{false};          ///< Fix 61: whether sphTickCursor_ has been anchored to HW cycle time
-    mutable uint64_t injectSphCursor_{0};   ///< Fix 68: separate SPH cursor for InjectNearHw path
-    mutable bool injectSphSeeded_{false};   ///< Fix 68: whether injectSphCursor_ has been seeded
     uint64_t currentCycleNumber() const noexcept {
         switch (streamMode_) {
             case StreamMode::kBlocking:

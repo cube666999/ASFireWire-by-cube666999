@@ -238,55 +238,6 @@ IOReturn MOTUAudioBackend::StartStreaming(uint64_t guid) noexcept {
         }
     }
 
-    // Step 1b — Read V3_OPT_IFACE_MODE (0x0c94): determine actual IT/IR PCM channel counts.
-    // This register controls which optical interfaces are active and whether they carry ADAT
-    // (+8 PCM) or TOSLINK/SPDIF (+4 PCM). Without reading it we'd have to guess DBS.
-    // Reference: Linux motu-protocol-v3.c detect_packet_formats_with_opt_ifaces().
-    {
-        uint32_t optMode = 0;
-        uint32_t irPcm = k828Mk3BaseIrPcm; // start from 828mk3fw base: IR=18, IT=14
-        uint32_t itPcm = k828Mk3BaseItPcm;
-
-        if (ReadRegister(nodeId, gen, kOptIfaceModeOff, optMode)) {
-            // Optical IN (adds to IR = device→host TX direction)
-            if (optMode & kV3EnableOptInIfaceA)
-                irPcm += (optMode & kV3UseOptInIfaceAAsAdat) ? 8u : 4u;
-            if (optMode & kV3EnableOptInIfaceB)
-                irPcm += (optMode & kV3UseOptInIfaceBAsAdat) ? 8u : 4u;
-            // Optical OUT (adds to IT = host→device RX direction)
-            if (optMode & kV3EnableOptOutIfaceA)
-                itPcm += (optMode & kV3UseOptOutIfaceAAsAdat) ? 8u : 4u;
-            if (optMode & kV3EnableOptOutIfaceB)
-                itPcm += (optMode & kV3UseOptOutIfaceBAsAdat) ? 8u : 4u;
-
-            const uint32_t correctIrDbs = ComputeV3Dbs(irPcm);
-            const uint32_t correctItDbs = ComputeV3Dbs(itPcm);
-
-            // OS_LOG truncates at first \n — use separate log calls.
-            ASFW_LOG(Audio, "DBS-DIAG: V3_OPT_IFACE_MODE=0x%08x", optMode);
-            ASFW_LOG(Audio, "DBS-DIAG: OptIN_A=%u(adat=%u) OptIN_B=%u(adat=%u) irPcm=%u irDBS=%u hardcoded=%u",
-                (optMode & kV3EnableOptInIfaceA)    ? 1u : 0u,
-                (optMode & kV3UseOptInIfaceAAsAdat) ? 1u : 0u,
-                (optMode & kV3EnableOptInIfaceB)    ? 1u : 0u,
-                (optMode & kV3UseOptInIfaceBAsAdat) ? 1u : 0u,
-                irPcm, correctIrDbs, static_cast<uint32_t>(kMOTUV3WireDbs48k_IR));
-            ASFW_LOG(Audio, "DBS-DIAG: OptOUT_A=%u(adat=%u) OptOUT_B=%u(adat=%u) itPcm=%u itDBS=%u hardcoded=%u",
-                (optMode & kV3EnableOptOutIfaceA)    ? 1u : 0u,
-                (optMode & kV3UseOptOutIfaceAAsAdat) ? 1u : 0u,
-                (optMode & kV3EnableOptOutIfaceB)    ? 1u : 0u,
-                (optMode & kV3UseOptOutIfaceBAsAdat) ? 1u : 0u,
-                itPcm, correctItDbs, static_cast<uint32_t>(kMOTUV3WireDbs48k));
-            ASFW_LOG(Audio, "DBS-DIAG: IT DBS %{public}s (correct=%u hardcoded=%u)",
-                (correctItDbs == kMOTUV3WireDbs48k) ? "MATCH OK" : "MISMATCH !!!",
-                correctItDbs, static_cast<uint32_t>(kMOTUV3WireDbs48k));
-        } else {
-            ASFW_LOG_WARNING(Audio,
-                "MOTUAudioBackend: V3_OPT_IFACE_MODE read failed — using hardcoded DBS IR=%u IT=%u",
-                static_cast<uint32_t>(kMOTUV3WireDbs48k_IR),
-                static_cast<uint32_t>(kMOTUV3WireDbs48k));
-        }
-    }
-
     // Step 2 — IRM: allocate isochronous channels and bandwidth.
     const uint32_t sampleRateHz = config.currentSampleRate > 0
                                       ? static_cast<uint32_t>(config.currentSampleRate)

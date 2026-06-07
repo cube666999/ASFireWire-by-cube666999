@@ -147,14 +147,6 @@ private:
     // Audio injection cursor (packet index)
     uint32_t audioWriteIndex_{0};
 
-    // Fix 67: Running DBC counter for InjectNearHw.
-    // PrimeRing fills the ring with CIP headers whose DBC values are correct for pass 0.
-    // After each ring wrap (200 pkts × 150/200 data × 8 frames = 1200 frames, 1200 % 256 = 176),
-    // MOTU would see DBC jump back to the PrimeRing value → discontinuity → mute/resync.
-    // InjectNearHw maintains its own counter and overwrites payloadVirt[3] (DBC byte in
-    // big-endian-stored CIP Q0) for every data packet it writes.
-    uint8_t injectDbc_{0};
-
     // Adaptive pump: frames consumed by InjectNearHw last call.
     // Used by OnRefillTickPreHW to match pump rate to actual IRQ coalescing rate.
     // DriverKit coalesces OHCI IT interrupts to ~985 Hz (8 OHCI cycles/IRQ) instead
