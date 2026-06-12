@@ -56,7 +56,15 @@ inline constexpr TxBufferProfile kTxProfileB{
            //                        (192 fps/call) → TxQ drained faster → runaway oscillation.
            //                        Fix: consume ALL TxQ during pre-prime. Post-prime TxQ=0,
            //                        natural average = 256 = target. PLL at neutral. Stable.)
-    2048,  // legacyRbTargetFrames
+    256,   // legacyRbTargetFrames (Fix 55: was 2048. Target=2048 is unreachable from a 512-frame
+           //                      PerformIO burst: burst pump (burstCap=192fps/IRQ) drains TxQ
+           //                      in 2.67ms, adding 384 frames net while OHCI drains 512/period.
+           //                      Net ring change = 0 → ring stuck at starting level forever.
+           //                      Any start level < 2048 → burst mode always active → death loop.
+           //                      Fix: target=256 < single-burst yield (455 frames net) so ring
+           //                      escapes burst mode and stabilizes at ~455 frames above target.
+           //                      At normal startup (pre-prime fills ring to ~3584), ring >> 256,
+           //                      no burst mode at all, only steady pump = wire rate → stable.)
     4096,  // legacyRbMaxFrames     (kAudioRingBufferFrames=4096)
     8,     // legacyMaxChunksPerRefill (8×256=2048 frames max per IRQ)
     96,    // safetyOffsetFrames (2A)

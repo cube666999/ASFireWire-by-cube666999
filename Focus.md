@@ -8,196 +8,199 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ AKTUALNY STAN — Przeczytaj to na starcie
 
-> **Stan na 2026-06-05 (sesja 31) — Fix 54 zaimplementowany, build v72 na pulpicie MacBooka. Test w toku.**
+> **Stan na 2026-06-12 — ZAGADKA "świeci tylko ch7 + pisk" ROZWIĄZANA.**
+> Pełne podsumowanie: `documentation/SESSION_2026-06-12_GROUNDTRUTH.md`
 
-### Środowisko testowe (ZMIANA od sesji 29)
+
+Stworzyłeś /Users/cube666/Library/Mobile\ Documents/com\~apple\~CloudDocs/FireWire/ASFireWire-snoop/SNOOP_IMPLEMENTATION_NOTES.md - przeczytaj go i wykonaj to
+
+
+
+### 🎯 Root cause ustalony (ground-truth z Linux + El Capitan)
+
+Bug NIE był w timingu/DBS/Command DSP — był w **slocie PCM**:
+- **DBS=13** potwierdzony (Fix 66→16 BŁĘDNY, Fix 69→13 OK), **SYT=0xFFFF**, 14 kanałów
+- Mapa slotów (z CueMix): **slot 0 = Main L (byte 10), slot 1 = Main R (byte 13)**, 2-9=Analog 1-8,
+  10-11=Phones, 12-13=S/PDIF. Mapowanie slot→wyjście STAŁE w sprzęcie.
+- **Wkładaliśmy stereo na slot 8 (Analog 7, byte 34)** → stąd "świeci ch7".
+
+### 📋 FIX DO WDROŻENIA (następna sesja z budżetem)
+
+W encoderze MOTU V3 (`PacketAssembler`/`IsochAudioTxPipeline`):
+- Kanał **L → slot 0 (byte offset 10)**, **R → slot 1 (byte 13)**, zeruj sloty 2-13.
+- DBS=13 i SYT=0xFFFF zostają. Potem build + test → powinna być czysta muzyka na Main.
+
+### Maszyna referencyjna (NOWE)
+MacBook 2009 + Linux Mint. Dostęp/setup: `documentation/LINUX_MBP2009_SSH.md`
+(SSH `cube666@192.168.0.38`/`72044277`, quirks=0x10 FW643).
+- ✅ **Capture nagłówków CIP** (DBS=13, SYT) przez tracepoint `amdtp_packet` — dane ważne.
+- ⛔ **Czyste odtwarzanie audio na Linuxie = ŚLEPA ULICZKA** (udokumentowany bug, issue #27:
+  lost interrupts / zegar 828mk3). NIE wracać do prób "zmuśmy Linux żeby zagrał".
+
+### ✅ Snoop El Capitan→MOTU — zakończony (2026-06-13, sesja 35–36)
+
+Branch `snoop-mode` (v112, `efe0eac`) — pasywny IR snoop działającego strumienia El Cap→MOTU.
+**1.3 mln+ pakietów** przechwyconych. Auto-resume po restarcie MB2009 (~3.5s przerwa) ✅.
+Pełna dokumentacja faktów: `documentation/MOTU_V3_WIRE_GROUNDTRUTH.md` (sekcja "Snoop El Capitan").
+
+**Kluczowe potwierdzenia z snoopa:**
+- **DBS=13** — 2. niezależne źródło (Apple IOFireWireAVC, nie tylko Linux)
+- **CIP Q0 byte 2 = 0x04** → QPC=1, **SPH=0** (CIP SPH bit NIE ustawiony — poprzedni doc miał błąd!)
+- **CIP Q1 = 0x8222ffff** — FMT=0x02 (AM824), FDF=0x22 (48kHz), SYT=0xFFFF
+- **DATA packet = 424 B** (8 bloków × 13 quad × 4B + 8 CIP), EMPTY = 8 B
+- **MOTU timestamp** w pierwszym quadlecie każdego bloku (QPC=1), format: [0:4][secs:3][cycles:13][offset:12]
+- **~6000 data + 2000 empty pkt/s** przy 48 kHz (8 frames/pkt × 6000 = 48000 ✅)
+
+### Drogi do słyszalnego dowodu
+El Capitan (oficjalny, gra ✅) · nasz DriverKit na Tahoe (cel, po fixie slotu) ·
+~~snoop El Capitan→M3~~ ✅ zakończony, dane w `MOTU_V3_WIRE_GROUNDTRUTH.md`.
+
+---
+
+> **Poprzedni stan (sesja 34, 2026-06-07) — v91 / Fix 68 na pulpicie.**
+
+### Środowisko testowe
 
 | Maszyna | System | Rola |
 |---------|--------|------|
-| **MacBook Pro (M3 Max)** | **macOS Tahoe 26.5.1 (zewnętrzny SSD)** | **Aktywne środowisko — build + test hardware** |
-| Mac Studio | macOS Tahoe (wewnętrzny) | Backup — nieużywany w tej sesji |
+| **MacBook Pro (M3 Max)** | **macOS Tahoe 26.5.1 (zewnętrzny SSD)** | **Aktywne — build + test hardware** |
 | MacBook Pro (M3 Max) | macOS Sequoia (wewnętrzny SSD) | Diagnostyka MOTU kext (DTrace/IORegistry) |
 
-**Boot-args na MacBooku (Tahoe/zewnętrzny SSD):**
-```
-amfi_get_out_of_my_way=1 cs_enforcement_disable=1
-```
+**Boot-args na Tahoe:** `amfi_get_out_of_my_way=1 cs_enforcement_disable=1`
 
-**Podpisywanie na MacBooku Tahoe:**
-- Cert: `Apple Development: j.slipiec@gmail.com (239NB3LFDQ)` (MacBook Pro, team `4MJNRC8SW5`)
-- Po `./build.sh --no-bump --derived /tmp/ASFWBuild --deploy` wymagany ręczny re-sign:
+**Build hardware-test:**
 ```bash
-CERT="Apple Development: j.slipiec@gmail.com (239NB3LFDQ)"
-codesign --force --sign "$CERT" --entitlements "ASFWDriver/ASFWDriver.entitlements" --timestamp=none \
-  "/Users/cube666/Desktop/ASFW_vNN.app/Contents/Library/SystemExtensions/net.mrmidi.ASFW.ASFWDriver.dext"
-codesign --force --sign "$CERT" --entitlements "ASFW/App.entitlements" --timestamp=none \
-  "/Users/cube666/Desktop/ASFW_vNN.app"
+./build.sh --derived /tmp/ASFWBuild --deploy
 ```
-- Pośredni CA potrzebny po świeżej instalacji: `curl -s https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer | security import /dev/stdin -k ~/Library/Keychains/login.keychain-db`
+Wynik: `~/Desktop/ASFW_vNN.app` (podpisany `Apple Development: j.slipiec@gmail.com (239NB3LFDQ)`).
 
 ---
 
-### Ostatnie fixy (sesja 30–31)
+## Fixy sesji 34 (v89–v91)
 
-> **✅ Fix 49** (sesja 30, v65) — Wyłączenie zero-copy: `kEnableZeroCopyOutputPath = false`
->
-> **✅ Fix 51** (sesja 30, v68) — Startup pump fallback + cap burst pump
-> - Startup fallback: 48 frames/IRQ; burst cap: `want_steady × 4`
-> - Efekt: underruns 110k→60k, Buffer Fill 160%→96%
->
-> **✅ Fix 52** (sesja 30, v70) — Bit alignment: high-aligned int32
-> - `FormatFlagIsAlignedHigh` + `>> 8` w AM824Encoder + `(s>>24),(s>>16),(s>>8)` w PacketAssembler
->
-> **✅ Fix 53** (sesja 31, v71) — PLL target = 256 (naturalna średnia sawtooth)
-> - `targetFillLevel 512 → 256`, `startWaitTargetFrames=4096`, `startupPrimeLimitFrames=2048`
-> - Plik: `AudioClockEngine.cpp`, `AudioTxProfiles.hpp`
->
-> **✅ Fix 54** (sesja 31, v72) — startupPrimeLimitFrames 2048 → 4096: eliminacja PLL saturacji
-> - **Root cause:** `primeLimitFrames=2048` zostawiało TxQ=2048 po pre-prime. PLL target=256.
->   Stały error = +1792 → PLL saturacja -400ppm → PerformIO zwalniał 19fps → TxQ drenował 107s.
->   Gdy TxQ=0: underruny → adaptive fill burst (192fps/call) → runaway oscillacja co 1.47s.
-> - **Fix:** `primeLimitFrames 2048 → 4096` — pre-prime konsumuje CAŁE TxQ. Post-prime TxQ=0,
->   naturalna śr. = 256 = target. PLL na zero-error. Brak saturacji. Brak runaway.
-> - Plik: `ASFWDriver/Isoch/Config/AudioTxProfiles.hpp`, `AudioClockEngine.cpp`
+### ✅ Fix 66 (v89) — DBS=21→16
+`kMOTUV3WireDbs48k` 21→16. DBS=21 jest nieprawidłowy dla 828mk3fw (nie istnieje w specyfikacji Linux). Prawidłowe: `1 + DIV_ROUND_UP((2MSG+18PCM)×3,4) = 16`. Efekt: prawy squeal ustąpił, ale LEDs dalej migały.
 
-### ⏳ TEST AUDIO — Fix 54 (v72) na MacBooku Tahoe
+### ✅ Fix 67 (v90) — DBC ring-wrap discontinuity
+`InjectNearHw` pisał PCM ale **nie aktualizował DBC** w CIP nagłówku (`payloadVirt[3]`). Ring ma 200 pkt, 150 data × 8 frames = 1200 → 1200%256=176 → po każdym obrocie (~25ms) MOTU widziało skok DBC. Fix: `injectDbc_` (uint8_t) w `IsochAudioTxPipeline`, `payloadVirt[3] = injectDbc_` + advance. Efekt: LEDs stabilizowały się po chwili → potwierdzenie działania.
 
-- **v72** jest na pulpicie MacBooka (`ASFW_v72.app`)
-- Wymagany **restart** (dext upgrade z aktywnym AudioDriverKit)
-- Po restarcie: otwórz v72 → System Settings → Sound → wybierz MOTU 828mk3 → Spotify
-- **Oczekiwane:** Buffer Fill stabilny ~50%, underruny < 100, brak pisku, muzyka przez MOTU
-
-### Obserwacje z v70/v71 (sesja 31)
-
-| Metrika | v70 | v71 (Fix 53) | Oczekiwane v72 |
-|---------|-----|--------------|----------------|
-| IT underruns | 364k (754/s) | 18k (oscylacja 1.47s) | ~0 |
-| IT Buffer Fill | 0→152% | 0→192% | stabilny ~50% |
-| txFill przy underrunie | — | 0 (prawie zawsze) | >256 |
-| Muzyka | brak | pisk 1 kanał | poprawna |
-| IR drops | 2.8M (75%!) | — | bez zmian (osobny) |
-
-**v71 vs v70:** underruny 20× mniejsze ✅, ale oscylacja 1.47s pozostała → Fix 54 naprawia root cause.
-**IR drops 2.8M** = osobny problem — IR ring nie jest opróżniany wystarczająco szybko. Do zbadania po stabilizacji IT.
+### 🔄 Fix 68 (v91) — SPH ring-wrap staleness [CZEKA NA TEST]
+`InjectNearHw` → `encodeInterleavedFramesToMotuV3` nie aktualizował **SPH** (bytes 0-3 każdego audio bloku). Po ring wrap MOTU dostawało SPH z PrimeRing (102ms w przeszłości) → mis-timing → cisza/pisk + phantom ch7L + DigitalL. Fix: `injectSphCursor_`/`injectSphSeeded_` w `PacketAssembler`; `encodeToWire` woła `writeMotuV3InjectSphAndAdvance` dla każdej ramki MOTU V3. Cursor niezależny od `sphTickCursor_` (prime) → no double-advance.
 
 ---
 
-## Następne priorytety
+## Fixy sesji 32–33 (v74–v84)
 
-### Priorytet 0 — Diagnoza pisku w prawym kanale
-Jeśli v61 nie naprawia pisku, następny krok: **raw IR packet logging**:
+### ✅ Fix 56 (v74) — Re-enable zero-copy
+`kEnableZeroCopyOutputPath = true` — Fix 49 (wyłączenie zero-copy) był błędny; encoding IS stosowany przez `InjectNearHw`.
+
+### ✅ Fix 57 (v75) — DBS validation dla MOTU V3
+MOTU V3 używa 3-byte packed PCM → DBS=13 mieści 14 kanałów (52 bajty). Walidacja przez pojemność bajtową, nie slot count.
+
+### ✅ Fix 58 (v76) — Latency matching El Capitan
+`OutputSampleLatency=16`, `InputSampleLatency=19` — wartości z IORegistry El Capitan przy MOTU 828 MK3.
+
+### ✅ Fix 59 (v77) — Wire DBS oddzielony od CoreAudio channel count
+CoreAudio eksponuje stereo (2ch), ale wire DMA zachowuje DBS=13 (MOTU oczekuje tej geometrii klatki).
+`GetMOTUV3WireDbs()` w `DeviceProtocolFactory`.
+
+### ✅ Fix 61 (v83) — Monotonic SPH cursor
+Zamiana statycznego `ct & 0x01FFFFFF` na kursor taktowy (+512 ticks/sample @ 48kHz). Tick seeding w `setCurrentCycleTime`. **Miał bug — patrz Fix 62.**
+
+### ✅ Fix 62 (v84) — SPH seed w złym miejscu (root cause: diody nie świecą)
+**Problem potwierdzony logami:** `setCurrentCycleTime` był wołany przy init drivera (cycle≈8). Seed ustawiał `sphTickCursor_` na cycle=8. Przy faktycznym starcie IT hardware był na cycle≈1113 → SPH timestamps **138ms w przeszłości** → MOTU odrzucał każdą ramkę.
+
+**Fix:** seed przeniesiony do `writeMotuV3SphAndAdvance` (pierwsze wywołanie przy assembly pierwszego pakietu), gdzie `currentCycleTime_` jest już aktualny.
+
+**Plik:** `ASFWDriver/Isoch/Encoding/PacketAssembler.hpp`
+
+---
+
+## ⏳ DO ZROBIENIA — sesja 33
+
+### Krok 1: Restart + test v84
+```bash
+# Po restarcie:
+systemextensionsctl list   # → (1.0/84) [activated enabled]
+/usr/bin/log stream --debug --info 2>/dev/null | grep "ASFWDriver.dext" | grep -E "(DBG|sph|Cycle tracking)"
+```
+Szukamy `sph0` ≈ aktualnego `currentCycle` (nie cycle=8).
+
+### Krok 2: Zweryfikuj czy diody świecą stabilnie
+Odtwórz Spotify przez MOTU 828 MK3 jako wyjście. Diody input/output powinny świecić bez mrugania.
+
+---
+
+## Ważne odkrycie — mrmidi Discord (2026-06-06)
+
+Źródło: `#general` na serwerze FireWire Audio Discord (4 czerwca 2026).
+
+mrmidi opisał fundamentalne problemy ze swoim stosem audio DICE — **identyczne z potencjalnymi problemami w naszym kodzie:**
+
+### 1. Nieprawidłowe blokowanie na SYT
+> *"i was trying to block rx stream to sync SYT timing, but that was wrong behavior. original drivers never tried to do this — check clock is stable, start everything, sync tx when rx is available (until than — send 0xFFFF SYT)"*
+
+Nasza SYT gate (Fix 22) był identycznym błędem — naprawiony. ✅
+
+### 2. Fundamentalny błąd modelu danych AudioDriverKit ⚠️
+> *"i've misused AudioDriverKit. i was trying to build custom shared queues instead of IOBufferMemoryDescriptor. the core idea how hw should receive audio data was wrong."*
+> *"we should sync hw timestamps with CoreAudio, and hw should request new data on interrupt. i was trying to synthesize ZTS (zero time stamp) and push the data from CoreAudio — that's wrong design."*
+
+**To jest potencjalnie aktywny problem w naszym kodzie.** Nasz `Ring-Buffer / Indirect copy` mode to właśnie "custom shared queues + push from CoreAudio". Prawidłowy model:
+- `IOBufferMemoryDescriptor` dla DMA bufferów audio
+- Hardware **ciągnie** dane na przerwaniu DMA
+- CoreAudio **nie pcha** danych — tylko synchronizuje timestamps (ZTS)
+
+**Tłumaczy to 38K underrunów przy 144% buffer fill** — dane są w buforze ale mechanizm ciągnięcia jest odwrócony.
+
+### 3. Referencja: libffado
+mrmidi wskazał libffado jako lepszą referencję niż Linux sound/firewire stack — bliższy oryginalnym Saffire.kext.
+
+### Co robić z tym odkryciem
+mrmidi przepisuje swój stos audio na `IOBufferMemoryDescriptor + ZTS`. Należy:
+1. Poczekać aż wypchnie nową implementację do repo DICE
+2. Przestudiować podejście przed dalszym debugowaniem naszego audio pipeline
+3. Rozważyć czy nasz `IsochAudioTxPipeline` wymaga refaktoru w tym kierunku
+
+---
+
+## Odkrycie — WWDC21 + Apple Dev Forums (2026-06-06)
+
+Źródła: WWDC21 "Create audio drivers with DriverKit", Apple Developer Forums thread/771504.
+Szczegóły → `documentation/AUDIODRIVERKIT_PIPELINE.md`
+
+### Prawidłowy model AudioDriverKit (Apple WWDC21)
+
+```
+OHCI DMA interrupt
+  → UpdateCurrentZeroTimestamp(ohci_cycle_time, sample_time)
+  → zapis audio do IOBufferMemoryDescriptor
+  → HAL czyta z IOBufferMemoryDescriptor
+```
+
+Kluczowe API:
+- `IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut, size, 0, buf)` — shared buffer z HAL
+- `UpdateCurrentZeroTimestamp(sample_time, host_time)` — anchor dla HAL
+- `GetZeroTimestampPeriod()` — ile sample frames na okres ZTS
+- Timer/interrupt: `host_time += host_ticks_per_buffer`, `sample_time += GetZeroTimestampPeriod()`
+
+**Apple:** *"It is vital to track the hardware clock's timestamps as close as possible."*
+
+### Dla nas — Priorytet: ZTS z OHCI CycleTimer
+
+Zamiast `mach_absolute_time()` w `PerformIO`:
 ```cpp
-// StreamProcessor.hpp — dodać na początku OnPacketReceived():
-if (packetCount_++ < 3) {
-    const uint8_t* raw = reinterpret_cast<const uint8_t*>(payload);
-    ASFW_LOG(IR, "RAW[%u]: SPH=%02x%02x%02x%02x msg=%02x%02x%02x%02x%02x%02x pcm0=%02x%02x%02x pcm1=%02x%02x%02x",
-             packetCount_, raw[0],raw[1],raw[2],raw[3],
-             raw[4],raw[5],raw[6],raw[7],raw[8],raw[9],
-             raw[10],raw[11],raw[12], raw[13],raw[14],raw[15]);
-}
+// Czytaj OHCI CurrentIsochronousCycleTime (offset 0x1E8)
+// bits[25:12] = cycleCount (0-7999), bits[11:0] = cycleOffset
+// Przelicz na host_time i przekaż do UpdateCurrentZeroTimestamp
 ```
-To powie czy MOTU używa SPH, jaki DBS naprawdę wysyła, i gdzie zaczyna się PCM.
 
-Alternatywa: **DTrace na Sequoia** (`sudo dtrace -n 'fbt::*MOTU*::entry { tracemem(arg0,128); }'`)
-lub **Ghidra** na binarce `/System/Library/Extensions/MOTUAudio.kext`.
-
-### Priorytet 1 — IR drops (168 865 dropów)
-Widoczne w screenshocie sesji 28. IR context traci ~75% pakietów. Sprawdzić:
-- Czy ring buffer IR jest za mały?
-- Czy `overrideWireDbs_` dla IR jest poprawny?
-
-### Priorytet 2 — HALS_IORawClock
-Zastąpić `mach_absolute_time()` w `PerformIO` czytaniem OHCI `CurrentIsochronousCycleTime` (rejestr `0x1E8`). Bits[25:12]=cycleCount(0–7999), bits[11:0]=cycleOffset.
-
-### Priorytet 3 — Rozszerzyć do 18ch IT / 14ch IR
-`ASFWAudioNub` publikuje teraz tylko "2 In / 2 Out". Zmiana: `outputChannelCount=18`, `inputChannelCount=14`.
-
-### Priorytet 4 — Kontrolki głośności (F11/F12/Mute)
-`IOUserAudioLevelControl` + `IOUserAudioToggleControl` w `ASFWAudioDriver`. Szczegóły w sekcji "Planowane funkcje".
+### Apple Dev Forums — znany bug (thread/771504)
+Przy jednoczesnym Input+Output: `in_io_buffer_frame_size` nie synchronizuje się z `UpdateCurrentZeroTimestamp`. Apple nie ma publicznego rozwiązania — tylko "wyślij sysdiagnose".
 
 ---
 
-## Diagnostyka na macOS Sequoia (MacBook w domu)
-
-> Sequoia ma oryginalny sterownik MOTU (`MOTUAudio.kext`) — możemy podsłuchać co on wysyła
-> lub rozkodować jego binarny kod. Nie wymaga Tahoe ani Mac Studio.
-
-### Opcja A — DTrace: podejrzyj co wysyła MOTU kext (wymaga podłączonego MOTU)
-
-```bash
-# 1. Podłącz MOTU przez TB→FW adapter, uruchom ASFW lub poczekaj aż macOS załaduje MOTUAudio.kext
-# 2. Sprawdź czy kext jest załadowany:
-kextstat | grep -i motu
-
-# 3. Podejrzyj wywołania funkcji kextu (wymaga SIP disabled lub tylko w dev mode):
-sudo dtrace -n '
-  fbt::*MOTU*::entry {
-    printf("%s\n", probefunc);
-  }'
-
-# 4. Podejrzyj payload pierwszych pakietów IT (co MOTU kext WYSYŁA do urządzenia):
-sudo dtrace -n '
-  fbt::*IsochChannel*::entry,
-  fbt::*WriteIsoch*::entry {
-    printf("fn=%s arg0=0x%x\n", probefunc, arg0);
-    tracemem(arg1, 128);
-  }'
-```
-
-### Opcja B — Ghidra: rozkoduj MOTU kext bez podłączania sprzętu
-
-```bash
-# Znajdź binarny kext na Sequoia:
-find /System/Library/Extensions /Library/Extensions -name "*.kext" 2>/dev/null | xargs -I{} find {} -name "MOTUAudio" -o -name "MOTUFireWire" 2>/dev/null
-
-# Lub przez kextstat:
-kextstat | grep -i motu
-# → pokaże ścieżkę, np. /Library/Extensions/MOTUAudio.kext/Contents/MacOS/MOTUAudio
-
-# Wyexportuj symbole (bez Ghidry):
-nm -u /Library/Extensions/MOTUAudio.kext/Contents/MacOS/MOTUAudio | grep -iE "(isoch|packet|write|channel|sph|dbs)"
-otool -tv /Library/Extensions/MOTUAudio.kext/Contents/MacOS/MOTUAudio > motu_disasm.txt
-```
-
-Następnie wrzuć binarny plik do **Ghidra** (https://ghidra-sre.org, darmowe):
-- `File → Import File` → binarka MOTUAudio
-- Szukaj funkcji: `buildITPacket`, `writePayload`, `setDBS`, `setSPH`
-- Sprawdź jak buduje data block (byte offsets, PCM packing)
-
-### Opcja C — IORegistry: sprawdź parametry aktywnego streamingu
-
-```bash
-# Podłącz MOTU, uruchom streaming (np. odtwórz audio przez MOTU),
-# potem sprawdź co kext zarejestrował w IORegistry:
-ioreg -l -r -c IOFireWireUnit | grep -A 20 -i motu
-ioreg -l -r -c IOAudioDevice  | grep -A 40 -i motu
-
-# Szukaj: sampleRate, channelCount, DBS, streamFormat, packetSize
-```
-
-### Opcja D — log stream: logi MOTU kext podczas streamingu
-
-```bash
-# Uruchom streaming przez MOTU na Sequoia, zbierz logi:
-/usr/bin/log stream --debug --info 2>/dev/null | grep -iE "(motu|firewire|isoch|1394)" | head -100
-
-# Po zatrzymaniu:
-/usr/bin/log show --last 5m --debug --info 2>/dev/null | grep -iE "(motu|firewire)" > ~/Desktop/motu_sequoia.txt
-```
-
-### Co chcemy znaleźć
-
-| Pytanie | Gdzie szukać |
-|---------|-------------|
-| Jaki DBS wysyła kext do MOTU 828 MK3? | Ghidra / DTrace payload |
-| Jaki `pcm_byte_offset` (10 czy inny)? | Ghidra: `buildPayload` / `writePCM` |
-| Jak buduje SPH (czy używa CycleTimer)? | Ghidra: `setSPH` / `buildDataBlock` |
-| Ile kanałów PCM koduje do IT stream? | IORegistry: channelCount |
-| Co słychać na prawym kanale przy streamingu? | Test audio na Sequoia z MOTU |
-
----
-
-## Stan implementacji (maj 2026)
+## Stan implementacji (czerwiec 2026)
 
 | Subsystem | Status | Uwagi |
 |-----------|--------|-------|
@@ -206,124 +209,223 @@ ioreg -l -r -c IOAudioDevice  | grep -A 40 -i motu
 | Config ROM reading | ✅ Działa | Pełny scanner z FSM multi-node |
 | AV/C / FCP | ✅ Działa (kod) | Nie używane dla MOTU V3 |
 | IRM | ✅ Działa | Alokacja kanału + bandwidth |
-| Isoch Transmit (IT) | ✅ Działa | MOTU V3 DBS=21, SYT gate bypass, Zero-Copy |
-| Isoch Receive (IR) | ✅ Odbiera | 8001 pkts/s od MOTU, DBS override=21 |
-| AudioDriverKit | ✅ AudioDeviceStart | IO 3+ min; clock jitter (HALS_IORawClock) |
-| **MOTU V3 Backend** | ⏳ Pisk prawy kanał | Fix 45+46+47 wdrożone (v61). Lewy gra ✓, prawy pisk. Diagnoza w toku. |
+| Isoch Transmit (IT) | ✅ Running | 8001 pkts/s, MOTU V3 DBS=13, SYT bypass |
+| Isoch Receive (IR) | ✅ Running | ~480 pkts/100polls od MOTU |
+| AudioDriverKit | ✅ IO aktywne | Ring-buffer indirect copy; underruny — patrz odkrycie mrmidi |
+| MOTU V3 — diody | ⏳ Fix 62 (v84) | SPH był 138ms w przeszłości → MOTU odrzucał. Fix: seed przy 1. pakiecie. |
+| MOTU V3 — dźwięk | ❓ Nieznane | Zależy od wyniku Fix 62 + kwestia IOBufferMemoryDescriptor |
 
 ---
 
-## Status etapów
+## Następne priorytety (po teście v84)
 
-| Etap | Status | Testy |
-|------|--------|-------|
-| 1–9 — Szczegóły w DevLog.md | ✅ Zrobione | 488/488 ✅ |
-| 10 — MOTU V3 Protocol Backend | ✅ Zaimplementowany | 493/493 ✅ |
+### Priorytet 1 — Weryfikacja Fix 62
+Restart → v84 → Spotify → diody na MOTU.
+
+### Priorytet 2 — Zbadaj IOBufferMemoryDescriptor approach
+Jeśli diody świecą ale brak dźwięku (lub dźwięk jest zły), fundamentalny problem może leżeć w architekturze push vs. pull. Obserwować repo mrmidi/DICE.
+
+### Priorytet 3 — IR drops
+IR context traci ~75% pakietów (ring buffer za mały? overrideWireDbs_?).
+
+### Priorytet 4 — HALS_IORawClock
+Zastąpić `mach_absolute_time()` czytaniem OHCI `CurrentIsochronousCycleTime` (rejestr `0x1E8`).
+
+### Priorytet 5 — Rozszerzyć do 18ch IT / 14ch IR
+Po potwierdzeniu działającego audio.
+
+---
+
+## 📅 Zaplanowane — Czwartek (reset limitu): KOMPLEKSOWY TEST GROUND-TRUTH
+
+Cel: **wyeliminować zgadywanie** przy bugu „świeci tylko ch7 Analog + pisk na prawym".
+Łączymy 3 metody zbierania danych w **jednej sesji hardware** na **jednej magistrali FireWire**,
+zakotwiczonej w **jednym znanym sygnale testowym** (skalibrowany sinus 440 Hz, pełna skala).
+
+### Topologia fizyczna (jeden bus, dwa hosty)
+
+```
+[2009 MBP, El Capitan]              [M3 Max, Tahoe]
+  - oficjalny sterownik MOTU          - nasz dext w trybie SNOOP (pasywny IR capture)
+  - DTrace na CopyPacket              - dump bajtów pakietu IT z przewodu
+       │                                       │
+       └──FW── [MOTU 828 MK3  port A | port B] ──FW──┘
+                      (gra kalibrowany sinus 440 Hz)
+```
+
+MOTU repetuje sygnał między swoimi dwoma portami → wszystkie 3 węzły na jednej magistrali.
+FireWire isoch = broadcast → M3 Max widzi pakiety IT które 2009 MBP wysyła do MOTU.
+
+### Co zbieramy RÓWNOLEGLE (cross-validation w jednym przebiegu)
+
+| Źródło | Co łapie | Odpowiada na pytanie |
+|--------|----------|----------------------|
+| DTrace `*CopyPacket*` (2009 MBP) | float wchodzący + 6 bajtów wychodzących | **bit-shift** (górne vs dolne 24 bity int32 → amplituda 1/256?) |
+| DTrace `*SetStartingChannel*` (2009 MBP) | dokładny `pcm_param` | **pcm_byte_offset** (10 vs 12 vs 9) |
+| DTrace `*takeTimeStamp*` (2009 MBP) | kiedy/jak kext kotwiczy sample-time | **zasada ZTS** — czy kext kotwiczy do zegara FW (nie mach_time) |
+| DTrace `*getCurrentSampleFrame*` (2009 MBP) | bieżąca pozycja sampla z zegara HW | **ZTS** — jak HAL pyta kext o pozycję (stary odpowiednik UpdateCurrentZeroTimestamp) |
+| SNOOP IR (M3 Max dext) — CIP **SYT** | wartości SYT w nagłówkach CIP na przewodzie | **pacing/ZTS** — jak daleko w przód MOTU oczekuje timestampu, jaki interwał |
+| SNOOP IR (M3 Max dext) — PCM | te same bajty **na przewodzie** | **wire layout + channel map** (który chunk = Main L/R) |
+| `read_motu_regs.command` (już zrobione) | rejestry 0x0b00–0x0c98 | sekwencja init (0x0c04, 0x0b04) |
+
+**Uwaga o ZTS / push-vs-pull:** sondy `takeTimeStamp` / `getCurrentSampleFrame` + SYT z przewodu
+NIE walidują API `IOBufferMemoryDescriptor` (kext to stara epoka IOKit, sprzed AudioDriverKit).
+Walidują **zasadę pull** (timing kotwiczony do zegara sprzętu, nie do `mach_absolute_time()`)
+i dają **konkretne liczby SYT** do strojenia Etapu 3 w `REFACTOR_PLAN_IOBUFFER_ZTS.md`.
+Sama poprawność `IOBufferMemoryDescriptor` jest już rozstrzygnięta (WWDC21 + mrmidi).
+
+**Dlaczego razem > osobno:** DTrace mówi „kext wysłał bajt X", snoop mówi „na przewodzie był bajt X".
+Zgodność = 100% pewności. Różnica = znaleziony punkt gdzie kext robi coś niewidocznego w Ghidrze.
+Kalibrowany sinus → amplituda 3-bajtowych próbek na przewodzie wprost rozstrzyga bit-shift.
+
+### Ocena ryzyka (snoop — dwa hosty na jednej magistrali)
+
+Ryzyko **inżynierskie, NIE sprzętowe** (FW odporny):
+- **Bus reset** przy wpięciu M3 Maxa — oficjalny sterownik musi wznowić stream (zwykle przeżywa).
+- **Kontencja IRM/Bus Manager** — 2009 MBP jest BM+IRM i zarezerwował kanał. Nasz dext MUSI być
+  pasywnym liściem: **zero IRM, zero discovery, zero config-ROM publish, zero sterowania MOTU**.
+  Domyślnie dext robi odwrotnie (chce być kierowcą) → tryb snoop musi to wyłączyć.
+
+### ✅ Przygotowanie infrastruktury (zrobione 2026-06-11)
+
+**Linux Mint 22.3 na MBP 2009** zainstalowany i gotowy:
+- SSH: `ssh -i ~/.ssh/mbp2009 cube666@192.168.0.38` (klucz, bez hasła)
+- WiFi PLAY4279456 autoconnect ✅
+- `snd-firewire-motu` + `firewire-ohci` + `trace-cmd` zainstalowane ✅
+- Szczegóły → [`documentation/LINUX_MBP2009_SSH.md`](documentation/LINUX_MBP2009_SSH.md)
+
+**Po podłączeniu MOTU 828 MK3 kablem FireWire do MBP 2009 — weryfikacja:**
+```bash
+dmesg | grep -i motu
+aplay -l | grep MOTU
+```
+
+### DO ZROBIENIA przed sesją (kod — czwartek, po resecie limitu)
+
+1. **Tryb SNOOP w dextcie** — pasywny IR capture na zadanym kanale isoch, dump surowych bajtów
+   do logów. Bez IRM/discovery/sterowania. (Średni wysiłek — patrz „Ryzyko" wyżej.)
+2. Wykrycie/ustawienie kanału IT oficjalnego sterownika (z `read_motu_regs` lub skan 0–63).
+
+### Przygotowanie sprzętowe (możesz zrobić TERAZ, bez limitu)
+
+- 2009 MBP: Remote Login (SSH) ON · MOTU driver El Capitan · `csrutil disable` (recovery) ·
+  MOTU przez FW800 · zanotuj IP + username
+- Drugi kabel FW + adapter TB→FW dla M3 Maxa (do drugiego portu MOTU)
+- Przygotuj plik z kalibrowanym sinusem 440 Hz / pełna skala / 48 kHz
+
+### Metoda 4 (NOWA) — Linux + snd-firewire-motu na MacBooku 2009 (najszybszy wire-truth)
+
+**Dlaczego mocne:** open source (mamy źródło w `docs/linux/motu/`) + **ALSA ma wbudowany tracepoint
+pakietów** → gotowy, sparsowany ground-truth BEZ inżynierii wstecznej, BEZ snoopu w dextcie.
+MOTU to ten sam sprzęt → Linux produkuje **identyczne bajty na przewodzie** co kext Apple
+(inaczej by nie grał). Dla pytań o wire layout Linux jest w 100% miarodajny.
+
+**Tracepoint pakietów (sedno):**
+```bash
+# Ścieżka:
+/sys/kernel/debug/tracing/events/snd_firewire_lib/amdtp_packet
+# Loguje: data_block_counter (DBC), syt, data_blocks, payload_quadlets, raw CIP header, isoch channel
+
+# Najprościej (trace-cmd):
+sudo trace-cmd record -e snd_firewire_lib:amdtp_packet
+#   → puść kalibrowany sinus 440 Hz przez MOTU (ALSA: aplay / Spotify / pavucontrol)
+#   → Ctrl-C → sudo trace-cmd report > ~/motu_amdtp_trace.txt
+
+# Albo surowo:
+echo 1 | sudo tee /sys/kernel/debug/tracing/events/snd_firewire_lib/amdtp_packet/enable
+sudo cat /sys/kernel/debug/tracing/trace_pipe   # live
+```
+
+**printk dla wartości których tracepoint nie pokazuje** (pcm_byte_offset, channel map):
+- `docs/linux/motu/amdtp-motu.c` — funkcja składania data block (PCM byte offset, MSG/SPH packing)
+- `docs/linux/motu/motu-protocol-v3.c` — `snd_motu_spec_828mk3_fw`, detekcja opt iface, kanały
+- Rebuild modułu z `printk(KERN_INFO ...)` w punktach kodowania → `dmesg -w`
+
+**Co Linux rozstrzyga wprost:**
+| Pytanie | Źródło na Linuxie |
+|---------|-------------------|
+| pcm_byte_offset (10/12/9) | printk w `amdtp-motu.c` |
+| channel map (chunk → Main L/R) | source + payload z tracepointu |
+| SYT / pacing (dla ZTS Etap 3) | pole `syt` w tracepoincie + logika w source |
+| DBS | jawne w `motu.h` |
+
+**Zastrzeżenia:**
+- `nosy` (linuksowy sniffer FW) **raczej NIE zadziała** — wymaga karty PCILynx (TI); wbudowany
+  kontroler 2009 MBP to inny chip. Ale tracepoint `amdtp_packet` działa na KAŻDYM kontrolerze.
+- To sterownik Linuxa, nie Apple → timing/SYT pokazuje „jak Linux taktuje" (miarodajne dla zasady
+  pull, ale nie dokładnie ścieżka AudioDriverKit). Wire layout — identyczny z Apple.
+- Wbudowany kontroler FW (Agere/LSI) działa z `firewire-ohci` od lat; `lsmod | grep firewire`.
+
+**Strategia dnia:** zacznij od Linuxa (najszybszy wire-truth — tracepoint gotowy, bez kodu w dextcie).
+El Capitan/snoop trzymaj jako weryfikację „czy Apple robi tak samo" + timing/ZTS bliższy AudioDriverKit.
+
+### Metoda 1 (Ghidra na El Capitan) — TYLKO fallback
+
+Statyczna analiza starszej binarki = najsłabsza opcja (Ghidra nie widzi runtime; DTrace na tym samym
+sterowniku powie pewniej). **Jedyny zysk:** starszy kompilator = mniej inliningu → czytelniejszy
+`InputBuffer828mk3::InitHook` (mogłoby rozjaśnić pcm_byte_offset z sekcji 5, która utknęła przez
+inlining w nowszym kexcie). Robić **tylko jeśli** DTrace+snoop zostawią niejasność w układzie bajtów.
+
+**Szczegóły techniczne** → `documentation/MOTU_KEXT_GHIDRA.md`
+
+---
+
+## Infrastruktura testowa — MacBook Pro 2009 z Linux Mint
+
+Linux Mint 22.3 zainstalowany na MBP 2009 (2026-06-11) jako platforma dla Metody 4 (snd-firewire-motu tracepoints).
+Dane połączenia SSH, partycje, sterownik WiFi BCM4322 → [`documentation/LINUX_MBP2009_SSH.md`](documentation/LINUX_MBP2009_SSH.md)
 
 ---
 
 ## Znane nierozwiązane problemy
 
-| Problem | Priorytet | Opis |
-|---------|-----------|------|
-| ~~AT DMA block write (tCode=0x1)~~ | ✅ NAPRAWIONE | `ScanCompletion` orphan check, commit `eeb8787` |
-| ~~Model ID 0x000000 w Discovery~~ | ✅ NAPRAWIONE | `EffectiveModelId()` commit `abc75ea` |
-| ~~IR cycleMatchEnable (bit 30)~~ | ✅ NAPRAWIONE | `kRun\|kWake=0x9000`, commit `935d3ff` |
-| ~~Work queue deadlock~~ | ✅ NAPRAWIONE | `StartStreaming` na background queue, commit `5554280` |
-| ~~TxQ starvation / underruny IT~~ | ✅ NAPRAWIONE | Fix 33 — rate-matched 6 frames/interrupt |
-| ~~IT pump oscillation~~ | ✅ NAPRAWIONE | Fix 36b/36c — adaptive pump (985 Hz IRQ coalescing) |
-| ~~Podwójny dext po restarcie~~ | ✅ NAPRAWIONE | Fix 37 — `.cancel` dla tej samej wersji dextu |
-| ~~Zero-copy output nieaktywne~~ | ✅ NAPRAWIONE | Fix 38c — `kEnableZeroCopyOutputPath=true` |
-| ~~SetZeroCopyOutputBuffer przed Configure()~~ | ✅ NAPRAWIONE | Fix 39 (`3fad643`) — 33 759 underrunów → 0 |
-| ~~InjectNearHw: AM824 encoder dla MOTU V3~~ | ✅ NAPRAWIONE | Fix 40 (`5049c19`) |
-| ~~EXC_ARM_DA_ALIGN przy MOTU V3 encoding~~ | ✅ NAPRAWIONE | Fix 41 (`5049c19`) — uint32_t zero-fill |
-| Pisk w prawym kanale MOTU | ⏳ **FIX 47 (v61) — do testu** | Fix 45: SPH bit. Fix 46: OHCI CycleTimer. Fix 47: poprawna formuła SPH (ct & 0x01FFFFFF). Przyczyna asymetryczna (prawy) nieustalona. |
-| IR drops (168 865) | ⏳ Zbadać | IR context traci ~75% pakietów — ring buffer? overrideWireDbs_? |
-| HALS_IORawClock re-anchoring | Średni | `mach_absolute_time()` zamiast OHCI cycle counter jako hostTime |
-| Liczba kanałów 2/2 vs 18 IT / 14 IR | Niski | Po potwierdzeniu audio: `outputChannelCount=18`, `inputChannelCount=14` |
-| Brak nazw kanałów w CoreAudio | Niski | `IOAudioChannelDescription` per-kanał (Analog 1, ADAT A-1 itd.) |
-| Brak obsługi klawiszy głośności (F11/F12/Mute) | Średni | Brak `IOUserAudioLevelControl` / `IOUserAudioToggleControl` |
-| FCP spam do MOTU | Niski | AVC discovery pisze do MOTU co ~2s; MOTU V3 nie używa AV/C |
-| `bufferFillLevel` UI — mislabeled "%" | Niski | Zwraca surowe ramki, nie %. Fix: `fill * 100 / kAudioRingBufferFrames` |
+| Problem | Priorytet | Status |
+|---------|-----------|--------|
+| Diody MOTU nie świecą | 🔴 Krytyczny | Fix 62 (v84) — do testu po restarcie |
+| Underruny przy pełnym buforze | 🔴 Krytyczny | Prawdopodobnie architektura push vs pull — patrz odkrycie mrmidi |
+| IR drops (~75% pakietów) | 🟡 Średni | Ring buffer IR za mały? overrideWireDbs_? |
+| HALS_IORawClock jitter | 🟡 Średni | `mach_absolute_time()` zamiast OHCI cycle counter |
+| Liczba kanałów 2/2 vs 18/14 | 🟢 Niski | Po potwierdzeniu audio |
+| FCP spam do MOTU | 🟢 Niski | AVC discovery co ~2s; MOTU V3 nie używa AV/C |
 
 ---
 
-## Planowane funkcje — kontrolki głośności (F11/F12/Mute)
+## Narzędzia developerskie — rekomendacje (2026-06-09)
 
-**Problem:** Gdy MOTU 828 MK3 jest wyjściem systemowym, klawisze głośności nie działają — `ASFWAudioDriver` nie deklaruje żadnych kontrolek.
+### 1. `clang-tidy` — wdrożyć TERAZ (przed testem Fix 68)
 
-**Implementacja (3 kroki, ~100–150 linii w `ASFWAudioDriver`):**
-
-```cpp
-// 1. Zadeklarować w ASFWAudioDriver::Start():
-auto* volumeCtrl = IOUserAudioLevelControl::Create(
-    this, kIOUserAudioObjectPropertyScopeOutput,
-    kIOUserAudioObjectPropertyElementMain, 0.0f, -96.0f, 0.0f);
-auto* muteCtrl = IOUserAudioToggleControl::Create(
-    this, kIOUserAudioControlSubTypeMute,
-    kIOUserAudioObjectPropertyScopeOutput,
-    kIOUserAudioObjectPropertyElementMain);
-AddControl(volumeCtrl); AddControl(muteCtrl);
-
-// 2. Obsłużyć callback (SetControlValue override):
-//    zapisać gain_ / mute_ jako std::atomic<float> / std::atomic<bool>
-
-// 3. Zastosować w PerformIO przed IT shared queue:
-const float gain = mute_.load() ? 0.0f : dBToLinear(volumeDb_.load());
-if (gain != 1.0f) {
-    for (auto& sample : outputSamples) sample = static_cast<int32_t>(sample * gain);
-}
+**Kiedy:** przed kolejną sesją kodowania (jutro po resecie limitu).
+**Dlaczego teraz:** `compile_commands.json` już istnieje (`./build.sh --commands`). Zajmie ~10 minut. Nowy kod (18ch, IOBufferMemoryDescriptor) lepiej pisać z analizą statyczną od początku.
+**Co zrobić:**
+```bash
+# Wygeneruj compile_commands.json:
+./build.sh --commands
+# Zainstaluj (jeśli brak):
+brew install llvm  # daje clang-tidy w /opt/homebrew/opt/llvm/bin/
+# Utwórz .clang-tidy w katalogu ASFireWire/ — Claude Code skonfiguruje przy resecie limitu
 ```
+**Ograniczenie:** pliki `.iig` poza zasięgiem (wymagają preprocessora Xcode). Reszta (~90% kodu) działa.
 
-**MOTU V3 nie ma hardware volume register** — gain stosujemy software-side. Przy gain=1.0f koszt zerowy.
+### 2. Instruments / System Trace — wdrożyć przy Priorytecie 4 (HALS_IORawClock)
+
+**Kiedy:** dopiero gdy Fix 68 potwierdzi audio i zaczniesz refaktor ZTS/OHCI CycleTimer.
+**Dlaczego nie teraz:** premature — problem jest w architekturze (push vs pull), nie w timing jitterze który Instruments mierzy.
+**Co zrobić:** Instruments → File → New → System Trace → nagraj sesję z grającym MOTU → sprawdź spacing callbacków PerformIO vs. cykli OHCI.
+
+### 3. DTrace skrypty — wdrożyć przy sesji ground-truth (środa)
+
+Już zaplanowane w sekcji wyżej. Nie wymaga osobnej konfiguracji.
+
+### 4. LSP (clangd) — opcjonalne, niska priorytet
+
+Jeśli w przyszłości zaczniesz spędzać dużo czasu w edytorze bez AI: dodaj `.clangd` z DriverKit SDK paths. Nie wdrażać dopóki CodeGraph + Claude Code wystarczają.
 
 ---
 
-## Instrukcja testowania na Mac Studio (Tahoe, Apple Silicon)
+## Status etapów
 
-### Wymagania
-- Mac Studio (Apple Silicon) z macOS Tahoe, SIP disabled, `amfi_get_out_of_my_way=1`
-- Adapter Thunderbolt → FireWire 800 · MOTU 828 MK3
-
-### Jednorazowe przygotowanie (Recovery Mode)
-```bash
-csrutil disable   # Recovery → Terminal
-sudo nvram boot-args="amfi_get_out_of_my_way=1"
-sudo systemextensionsctl developer on
-# restart
-```
-
-### Logi dextu (właściwa metoda — Tahoe)
-```bash
-# Live stream:
-/usr/bin/log stream --debug --info 2>/dev/null | grep "ASFWDriver.dext"
-
-# Po zdarzeniu:
-/usr/bin/log show --last 10m --debug --info 2>/dev/null | grep "ASFWDriver.dext"
-
-# Filtrowanie audio/isoch:
-/usr/bin/log stream --debug --info 2>/dev/null | grep "ASFWDriver.dext" | grep -E "(Isoch|IR|IT|syt|Streaming|Started|Underrun)"
-```
-
-> ⚠️ **Pułapka zsh:** `log` w zsh = wbudowana funkcja matematyczna. Zawsze używaj `/usr/bin/log`.
-
-### Czego szukać przy starcie streamingu (sukces)
-```
-AudioCoordinator: Injecting MOTU V3 config ... in=14 out=18
-MOTUAudioBackend: ISOC_COMM_CONTROL deactivate=0x808019xx
-MOTUAudioBackend: ISOC_COMM_CONTROL activate=0xC1C019xx (irCh=0 itCh=1)
-[Isoch] SYT gate bypassed (device uses syt=0x0000 — MOTU V3 mode)
-[Isoch] ✅ Started IT Context for Channel 1!
-MOTUAudioBackend: Streaming started GUID=0x0001F20000087236
-```
-
-### Jeśli coś nie działa
-```bash
-ioreg -l -r -c ASFWAudioNub   # brak wpisu = problem AudioCoordinator; wpis bez audio = problem ADK/HALC
-```
-Napisz na starcie sesji: **"Kontynuujemy ASFireWire — oto logi z Mac Studio:"** i wklej output z `log stream`.
-
-### Odinstalowanie sterownika
-```bash
-systemextensionsctl uninstall net.mrmidi.ASFW net.mrmidi.ASFW.ASFWDriver
-```
+| Etap | Status |
+|------|--------|
+| 1–9 — szczegóły w DevLog.md | ✅ |
+| 10 — MOTU V3 Protocol Backend | ✅ |
+| 11 — Stable audio output | ⏳ |
