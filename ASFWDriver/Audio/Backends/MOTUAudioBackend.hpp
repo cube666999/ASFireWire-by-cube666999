@@ -59,6 +59,10 @@ public:
     [[nodiscard]] IOReturn StartStreaming(uint64_t guid) noexcept override;
     [[nodiscard]] IOReturn StopStreaming(uint64_t guid) noexcept override;
 
+    // Called from watchdog (~1ms). Checks ISOC_COMM_CONTROL every ~1000 ticks;
+    // starts snoop as soon as another host activates its isoch stream on MOTU.
+    void TickSnoopMonitor() noexcept;
+
 private:
     // -------------------------------------------------------------------------
     // MOTU V3 register map (offsets from base 0xfffff0000000)
@@ -134,6 +138,12 @@ private:
     // Reads ISOC_COMM_CONTROL; if another host is already streaming (kRxIsocActivated),
     // extracts its IT channel (bits [29:24]) and starts the passive snoop on that channel.
     void TryStartSnoop(FW::NodeId nodeId, FW::Generation gen) noexcept;
+
+    // Pending snoop target — set at OnAudioConfigurationReady, cleared when snoop starts.
+    FW::NodeId   pendingSnoopNodeId_{0};
+    FW::Generation pendingSnoopGen_{0};
+    bool         pendingSnoopValid_{false};
+    uint32_t     snoopTickCount_{0};
 
     AudioNubPublisher&         publisher_;
     Discovery::DeviceRegistry& registry_;

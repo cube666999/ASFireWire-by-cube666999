@@ -539,6 +539,9 @@ void ASFWDriver::AsyncWatchdogTimerFired_Impl(ASFWDriver_AsyncWatchdogTimerFired
                                 ctx.isoch.ReceiveContext(), ctx.isoch.TransmitContext(),
                                 ctx.statusPublisher);
         ctx.isoch.PollSnoop();
+        if (ctx.audioCoordinator) {
+            ctx.audioCoordinator->TickSnoopMonitor();
+        }
     }
 
     ScheduleAsyncWatchdog(kAsyncWatchdogPeriodUsec);

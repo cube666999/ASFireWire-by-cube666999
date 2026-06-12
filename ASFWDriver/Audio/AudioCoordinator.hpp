@@ -64,6 +64,10 @@ public:
     /// Debug helper: return the GUID if exactly one audio nub is published.
     [[nodiscard]] std::optional<uint64_t> GetSinglePublishedGuid() const noexcept;
 
+    // Called from watchdog (~1ms). Polls MOTU ISOC_COMM_CONTROL every ~1s and starts
+    // the passive snoop as soon as another host activates its isochronous stream.
+    void TickSnoopMonitor() noexcept { motuV3_.TickSnoopMonitor(); }
+
 private:
     [[nodiscard]] IAudioBackend* BackendForGuid(uint64_t guid) noexcept;
 

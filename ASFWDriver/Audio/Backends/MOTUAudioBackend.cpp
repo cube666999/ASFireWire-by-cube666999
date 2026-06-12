@@ -59,11 +59,17 @@ void MOTUAudioBackend::OnAudioConfigurationReady(uint64_t guid,
     }
     (void)publisher_.EnsureNub(guid, config, "MOTU-V3");
 
-    // If a second host is already streaming into MOTU, snoop its isoch channel.
+    // Store MOTU node info for periodic snoop monitor. TryStartSnoop runs immediately
+    // in case another host is already streaming; TickSnoopMonitor retries every ~1s
+    // to catch the moment El Capitan (or any host) starts its stream.
     const auto* record = registry_.FindByGuid(guid);
     if (record && busOps_) {
         const FW::NodeId  nodeId{static_cast<uint8_t>(record->nodeId)};
         const FW::Generation gen = record->gen;
+        pendingSnoopNodeId_ = nodeId;
+        pendingSnoopGen_    = gen;
+        pendingSnoopValid_  = true;
+        snoopTickCount_     = 0;
         TryStartSnoop(nodeId, gen);
     }
 }
@@ -490,7 +496,31 @@ void MOTUAudioBackend::TryStartSnoop(FW::NodeId nodeId, FW::Generation gen) noex
 
     const uint8_t snoopCh = static_cast<uint8_t>((ctrl >> kRxChannelShift) & 0x3F);
     ASFW_LOG(Audio, "[Snoop] Second host active on isoch ch=%u (ctrl=0x%08x), starting snoop", snoopCh, ctrl);
-    (void)isoch_.StartSnoop(snoopCh, hardware_);
+    const kern_return_t kr = isoch_.StartSnoop(snoopCh, hardware_);
+    if (kr == kIOReturnSuccess) {
+        pendingSnoopValid_ = false; // Snoop started — stop retrying
+    }
+}
+
+void MOTUAudioBackend::TickSnoopMonitor() noexcept {
+    // Already running — nothing to do
+    if (isoch_.SnoopContext() &&
+        isoch_.SnoopContext()->GetState() == ASFW::Isoch::IsochSnoopContext::State::Running) {
+        return;
+    }
+
+    if (!pendingSnoopValid_) {
+        return;
+    }
+
+    // Check every ~1000 ticks (~1s at 1ms watchdog period)
+    if (++snoopTickCount_ < 1000) {
+        return;
+    }
+    snoopTickCount_ = 0;
+
+    ASFW_LOG(Audio, "[Snoop] TickSnoopMonitor: checking ISOC_COMM_CONTROL for second host...");
+    TryStartSnoop(pendingSnoopNodeId_, pendingSnoopGen_);
 }
 
 } // namespace ASFW::Audio
