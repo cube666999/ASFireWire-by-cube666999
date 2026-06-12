@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "IsochReceiveContext.hpp"
+#include "Receive/IsochSnoopContext.hpp"
 #include "Transmit/IsochTransmitContext.hpp"
 #include "Memory/IsochDMAMemoryManager.hpp"
 #include "Config/AudioTxProfiles.hpp"
@@ -444,8 +445,76 @@ void IsochService::StopAll() {
         isochTransmitContext_.reset();
     }
     txQueue_.Reset();
+    if (isochSnoopContext_) {
+        isochSnoopContext_->Stop();
+        isochSnoopContext_.reset();
+    }
     externalSyncBridge_.Reset();
     activeGuid_ = 0;
+}
+
+kern_return_t IsochService::StartSnoop(uint8_t channel, HardwareInterface& hardware) {
+    if (isochSnoopContext_ &&
+        isochSnoopContext_->GetState() == ASFW::Isoch::IsochSnoopContext::State::Running) {
+        ASFW_LOG(Controller, "[Isoch] Snoop already running on ch=%u", channel);
+        return kIOReturnSuccess;
+    }
+
+    if (!isochSnoopContext_) {
+        ASFW::Isoch::Memory::IsochMemoryConfig config;
+        config.numDescriptors = ASFW::Isoch::IsochSnoopContext::kNumDescriptors;
+        config.packetSizeBytes = ASFW::Isoch::IsochSnoopContext::kMaxPacketSize;
+        config.descriptorAlignment = 16;
+        config.payloadPageAlignment = 16384;
+
+        auto isochMem = ASFW::Isoch::Memory::IsochDMAMemoryManager::Create(config);
+        if (!isochMem) {
+            ASFW_LOG(Controller, "[Isoch] ❌ StartSnoop: Failed to create Memory Manager");
+            return kIOReturnNoMemory;
+        }
+
+        if (!isochMem->Initialize(hardware)) {
+            ASFW_LOG(Controller, "[Isoch] ❌ StartSnoop: Failed to initialize DMA slabs");
+            return kIOReturnNoMemory;
+        }
+
+        isochSnoopContext_ = ASFW::Isoch::IsochSnoopContext::Create(&hardware, isochMem);
+        if (!isochSnoopContext_) {
+            ASFW_LOG(Controller, "[Isoch] ❌ StartSnoop: Context creation failed");
+            return kIOReturnNoMemory;
+        }
+    }
+
+    // IR context index 1 — index 0 is used by regular audio IR (IsochReceiveContext)
+    auto result = isochSnoopContext_->Configure(channel, 1);
+    if (result != kIOReturnSuccess) {
+        ASFW_LOG(Controller, "[Isoch] ❌ StartSnoop: Configure failed: 0x%x", result);
+        return result;
+    }
+
+    result = isochSnoopContext_->Start();
+    if (result != kIOReturnSuccess) {
+        ASFW_LOG(Controller, "[Isoch] ❌ StartSnoop: Start failed: 0x%x", result);
+        return result;
+    }
+
+    ASFW_LOG(Controller, "[Isoch] ✅ Snoop started on isoch channel %u (IR ctx=1)", channel);
+    return kIOReturnSuccess;
+}
+
+void IsochService::StopSnoop() {
+    if (isochSnoopContext_) {
+        isochSnoopContext_->Stop();
+        isochSnoopContext_.reset();
+        ASFW_LOG(Controller, "[Isoch] Snoop stopped");
+    }
+}
+
+void IsochService::PollSnoop() {
+    if (isochSnoopContext_ &&
+        isochSnoopContext_->GetState() == ASFW::Isoch::IsochSnoopContext::State::Running) {
+        isochSnoopContext_->Poll();
+    }
 }
 
 } // namespace ASFW::Driver

@@ -14,6 +14,7 @@
 #include "IsochReceiveContext.hpp"
 #include "Core/ExternalSyncBridge.hpp"
 #include "Transmit/IsochTransmitContext.hpp"
+#include "Receive/IsochSnoopContext.hpp"
 #include "../Audio/Model/ASFWAudioDevice.hpp"
 #include "../Common/DriverKitOwnership.hpp"
 
@@ -86,10 +87,15 @@ public:
 
     ASFW::Isoch::IsochReceiveContext* ReceiveContext() const { return isochReceiveContext_.get(); }
     ASFW::Isoch::IsochTransmitContext* TransmitContext() const { return isochTransmitContext_.get(); }
+    ASFW::Isoch::IsochSnoopContext* SnoopContext() const { return isochSnoopContext_.get(); }
 
     /// Override wire DBS on the active receive context (must call after StartReceive).
     /// 0 = revert to CIP DBS field (default).  Primarily for MOTU V3 devices.
     void SetRxOverrideWireDbs(uint8_t dbs) noexcept;
+
+    kern_return_t StartSnoop(uint8_t channel, HardwareInterface& hardware);
+    void StopSnoop();
+    void PollSnoop();
 
 private:
     struct SharedQueueMapping {
@@ -111,6 +117,7 @@ private:
     ASFW::Isoch::Core::ExternalSyncBridge externalSyncBridge_{};
     OSSharedPtr<ASFW::Isoch::IsochReceiveContext> isochReceiveContext_;
     std::unique_ptr<ASFW::Isoch::IsochTransmitContext> isochTransmitContext_;
+    OSSharedPtr<ASFW::Isoch::IsochSnoopContext> isochSnoopContext_;
 
     SharedQueueMapping rxQueue_{};
     SharedQueueMapping txQueue_{};

@@ -538,6 +538,7 @@ void ASFWDriver::AsyncWatchdogTimerFired_Impl(ASFWDriver_AsyncWatchdogTimerFired
         ctx.watchdog.HandleTick(ctx.controller.get(), ctx.deps.asyncController.get(),
                                 ctx.isoch.ReceiveContext(), ctx.isoch.TransmitContext(),
                                 ctx.statusPublisher);
+        ctx.isoch.PollSnoop();
     }
 
     ScheduleAsyncWatchdog(kAsyncWatchdogPeriodUsec);

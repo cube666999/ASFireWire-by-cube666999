@@ -58,6 +58,14 @@ void MOTUAudioBackend::OnAudioConfigurationReady(uint64_t guid,
         IOLockUnlock(lock_);
     }
     (void)publisher_.EnsureNub(guid, config, "MOTU-V3");
+
+    // If a second host is already streaming into MOTU, snoop its isoch channel.
+    const auto* record = registry_.FindByGuid(guid);
+    if (record && busOps_) {
+        const FW::NodeId  nodeId{static_cast<uint8_t>(record->nodeId)};
+        const FW::Generation gen = record->gen;
+        TryStartSnoop(nodeId, gen);
+    }
 }
 
 void MOTUAudioBackend::OnDeviceRemoved(uint64_t guid) noexcept {
@@ -466,6 +474,23 @@ IOReturn MOTUAudioBackend::StopStreaming(uint64_t guid) noexcept {
 
     ASFW_LOG(Audio, "MOTUAudioBackend: Streaming stopped GUID=0x%016llx", guid);
     return kIOReturnSuccess;
+}
+
+void MOTUAudioBackend::TryStartSnoop(FW::NodeId nodeId, FW::Generation gen) noexcept {
+    uint32_t ctrl = 0;
+    if (!ReadRegister(nodeId, gen, kIsocCtrlOff, ctrl)) {
+        ASFW_LOG(Audio, "[Snoop] TryStartSnoop: ISOC_COMM_CONTROL read failed");
+        return;
+    }
+
+    if (!(ctrl & kRxIsocActivated)) {
+        ASFW_LOG(Audio, "[Snoop] No second host streaming yet (RxIsocActivated=0, ctrl=0x%08x)", ctrl);
+        return;
+    }
+
+    const uint8_t snoopCh = static_cast<uint8_t>((ctrl >> kRxChannelShift) & 0x3F);
+    ASFW_LOG(Audio, "[Snoop] Second host active on isoch ch=%u (ctrl=0x%08x), starting snoop", snoopCh, ctrl);
+    (void)isoch_.StartSnoop(snoopCh, hardware_);
 }
 
 } // namespace ASFW::Audio

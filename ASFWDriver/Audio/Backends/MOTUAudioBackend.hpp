@@ -131,6 +131,10 @@ private:
                                                 uint32_t itBandwidth) noexcept;
     void ReleaseIRMResources() noexcept;
 
+    // Reads ISOC_COMM_CONTROL; if another host is already streaming (kRxIsocActivated),
+    // extracts its IT channel (bits [29:24]) and starts the passive snoop on that channel.
+    void TryStartSnoop(FW::NodeId nodeId, FW::Generation gen) noexcept;
+
     AudioNubPublisher&         publisher_;
     Discovery::DeviceRegistry& registry_;
     Driver::IsochService&      isoch_;
