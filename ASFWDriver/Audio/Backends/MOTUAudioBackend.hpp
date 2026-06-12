@@ -140,10 +140,15 @@ private:
     void TryStartSnoop(FW::NodeId nodeId, FW::Generation gen) noexcept;
 
     // Pending snoop target — set at OnAudioConfigurationReady, cleared when snoop starts.
-    FW::NodeId   pendingSnoopNodeId_{0};
-    FW::Generation pendingSnoopGen_{0};
-    bool         pendingSnoopValid_{false};
-    uint32_t     snoopTickCount_{0};
+    // GUID stored instead of nodeId/gen so TickSnoopMonitor can look up fresh values after bus resets.
+    uint64_t          pendingSnoopGuid_{0};
+    bool              pendingSnoopValid_{false};
+    uint32_t          snoopTickCount_{0};
+    // Guards against issuing a second async ISOC_COMM_CONTROL read while one is
+    // still pending. The snoop read MUST be async — it runs from the watchdog
+    // tick, and the AR completion is delivered on the same serial queue, so a
+    // blocking IOSleep here would deadlock (completion can never be processed).
+    std::atomic<bool> snoopReadInflight_{false};
 
     AudioNubPublisher&         publisher_;
     Discovery::DeviceRegistry& registry_;

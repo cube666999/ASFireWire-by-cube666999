@@ -295,8 +295,10 @@ void BuildTreeLinks(std::vector<TopologyNode>& nodes, std::vector<std::string>& 
                             ) != nodeB.parentNodeIds.end();
 
                             if (!alreadyConnected) {
-                                nodeA.childNodeIds.push_back(nodeB.nodeId);
-                                nodeB.parentNodeIds.push_back(nodeA.nodeId);
+                                // nodeA has a Parent port → nodeA IS a child.
+                                // nodeB has a Child port → nodeB IS the parent.
+                                nodeB.childNodeIds.push_back(nodeA.nodeId);
+                                nodeA.parentNodeIds.push_back(nodeB.nodeId);
                                 edgesConstructed++;
                                 foundMatch = true;
                                 break;

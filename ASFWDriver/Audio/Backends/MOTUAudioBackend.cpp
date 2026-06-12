@@ -62,14 +62,15 @@ void MOTUAudioBackend::OnAudioConfigurationReady(uint64_t guid,
     // Store MOTU node info for periodic snoop monitor. TryStartSnoop runs immediately
     // in case another host is already streaming; TickSnoopMonitor retries every ~1s
     // to catch the moment El Capitan (or any host) starts its stream.
+    // Always arm the snoop monitor — busOps_ may not be set yet at first discovery,
+    // but TickSnoopMonitor will retry every ~1s until it succeeds.
+    pendingSnoopGuid_  = guid;
+    pendingSnoopValid_ = true;
+    snoopTickCount_    = 0;
     const auto* record = registry_.FindByGuid(guid);
     if (record && busOps_) {
-        const FW::NodeId  nodeId{static_cast<uint8_t>(record->nodeId)};
+        const FW::NodeId nodeId{static_cast<uint8_t>(record->nodeId)};
         const FW::Generation gen = record->gen;
-        pendingSnoopNodeId_ = nodeId;
-        pendingSnoopGen_    = gen;
-        pendingSnoopValid_  = true;
-        snoopTickCount_     = 0;
         TryStartSnoop(nodeId, gen);
     }
 }
@@ -483,23 +484,47 @@ IOReturn MOTUAudioBackend::StopStreaming(uint64_t guid) noexcept {
 }
 
 void MOTUAudioBackend::TryStartSnoop(FW::NodeId nodeId, FW::Generation gen) noexcept {
-    uint32_t ctrl = 0;
-    if (!ReadRegister(nodeId, gen, kIsocCtrlOff, ctrl)) {
-        ASFW_LOG(Audio, "[Snoop] TryStartSnoop: ISOC_COMM_CONTROL read failed");
+    if (!busOps_) {
+        ASFW_LOG(Audio, "[Snoop] TryStartSnoop: busOps_ not set yet — waiting");
+        return;
+    }
+    // Don't pile up reads — only one ISOC_COMM_CONTROL probe in flight at a time.
+    bool expected = false;
+    if (!snoopReadInflight_.compare_exchange_strong(expected, true,
+                                                    std::memory_order_acq_rel)) {
         return;
     }
 
-    if (!(ctrl & kRxIsocActivated)) {
-        ASFW_LOG(Audio, "[Snoop] No second host streaming yet (RxIsocActivated=0, ctrl=0x%08x)", ctrl);
-        return;
-    }
+    // Fully async probe. This runs from the watchdog tick; the AR completion is
+    // delivered on the same serial queue, so we must NOT block waiting for it
+    // (a blocking IOSleep here would deadlock — the completion could never run).
+    busOps_->ReadQuad(gen, nodeId, MakeAddr(kIsocCtrlOff), FW::FwSpeed::S400,
+        [this](Async::AsyncStatus status, std::span<const uint8_t> payload) {
+            snoopReadInflight_.store(false, std::memory_order_release);
 
-    const uint8_t snoopCh = static_cast<uint8_t>((ctrl >> kRxChannelShift) & 0x3F);
-    ASFW_LOG(Audio, "[Snoop] Second host active on isoch ch=%u (ctrl=0x%08x), starting snoop", snoopCh, ctrl);
-    const kern_return_t kr = isoch_.StartSnoop(snoopCh, hardware_);
-    if (kr == kIOReturnSuccess) {
-        pendingSnoopValid_ = false; // Snoop started — stop retrying
-    }
+            if (status != Async::AsyncStatus::kSuccess || payload.size() != 4) {
+                ASFW_LOG(Audio, "[Snoop] ISOC_COMM_CONTROL read failed (status=%d size=%zu)",
+                         static_cast<int>(status), payload.size());
+                return;
+            }
+
+            const uint32_t ctrl = (static_cast<uint32_t>(payload[0]) << 24) |
+                                  (static_cast<uint32_t>(payload[1]) << 16) |
+                                  (static_cast<uint32_t>(payload[2]) << 8)  |
+                                   static_cast<uint32_t>(payload[3]);
+
+            if (!(ctrl & kRxIsocActivated)) {
+                ASFW_LOG(Audio, "[Snoop] No second host streaming yet (RxIsocActivated=0, ctrl=0x%08x)", ctrl);
+                return;
+            }
+
+            const uint8_t snoopCh = static_cast<uint8_t>((ctrl >> kRxChannelShift) & 0x3F);
+            ASFW_LOG(Audio, "[Snoop] Second host active on isoch ch=%u (ctrl=0x%08x), starting snoop", snoopCh, ctrl);
+            const kern_return_t kr = isoch_.StartSnoop(snoopCh, hardware_);
+            if (kr == kIOReturnSuccess) {
+                pendingSnoopValid_ = false; // Snoop started — stop retrying
+            }
+        });
 }
 
 void MOTUAudioBackend::TickSnoopMonitor() noexcept {
@@ -520,7 +545,12 @@ void MOTUAudioBackend::TickSnoopMonitor() noexcept {
     snoopTickCount_ = 0;
 
     ASFW_LOG(Audio, "[Snoop] TickSnoopMonitor: checking ISOC_COMM_CONTROL for second host...");
-    TryStartSnoop(pendingSnoopNodeId_, pendingSnoopGen_);
+    const auto* record = registry_.FindByGuid(pendingSnoopGuid_);
+    if (!record) {
+        ASFW_LOG(Audio, "[Snoop] TickSnoopMonitor: MOTU GUID=0x%016llx not in registry", pendingSnoopGuid_);
+        return;
+    }
+    TryStartSnoop(FW::NodeId{static_cast<uint8_t>(record->nodeId)}, record->gen);
 }
 
 } // namespace ASFW::Audio

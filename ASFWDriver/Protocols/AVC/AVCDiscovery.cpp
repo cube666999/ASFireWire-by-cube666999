@@ -1065,10 +1065,16 @@ bool AVCDiscovery::IsAVCUnit(std::shared_ptr<Discovery::FWUnit> unit) const {
 
     // Some vendors use their own OUI as Spec ID but still respond to AV/C FCP.
     // Probe these by vendor ID — FCP SUBUNIT_INFO will confirm AV/C support.
+    // EXCEPTION: MOTU V3 (swVersion=0x000015) does NOT respond to AV/C FCP;
+    // it is handled by MOTUAudioBackend via direct register protocol.
     auto device = unit->GetDevice();
     if (device) {
         uint32_t vendorID = device->GetVendorID() & 0xFFFFFF;
         if (vendorID == kMOTUVendorID) {
+            const uint32_t swVer = unit->GetUnitSwVersion() & 0xFFFFFF;
+            if (swVer == 0x000015) { // MOTU V3 — skip AVC probing
+                return false;
+            }
             return true;
         }
     }

@@ -70,9 +70,9 @@ public:
     };
 
     struct Config {
-        RootPolicy rootPolicy = RootPolicy::Delegate;
+        RootPolicy rootPolicy = RootPolicy::Auto;  // Don't interfere with root election
         uint8_t forcedRootNodeID = 0xFF;
-        bool delegateCycleMaster = true;
+        bool delegateCycleMaster = false;          // Don't send PHY CONFIG to delegate root
         bool enableGapOptimization = false;
         uint8_t forcedGapCount = 0;
         bool forcedGapFlag = false;

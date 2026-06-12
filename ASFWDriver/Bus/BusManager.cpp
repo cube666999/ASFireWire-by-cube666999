@@ -138,7 +138,8 @@ std::optional<BusManager::PhyConfigCommand> BusManager::AssignCycleMaster(
         }
     }
 
-    if (config_.delegateCycleMaster || !badIRMFlags.empty() || config_.rootPolicy == RootPolicy::Delegate) {
+    const bool anyBadIRM = std::any_of(badIRMFlags.begin(), badIRMFlags.end(), [](bool b){ return b; });
+    if (config_.delegateCycleMaster || anyBadIRM || config_.rootPolicy == RootPolicy::Delegate) {
         
         if (otherContender) {
             if (rootNodeID == localNodeID && config_.delegateCycleMaster) {
