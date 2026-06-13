@@ -104,13 +104,16 @@ public:
                       (static_cast<uint32_t>(dbc));
 
         // Q1: [EOH=10][FMT:6][FDF:8][SYT:16]
-        // MOTU V3 IT: FMT=0x02 (CIP_FMT_MOTU), FDF=0x22 (MOTU_FDF_AM824),
-        //             SYT=0x0000 for data (timing via SPH), SYT=0xFFFF for no-data.
-        // Reference: amdtp-motu.c — fmt=CIP_FMT_MOTU, fdf=MOTU_FDF_AM824, sph=1.
+        // MOTU V3 IT: FMT=0x02 (CIP_FMT_MOTU), FDF=0x22 (MOTU_FDF_AM824).
+        // Ground-truth (2026-06-13): both working drivers — Linux snd-firewire-motu AND
+        // Apple El Capitan (IOFireWireAVC), captured via M3 snoop — send CIP Q1 = 0x8222ffff,
+        // i.e. SYT=0xFFFF on EVERY packet, data included (timing carried by per-block SPH,
+        // not SYT). Earlier SYT=0x0000-for-data was an unverified guess; the wire disproves it.
+        // Reference: amdtp-motu.c + documentation/MOTU_V3_WIRE_GROUNDTRUTH.md.
         uint16_t sytValue = isNoData ? kSYTNoData : syt;
         const uint8_t fmt = motuV3_ ? kCIPFormatMotuV3 : kCIPFormatAM824;
         const uint8_t fdf = motuV3_ ? kFDFMotuV3 : kSFC_48kHz;
-        if (motuV3_ && !isNoData) { sytValue = 0x0000; }
+        if (motuV3_) { sytValue = kSYTNoData; }  // 0xFFFF — matches captured ground-truth
         uint32_t q1 = (0x02U << 30) |
                       (static_cast<uint32_t>(fmt) << 24) |
                       (static_cast<uint32_t>(fdf) << 16) |
