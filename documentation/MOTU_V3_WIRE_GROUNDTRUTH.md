@@ -173,13 +173,13 @@ i czy dane są left- czy right-justified. To da bezpośrednią hardware odpowied
 ### Pełne 24 bity potwierdzone z payload snoopa
 
 Analiza wszystkich niezerowych pakietów danych: **wszystkie 3 bajty sampla są aktywne**.
-Próbki z Phones 1/2 (El Cap grał przez wyjście Phones):
+Próbki z Phones 1/2 (El Cap grał przez Main Out i Phones jednocześnie):
 ```
 ch10 Phones1: [38 b5 24]  [eb ff 47]  [05 7b 75]  [ef 2f 03]  [ef 96 d2]
 ch11 Phones2: [38 9e 5f]  [ea 63 df]  [03 98 49]  [ee 7c 5e]  [f2 6d 8d]
 ```
 Brak wzorca "tylko górny bajt niezerowy" — prawdziwe 24-bitowe audio, dynamika ~-7 do -28 dBFS.
-S/PDIF 1/2 = cisza. Main L/R i Analog 1-8 = cisza (El Cap nie grał na Main Out w tej sesji).
+S/PDIF 1/2 = cisza. **Main Out L/R (sloty 0/1) i Phones 1/2 (sloty 10/11) aktywne** — El Cap grał muzykę na obu wyjściach. Analog 1-8 = cisza.
 
 ### Korekta błędu w poprzednim dokumencie
 
