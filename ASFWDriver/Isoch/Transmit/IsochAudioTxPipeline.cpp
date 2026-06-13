@@ -695,6 +695,18 @@ void IsochAudioTxPipeline::InjectNearHw(uint32_t hwPacketIndex, Tx::IsochTxDescr
                     "%08x %08x %08x %08x %08x %08x %08x %08x",
                     Q(0),Q(1),Q(2),Q(3),Q(4),Q(5),Q(6),Q(7),
                     Q(8),Q(9),Q(10),Q(11),Q(12),Q(13),Q(14),Q(15));
+                // SPH-vs-HW drift probe: compare the packet's block-0 SPH cycle to the
+                // latest OHCI CycleTimer snapshot. El Capitan anchors SPH to real bus time;
+                // if our free-running cursor drifts, hwCyc and sphCyc diverge over time.
+                const uint32_t hwCt   = assembler_.currentCycleTime();
+                const uint32_t hwCyc  = (hwCt >> 12) & 0x1FFFu;
+                const uint32_t hwOff  = hwCt & 0x0FFFu;
+                const uint32_t sphQ0  = Q(2);
+                const uint32_t sphCyc = (sphQ0 >> 12) & 0x1FFFu;
+                const uint32_t sphOff = sphQ0 & 0x0FFFu;
+                ASFW_LOG(Isoch, "[SPHPROBE] hwCyc=%u hwOff=%u | sphCyc=%u sphOff=%u | aheadCyc=%d",
+                         hwCyc, hwOff, sphCyc, sphOff,
+                         static_cast<int>(sphCyc) - static_cast<int>(hwCyc));
             }
         }
     }

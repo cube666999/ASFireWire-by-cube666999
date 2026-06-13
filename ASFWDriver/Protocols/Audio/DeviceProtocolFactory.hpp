@@ -115,14 +115,16 @@ public:
         switch (modelId) {
             case kMOTU828MK3FWModel:    // unitSwVersion 0x15
             case kMOTU828MK3HybModel:   // unitSwVersion 0x35
-                // PCM channel counts from Linux snd_motu_spec_828mk3_fw (motu-protocol-v3.c):
-                //   tx_fixed_pcm_chunks[0] = 18  → device→host (IR) = 18 input channels
-                //   rx_fixed_pcm_chunks[0] = 14  → host→device (IT) = 14 output channels
-                // Wire DBS=21 (kMOTUV3WireDbs48k) is NOT the PCM channel count — it is the
-                // data block size on the wire (2 msg slots + up to 24 PCM slots rounded up to
-                // a quadlet boundary). DBS=21 stays in MOTUAudioBackend; what we publish to
-                // CoreAudio is the actual usable PCM count: 18 in / 14 out.
-                return {18u, 14u};
+                // Fix 59: expose CLEAN STEREO to CoreAudio (outputChannels=2).
+                //   Hardware [DBG] logs proved: with outputChannels=10 the HAL UPMIXES
+                //   Spotify stereo across the unlabeled 10-channel buffer — ch0 carried clean
+                //   left, but ch1 (right) and ch6/ch8 received a high-frequency upmix artifact
+                //   (the squeal) which the encoder faithfully forwarded to Analog 7 / DIG L.
+                //   With outputChannels=2 the HAL can only write L→ch0, R→ch1, no upmix.
+                //   The WIRE frame is decoupled (see GetMOTUV3WireDbs): MOTU still receives a
+                //   valid DBS=13 frame with the 2 PCM channels in slots 0,1 (Analog 1/2),
+                //   remaining slots zero-padded.
+                return {18u, 2u};
             case kMOTU896MK3Model:      // unitSwVersion 0x16 — 28 input / 24 output physical
                 return {20u, 16u};
             case kMOTUTravelerMK3Model: // unitSwVersion 0x17
@@ -131,6 +133,41 @@ public:
                 return {14u, 10u};
             default:
                 return {2u, 2u};
+        }
+    }
+
+    /// Wire-level AM824 data-block size (DBS = quadlets per data block) for a MOTU V3
+    /// model's host→device (IT) stream at ≤48 kHz.
+    ///
+    /// DECOUPLED from GetMOTUV3ChannelLayout().outputChannels: CoreAudio exposes a small
+    /// PCM channel count (e.g. stereo) to avoid HAL upmixing, while the FireWire wire frame
+    /// must still carry MOTU's expected physical frame size. The PacketAssembler writes the
+    /// real PCM channels into the first slots and zero-pads the remainder.
+    ///
+    /// 828mk3: rx_fixed_pcm_chunks[48k]=14 is only the BASE; the device adds dynamic
+    /// S/PDIF + ADAT chunks (read from V3_OPT_IFACE_MODE register). Our unit runs with
+    /// S/PDIF active (DIG outputs lit), so it expects the full 24-PCM frame:
+    ///   frame = SPH(4) + MSG(6) + 24×PCM(3) = 82 bytes → DBS = 1+DIV_ROUND_UP(26×3,4) = 21.
+    /// This matches the empirically-verified Fix 21 value (IT ran with DBS=21). Sending the
+    /// smaller DBS=13 frame caused MOTU to slip frame boundaries → channel scatter + squeal.
+    /// PacketAssembler writes the real PCM channels into slots 0,1 (Analog 1/2) and zero-pads
+    /// the remaining 22 slots. TODO: read V3_OPT_IFACE_MODE to compute this dynamically.
+    /// Returns 0 for models without a known override (caller keeps DBS = pcmChannels).
+    /// Wire DBS for IT (host→device) in MOTU V3 protocol.
+    /// Formula from Linux amdtp-motu.c: DBS = ceil((SPH + MSG + channels * 3) / 4)
+    ///   SPH = 4 bytes, MSG = 6 bytes, channels = 18 (828mk3 at 48kHz)
+    ///   DBS = ceil((4 + 6 + 18*3) / 4) = ceil(64/4) = 16
+    ///
+    /// Fix 64: was 21 (incorrect — 21×4=84 bytes → (84-10)/3=24.67 channels, non-integer!).
+    /// Old value traced back to faulty Sequoia diagnostic capture (confused IT vs IR or rate).
+    /// Linux snd-firewire-motu uses 16 for 828mk3 IT at 48kHz (verified against amdtp-motu.c).
+    static constexpr uint8_t GetMOTUV3WireDbs(uint32_t modelId) noexcept {
+        switch (modelId) {
+            case kMOTU828MK3FWModel:
+            case kMOTU828MK3HybModel:
+                return 16u;  // Fix 64: was 21 (wrong) → 16 correct for 18ch IT at 48kHz
+            default:
+                return 0u;
         }
     }
 

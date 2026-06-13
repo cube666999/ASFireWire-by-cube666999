@@ -136,6 +136,14 @@ kern_return_t IsochTransmitContext::Start() noexcept {
     ring_.SeedCycleTracking(*hardware_);
     audio_.SetCycleTrackingValid(true);
 
+    // Fix 63: seed SPH cursor BEFORE Prime so writeMotuV3SphAndAdvance has a valid
+    // currentCycleTime_ when it first runs inside fillSilentMotuV3Frames.
+    // Without this, currentCycleTime_=0 at prime time → SPH anchors to cycle≈2 instead
+    // of the actual hardware cycle (≈1473) → MOTU rejects every frame (timestamps in past).
+    if (audio_.IsMotuV3() && hardware_) {
+        audio_.UpdateSPH(hardware_->ReadCycleTime());
+    }
+
     if (audio_.SharedTxQueueValid() && !audio_.IsZeroCopyEnabled()) {
         audio_.PrePrimeFromSharedQueue();
     }

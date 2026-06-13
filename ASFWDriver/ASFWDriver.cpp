@@ -49,6 +49,7 @@
 #include "Discovery/FWDevice.hpp"
 #include "Hardware/InterruptManager.hpp"
 #include "Hardware/OHCIConstants.hpp"
+#include "Protocols/Audio/DeviceProtocolFactory.hpp"
 #include "Hardware/RegisterMap.hpp"
 #include "IRM/IRMClient.hpp"
 #include "Isoch/IsochReceiveContext.hpp"
@@ -315,12 +316,7 @@ kern_return_t IMPL(ASFWDriver, Stop) {
         ctx.stopping.store(true, std::memory_order_release);
 
 #ifndef ASFW_HOST_TEST
-        if (ctx.providerNotifications) {
-            ctx.providerNotifications->SetEnableWithCompletion(false, nullptr);
-            ctx.providerNotifications->Cancel(nullptr);
-        }
-        ctx.providerNotifications.reset();
-        ctx.providerNotificationAction.reset();
+        DriverWiring::TeardownProviderNotifications(ctx);
 #endif
 
         // Hot-unplug safety: Detach early so any late Stop() work can't issue MMIO.
@@ -580,10 +576,7 @@ void ASFWDriver::ProviderNotificationReady_Impl(ASFWDriver_ProviderNotificationR
         ctx.deps.hardware->Detach();
     }
 
-    ctx.providerNotifications->SetEnableWithCompletion(false, nullptr);
-    ctx.providerNotifications->Cancel(nullptr);
-    ctx.providerNotifications.reset();
-    ctx.providerNotificationAction.reset();
+    DriverWiring::TeardownProviderNotifications(ctx);
 #endif
 }
 
@@ -769,11 +762,25 @@ kern_return_t ASFWDriver::StartIsochTransmit(uint8_t channel) {
 
     const uint32_t pcmChannels = nub->GetOutputChannelCount();
     uint32_t am824Slots = pcmChannels;
-    if (const auto* record = ctx.deps.deviceRegistry->FindByGuid(*guid);
-        record && record->protocol) {
-        ASFW::Audio::AudioStreamRuntimeCaps caps{};
-        if (record->protocol->GetRuntimeAudioStreamCaps(caps) && caps.hostToDeviceAm824Slots > 0) {
-            am824Slots = caps.hostToDeviceAm824Slots;
+    if (const auto* record = ctx.deps.deviceRegistry->FindByGuid(*guid); record) {
+        // Fix 59: MOTU V3 — decouple wire DBS from CoreAudio channel count.
+        // CoreAudio now exposes stereo (pcmChannels=2) to stop HAL upmixing, but the
+        // FireWire frame must keep MOTU's expected size (Fix 64: DBS=16 for 18ch IT at 48kHz).
+        // PacketAssembler writes the 2 PCM channels into slots 0,1 and zero-pads the rest.
+        const uint32_t effModel = ASFW::Audio::DeviceProtocolFactory::EffectiveModelId(
+            record->vendorId, record->modelId, record->unitSwVersion);
+        if (record->vendorId == ASFW::Audio::DeviceProtocolFactory::kMOTUVendorId) {
+            if (const uint8_t wireDbs =
+                    ASFW::Audio::DeviceProtocolFactory::GetMOTUV3WireDbs(effModel);
+                wireDbs > 0) {
+                am824Slots = wireDbs;
+            }
+        } else if (record->protocol) {
+            ASFW::Audio::AudioStreamRuntimeCaps caps{};
+            if (record->protocol->GetRuntimeAudioStreamCaps(caps) &&
+                caps.hostToDeviceAm824Slots > 0) {
+                am824Slots = caps.hostToDeviceAm824Slots;
+            }
         }
     }
 

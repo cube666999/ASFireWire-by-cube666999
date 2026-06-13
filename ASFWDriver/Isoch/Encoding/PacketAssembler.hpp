@@ -210,6 +210,9 @@ public:
         // resulting in SPH timestamps ~140ms in the past → MOTU rejected every frame.
     }
     
+    /// Get the last OHCI CycleTimer snapshot used for MOTU V3 SPH (diagnostics).
+    uint32_t currentCycleTime() const noexcept { return currentCycleTime_; }
+
     /// Get zero-copy read position (for diagnostics)
     uint32_t zeroCopyReadPosition() const noexcept { return zeroCopyReadPos_; }
 

@@ -2,7 +2,7 @@
   "mcpServers": {
     "codegraph": {
       "command": "/opt/homebrew/bin/node",
-      "args": ["/opt/homebrew/bin/codegraph", "mcp"],
+      "args": ["/opt/homebrew/bin/codegraph", "serve", "--mcp", "--path", "/Users/cube666/Library/Mobile Documents/com~apple~CloudDocs/FireWire/ASFireWire"],
       "env": {}
     }
   }

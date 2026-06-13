@@ -32,11 +32,15 @@
 #include <cstring>
 #include <utility>
 
-static constexpr bool kEnableZeroCopyOutputPath = false;  // Fix 49: disable zero-copy for MOTU V3 (packed 3-byte PCM requires encoding, cannot zero-copy raw PCM)
+static constexpr bool kEnableZeroCopyOutputPath = true;  // Fix 56: re-enable zero-copy — encoding IS applied in InjectNearHw via assembler_.encodeToWire(), fix 49 reasoning was wrong
 
 // Report only hardware/presentation pipeline latency to HAL.
 // Software queue/ring buffering should not be baked into device latency fields.
+// Fix 58: OutputLatency=24 (matches El Capitan DeviceLatency=24).
+// El Capitan also had OutputSampleLatency=16 at stream level — applied via SetLatency() below.
 static constexpr uint32_t kReportedDeviceLatencyFrames = 24;  // ~0.5ms @ 48kHz
+static constexpr uint32_t kReportedOutputStreamLatencyFrames = 16;  // Fix 58: El Capitan OutputSampleLatency=16
+static constexpr uint32_t kReportedInputStreamLatencyFrames  = 19;  // Fix 58: El Capitan InputSampleLatency=19
 // 2A: Safety offset driven by TX buffer profile (data-driven from Phase 1 diagnostics)
 static constexpr uint32_t kReportedSafetyOffsetFrames =
     ASFW::Isoch::Config::kTxBufferProfile.safetyOffsetFrames;
@@ -598,9 +602,9 @@ kern_return_t IMPL(ASFWAudioDriver, Start)
     ivars->outputStream->SetAvailableStreamFormats(outputFormats, formatCount);
     ivars->outputStream->SetCurrentStreamFormat(&outputFormats[0]);  // Initial format
 
-    // Stream-level latency (no additional latency beyond device-level)
-    ivars->outputStream->SetLatency(0);
-    ivars->inputStream->SetLatency(0);
+    // Stream-level latency — Fix 58: match El Capitan values (OutputSampleLatency=16, InputSampleLatency=19)
+    ivars->outputStream->SetLatency(kReportedOutputStreamLatencyFrames);
+    ivars->inputStream->SetLatency(kReportedInputStreamLatencyFrames);
 
     // Add streams to device
     error = ivars->audioDevice->AddStream(ivars->inputStream.get());

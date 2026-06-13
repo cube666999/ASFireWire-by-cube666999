@@ -238,6 +238,55 @@ IOReturn MOTUAudioBackend::StartStreaming(uint64_t guid) noexcept {
         }
     }
 
+    // Step 1b — Read V3_OPT_IFACE_MODE (0x0c94): determine actual IT/IR PCM channel counts.
+    // This register controls which optical interfaces are active and whether they carry ADAT
+    // (+8 PCM) or TOSLINK/SPDIF (+4 PCM). Without reading it we'd have to guess DBS.
+    // Reference: Linux motu-protocol-v3.c detect_packet_formats_with_opt_ifaces().
+    {
+        uint32_t optMode = 0;
+        uint32_t irPcm = k828Mk3BaseIrPcm; // start from 828mk3fw base: IR=18, IT=14
+        uint32_t itPcm = k828Mk3BaseItPcm;
+
+        if (ReadRegister(nodeId, gen, kOptIfaceModeOff, optMode)) {
+            // Optical IN (adds to IR = device→host TX direction)
+            if (optMode & kV3EnableOptInIfaceA)
+                irPcm += (optMode & kV3UseOptInIfaceAAsAdat) ? 8u : 4u;
+            if (optMode & kV3EnableOptInIfaceB)
+                irPcm += (optMode & kV3UseOptInIfaceBAsAdat) ? 8u : 4u;
+            // Optical OUT (adds to IT = host→device RX direction)
+            if (optMode & kV3EnableOptOutIfaceA)
+                itPcm += (optMode & kV3UseOptOutIfaceAAsAdat) ? 8u : 4u;
+            if (optMode & kV3EnableOptOutIfaceB)
+                itPcm += (optMode & kV3UseOptOutIfaceBAsAdat) ? 8u : 4u;
+
+            const uint32_t correctIrDbs = ComputeV3Dbs(irPcm);
+            const uint32_t correctItDbs = ComputeV3Dbs(itPcm);
+
+            // OS_LOG truncates at first \n — use separate log calls.
+            ASFW_LOG(Audio, "DBS-DIAG: V3_OPT_IFACE_MODE=0x%08x", optMode);
+            ASFW_LOG(Audio, "DBS-DIAG: OptIN_A=%u(adat=%u) OptIN_B=%u(adat=%u) irPcm=%u irDBS=%u hardcoded=%u",
+                (optMode & kV3EnableOptInIfaceA)    ? 1u : 0u,
+                (optMode & kV3UseOptInIfaceAAsAdat) ? 1u : 0u,
+                (optMode & kV3EnableOptInIfaceB)    ? 1u : 0u,
+                (optMode & kV3UseOptInIfaceBAsAdat) ? 1u : 0u,
+                irPcm, correctIrDbs, static_cast<uint32_t>(kMOTUV3WireDbs48k_IR));
+            ASFW_LOG(Audio, "DBS-DIAG: OptOUT_A=%u(adat=%u) OptOUT_B=%u(adat=%u) itPcm=%u itDBS=%u hardcoded=%u",
+                (optMode & kV3EnableOptOutIfaceA)    ? 1u : 0u,
+                (optMode & kV3UseOptOutIfaceAAsAdat) ? 1u : 0u,
+                (optMode & kV3EnableOptOutIfaceB)    ? 1u : 0u,
+                (optMode & kV3UseOptOutIfaceBAsAdat) ? 1u : 0u,
+                itPcm, correctItDbs, static_cast<uint32_t>(kMOTUV3WireDbs48k));
+            ASFW_LOG(Audio, "DBS-DIAG: IT DBS %{public}s (correct=%u hardcoded=%u)",
+                (correctItDbs == kMOTUV3WireDbs48k) ? "MATCH OK" : "MISMATCH !!!",
+                correctItDbs, static_cast<uint32_t>(kMOTUV3WireDbs48k));
+        } else {
+            ASFW_LOG_WARNING(Audio,
+                "MOTUAudioBackend: V3_OPT_IFACE_MODE read failed — using hardcoded DBS IR=%u IT=%u",
+                static_cast<uint32_t>(kMOTUV3WireDbs48k_IR),
+                static_cast<uint32_t>(kMOTUV3WireDbs48k));
+        }
+    }
+
     // Step 2 — IRM: allocate isochronous channels and bandwidth.
     const uint32_t sampleRateHz = config.currentSampleRate > 0
                                       ? static_cast<uint32_t>(config.currentSampleRate)
@@ -258,15 +307,42 @@ IOReturn MOTUAudioBackend::StartStreaming(uint64_t guid) noexcept {
     const uint8_t irChannel = allocated_.irChannel;
     const uint8_t itChannel = allocated_.itChannel;
 
-    // Step 3 — Write PACKET_FORMAT: TX speed S400 + exclude differed data chunks.
+    // Step 2c (EXPERIMENT) — Write 0x0b04 = 0xffc10001 (ground truth: official driver
+    // writes this every init, before the stream setup; we never did). Unknown semantics
+    // (V3-specific stream/format register). Written before PACKET_FORMAT per official order.
     {
-        const uint32_t pktFmt = kTxExcludeDiffered | kRxExcludeDiffered | kSpeedS400;
+        const uint32_t reg0b04 = 0xffc10001u;
+        if (!WriteRegister(nodeId, gen, 0x0b04u, reg0b04))
+            ASFW_LOG_WARNING(Audio, "MOTUAudioBackend: 0x0b04 write failed (non-fatal)");
+        else
+            ASFW_LOG(Audio, "MOTUAudioBackend: 0x0b04=0x%08x written", reg0b04);
+    }
+
+    // Step 3 — Write PACKET_FORMAT.
+    // Ground truth (El Capitan live read): official MOTU driver writes 0x0b10 = 0x00000002
+    // (speed S400 only, NO "exclude differed" flags). We previously wrote 0xc2 (with the
+    // exclude flags) which shifted the device's expected channel positions -> smear across
+    // Analog7/Digital-L/Main. Match the official value.
+    {
+        const uint32_t pktFmt = 0x00000002u;  // was: kTxExcludeDiffered|kRxExcludeDiffered|kSpeedS400 (0xc2)
         if (!WriteRegister(nodeId, gen, kPacketFmtOff, pktFmt)) {
             ASFW_LOG_ERROR(Audio, "MOTUAudioBackend: PACKET_FORMAT write failed");
             ReleaseIRMResources();
             return kIOReturnError;
         }
         ASFW_LOG(Audio, "MOTUAudioBackend: PACKET_FORMAT=0x%08x written", pktFmt);
+    }
+
+    // Step 3b (EXPERIMENT) — Write ROUTE_PORT_CONF (0x0c04).
+    // Ground truth: official MOTU driver leaves this register = 0x00000100 (readback on
+    // El Capitan). We never wrote it; suspected cause of "all audio routes to Analog 7".
+    {
+        const uint32_t routeConf = 0x00000100u;
+        if (!WriteRegister(nodeId, gen, kRoutePortConfOff, routeConf)) {
+            ASFW_LOG_WARNING(Audio, "MOTUAudioBackend: ROUTE_PORT_CONF write failed (non-fatal)");
+        } else {
+            ASFW_LOG(Audio, "MOTUAudioBackend: ROUTE_PORT_CONF(0x0c04)=0x%08x written", routeConf);
+        }
     }
 
     // Step 4 — Publish nub and ensure queues exist.
@@ -400,7 +476,7 @@ IOReturn MOTUAudioBackend::StartStreaming(uint64_t guid) noexcept {
         // Fix 29: Use MOTU V3 packet encoding per amdtp-motu.c.
         // MOTU V3 uses 3-byte packed PCM (not AM824 quadlets):
         //   Data block = SPH(4B) + msg×3B×2 + PCM×3B×N, padded to DBS quadlets
-        // kMOTUV3WireDbs48k=21: DBS=21 matches observed wire packets (pcm_chunks=24).
+        // kMOTUV3WireDbs48k=13: IT direction — 14 PCM + 2 MSG = 16 ch → DBS=1+ceil(48/4)=13.
         // skipSYTGate=true: MOTU V3 uses SPH for sync, never SYT (always syt=0x0000).
         // Fix 38c: wire zero-copy output buffer so IT DMA reads directly from
         // the CoreAudio output buffer instead of going through AssemblerRingBuffer.
