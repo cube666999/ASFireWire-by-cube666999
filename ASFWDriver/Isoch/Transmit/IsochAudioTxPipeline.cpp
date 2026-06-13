@@ -102,7 +102,19 @@ kern_return_t IsochAudioTxPipeline::Configure(uint8_t sid,
 
     uint32_t am824Slots = queueChannels;
     if (requestedAm824Slots != 0) {
-        if (requestedAm824Slots < queueChannels) {
+        // Fix 57: MOTU V3 uses 3-byte packed PCM — DBS=13 fits 14 channels (52 bytes = SPH+MSG+14×3).
+        // Validate by byte capacity instead of slot count for MOTU V3.
+        // For AM824: 1 slot = 1 channel (4 bytes each), so slots >= channels required.
+        const bool isMotuV3 = (encoding == Encoding::PacketEncoding::kMotuV3);
+        if (isMotuV3) {
+            const uint32_t requiredBytes = 10u + queueChannels * 3u; // SPH(4)+MSG(6)+PCM(N×3)
+            if (requestedAm824Slots * 4u < requiredBytes) {
+                ASFW_LOG(Isoch,
+                         "IT: Configure failed - MOTU V3: DBS=%u (frame=%u bytes) < required %u bytes for %u PCM ch",
+                         requestedAm824Slots, requestedAm824Slots * 4u, requiredBytes, queueChannels);
+                return kIOReturnBadArgument;
+            }
+        } else if (requestedAm824Slots < queueChannels) {
             ASFW_LOG(Isoch,
                      "IT: Configure failed - requestedAm824Slots=%u < queuePcm=%u",
                      requestedAm824Slots,
@@ -179,6 +191,7 @@ void IsochAudioTxPipeline::ResetForStart() noexcept {
 
     audioWriteIndex_ = 0;
     nextCallPumpFrames_ = 0;  // will be set after first InjectNearHw call
+    injectDbc_ = 0;  // Fix 67: reset running DBC counter (matches PrimeRing slot-0 DBC)
 
     dbcTracker_.lastDbc = 0;
     dbcTracker_.lastDataBlockCount = 0;
@@ -597,11 +610,21 @@ void IsochAudioTxPipeline::InjectNearHw(uint32_t hwPacketIndex, Tx::IsochTxDescr
 
             const uint32_t consumed = sharedTxQueue_.ConsumeFrames(framesPerPacket);
             if (consumed < framesPerPacket || zeroCopyFillBefore < framesPerPacket) {
+                // Fix 71: do NOT skip on a queue-fill underrun (was: `continue`).
+                // We already read real PCM from zcBase above (DBG-PCM confirms valid
+                // samples even here). The shared queue is only a frame-count producer/
+                // consumer estimate, and because we write kAudioWriteAhead packets ahead
+                // of HW we routinely outrun it (~880 false "underruns"/s with music
+                // actively playing). Skipping left the previous ring-wrap's packet in the
+                // DMA slot — stale audio + a past SPH + a discontinuous DBC — so MOTU got
+                // fresh/stale/fresh interleaving, lost CIP framing, and squealed instead of
+                // playing. Falling through encodes the (at worst slightly stale but always
+                // coherent) zcBase samples, keeping the stream continuous so MOTU stays
+                // locked. Counters stay for diagnostics only.
                 counters_.exitZeroRefill.fetch_add(1, std::memory_order_relaxed);
                 counters_.underrunSilencedPackets.fetch_add(1, std::memory_order_relaxed);
                 assembler_.recordUnderrun(zeroCopyFillBefore, framesPerPacket,
                                           consumed, 0, 0);
-                continue; // leave silence in place
             }
         } else {
             framesRead = assembler_.ringBuffer().read(samples, framesPerPacket);
@@ -618,16 +641,63 @@ void IsochAudioTxPipeline::InjectNearHw(uint32_t hwPacketIndex, Tx::IsochTxDescr
         if (!payloadVirt) {
             continue;
         }
+
+        // Fix 67: Keep CIP DBC consistent across ring wraps.
+        // PrimeRing writes CIP Q0 big-endian: payloadVirt[3] = DBC (LSByte of Q0 in wire order).
+        // After each full ring pass (200 pkts × 150 data × 8 frames = 1200 → 1200 % 256 = 176),
+        // slot 0 would have stale DBC=0 from Prime → MOTU sees -176 DBC jump → mute/resync.
+        // Overwrite with the running counter before encoding audio.
+        payloadVirt[3] = injectDbc_;
+
         uint32_t* audioQuadlets = reinterpret_cast<uint32_t*>(payloadVirt + Encoding::kCIPHeaderSize);
 
         // Fix 40: dispatch to the correct encoder (AM824 or MOTU V3).
         // Previously always called EncodePcmFramesWithAm824Placeholders — sending AM824 data
         // to MOTU V3 devices which expect 3-byte packed PCM → silence on MOTU.
         assembler_.encodeToWire(samples, framesPerPacket, audioQuadlets);
+
+        injectDbc_ = static_cast<uint8_t>(injectDbc_ + static_cast<uint8_t>(framesPerPacket));
         ++dataPacketsInjected;
+        lastEncodedPayload_ = payloadVirt;  // for the periodic wire hex dump below
     }
 
     audioWriteIndex_ = audioTarget;
+
+    // SWEEP/FEED DIAGNOSTIC: ~1/s report of how many data packets actually reached
+    // encodeToWire this scheduling window (vs underrun-skipped). Confirms whether the
+    // zero-copy audio feed is delivering frames or starving the wire path.
+    {
+        static uint32_t dbgInjCalls = 0;
+        if ((++dbgInjCalls % 985u) == 1u) {  // ~1 s at ~985 refill ticks/s
+            ASFW_LOG(Isoch, "[INJ] toInject=%u encoded=%u underrunSkips=%llu exitZero=%llu",
+                     toInject, dataPacketsInjected,
+                     counters_.underrunSilencedPackets.load(std::memory_order_relaxed),
+                     counters_.exitZeroRefill.load(std::memory_order_relaxed));
+            // Hex dump of the last encoded data packet's wire bytes:
+            //   [0..7]   = CIP header (2 quadlets)
+            //   [8..11]  = SPH (data block 0)
+            //   [12..17] = msg chunks (2×3 bytes)
+            //   [18..23] = PCM chunk0 (bytes 18-20) + chunk1 (bytes 21-23)
+            const uint8_t* p = lastEncodedPayload_;
+            if (p) {
+                // p = CIP(8) + block. block starts at p[8]: SPH(4)+msg(6)+PCM(14×3).
+                // Scan the PCM region (block bytes 10..51 => p[18..59]) and report the
+                // offset of the first non-zero PCM chunk = where the sweep tone landed.
+                int toneChunk = -1;
+                for (int c = 0; c < 14; ++c) {
+                    const uint8_t* d = p + 18 + c * 3;
+                    if (d[0] || d[1] || d[2]) { toneChunk = c; break; }
+                }
+                ASFW_LOG(Isoch,
+                    "[WIRE] CIP %02x%02x%02x%02x %02x%02x%02x%02x | SPH %02x%02x%02x%02x | "
+                    "msg %02x%02x%02x%02x%02x%02x | firstNonZeroPcmChunk=%d",
+                    p[0],p[1],p[2],p[3],p[4],p[5],p[6],p[7],
+                    p[8],p[9],p[10],p[11],
+                    p[12],p[13],p[14],p[15],p[16],p[17],
+                    toneChunk);
+            }
+        }
+    }
 
     // Update pump estimate for the next OnRefillTickPreHW call.
     // nextCallPumpFrames_ = frames this call consumed from the assembler ring buffer,
