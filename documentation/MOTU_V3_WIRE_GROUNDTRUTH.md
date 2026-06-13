@@ -143,9 +143,69 @@ Kolejne pakiety ze snoopa (DBC cycling co 8):
 0x030d0478  0x030d0480  0x030d0488  0x030d0490 ...  (DBC +8 per data pkt)
 ```
 
+### Bit ordering — górne czy dolne bity int32?
+
+Z danych snoopa nie da się rozstrzygnąć na poziomie wire — oba warianty produkują identyczne
+3 bajty na drucie:
+```
+int32 left-justified  (górne): 0x38B52400 → [38][B5][24]  ✓
+int32 right-justified (dolne): 0x0038B524 → [38][B5][24]  ✓
+```
+Rozstrzyga **Linux amdtp-motu.c** (IT write, host→device):
+```c
+d[0] = (val >> 24) & 0xff;  // bits[31:24] — MSB
+d[1] = (val >> 16) & 0xff;  // bits[23:16]
+d[2] = (val >>  8) & 0xff;  // bits[15:8]
+// bits[7:0] odrzucone
+```
+**Wniosek: górne bity** — bierzemy bits[31:8] int32 (left-justified), dolny bajt odrzucamy.
+Dla CoreAudio int32 to naturalne — audio siedzi w górnych bitach.
+
+### Pełne 24 bity potwierdzone z payload snoopa
+
+Analiza wszystkich niezerowych pakietów danych: **wszystkie 3 bajty sampla są aktywne**.
+Próbki z Phones 1/2 (El Cap grał przez wyjście Phones):
+```
+ch10 Phones1: [38 b5 24]  [eb ff 47]  [05 7b 75]  [ef 2f 03]  [ef 96 d2]
+ch11 Phones2: [38 9e 5f]  [ea 63 df]  [03 98 49]  [ee 7c 5e]  [f2 6d 8d]
+```
+Brak wzorca "tylko górny bajt niezerowy" — prawdziwe 24-bitowe audio, dynamika ~-7 do -28 dBFS.
+S/PDIF 1/2 = cisza. Main L/R i Analog 1-8 = cisza (El Cap nie grał na Main Out w tej sesji).
+
 ### Korekta błędu w poprzednim dokumencie
 
 Poprzednia wersja tego pliku błędnie pisała "byte 2 bits[2]=1 → SPH=1". Poprawnie:
 - `0x04` = `0000 0100` → bit1 (SPH, Q0 bit9) = **0**, bit2 (QPC LSB, Q0 bit10) = **1**
 - MOTU nie deklaruje SPH w CIP, ale używa pierwszego quadletu bloku jako timestamp (QPC=1)
 - Nasz driver NIE powinien ustawiać SPH=1 w CIP Q0
+
+---
+
+## IR ground truth — DO ZEBRANIA (MOTU→host, device→host)
+
+### Co wiemy z Linux spec (bez hardware capture)
+
+```
+tx_fixed_pcm_chunks (MOTU→host) = {18, 18, 12}  @ 1x/2x/4x
+DBS_IR = 1 + DIV_ROUND_UP((2+18)×3, 4) = 1 + 15 = 16
+```
+18 kanałów PCM: 8 Analog In + 2 S/PDIF + 2 Phones + ADAT (disabled: nie dotyczy) + 6 digi.
+Dokładna mapa slotów IR (który wejście analogowe = który numer slotu) — **nieznana bez capture**.
+
+### Plan capture IR ground truth
+
+Wymagany sprzęt: **Access Virus TI** (dostępny) → MOTU Analog In 1 → sinus 440 Hz.
+
+Metoda:
+1. Odczytać MOTU TX channel z `ISOC_COMM_CONTROL` bits[21:16] (`kTxChannelShift=16`)
+2. Dodać 2. pasywny IR context w snoop branchu na tym kanale
+3. Puścić sinus 440 Hz z Virus TI na jedno wejście analogowe MOTU
+4. Zidentyfikować niezerowy slot w IR stream → mapa kanałów
+
+Technicznie: ~2h do brancha `snoop-mode`. Warunek: El Cap aktywnie streamuje do MOTU (IT musi być aktywne).
+
+### Dlaczego IR jest priorytetem
+
+Wejścia są **feature blokującym** — workflow = nagrywanie syntezatorów (Virus TI + inne).
+Bez zmapowanych slotów IR nie można poprawnie zdekodować audio z wejść MOTU.
+IR pipeline do wdrożenia po naprawieniu IT (slot PCM fix).

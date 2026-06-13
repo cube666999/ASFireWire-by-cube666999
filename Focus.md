@@ -24,11 +24,26 @@ Bug NIE był w timingu/DBS/Command DSP — był w **slocie PCM**:
   10-11=Phones, 12-13=S/PDIF. Mapowanie slot→wyjście STAŁE w sprzęcie.
 - **Wkładaliśmy stereo na slot 8 (Analog 7, byte 34)** → stąd "świeci ch7".
 
-### 📋 FIX DO WDROŻENIA (następna sesja z budżetem)
+### 📋 ROADMAP (kolejność)
 
-W encoderze MOTU V3 (`PacketAssembler`/`IsochAudioTxPipeline`):
-- Kanał **L → slot 0 (byte offset 10)**, **R → slot 1 (byte 13)**, zeruj sloty 2-13.
-- DBS=13 i SYT=0xFFFF zostają. Potem build + test → powinna być czysta muzyka na Main.
+```
+Krok 1 — Fix IT (następna sesja)
+  PacketAssembler/IsochAudioTxPipeline:
+  • L → slot 0 (byte offset 10), R → slot 1 (byte 13), sloty 2–13 = zero
+  • DBS=13, SYT=0xFFFF, CIP Q0 byte2=0x04 (QPC=1, SPH=0)
+  • Górne 24 bity int32 → 3 bajty big-endian na wire (val>>8 pattern)
+  Cel: Spotify gra przez MOTU Main Out
+
+Krok 2 — IR ground truth capture
+  Access Virus TI → MOTU Analog In 1 → sinus 440 Hz
+  Dodać 2. pasywny IR context w snoop-mode branchu (MOTU TX channel)
+  Zmapować sloty IR: który wejście fizyczne = który slot
+  Szczegóły: MOTU_V3_WIRE_GROUNDTRUTH.md sekcja "IR ground truth"
+
+Krok 3 — IR pipeline w dextcie
+  DBS_IR=16, 18 kanałów PCM, mapa slotów z kroku 2
+  Cel: nagrywanie syntezatorów (Virus TI + inne) przez MOTU wejścia analogowe
+```
 
 ### Maszyna referencyjna (NOWE)
 MacBook 2009 + Linux Mint. Dostęp/setup: `documentation/LINUX_MBP2009_SSH.md`
