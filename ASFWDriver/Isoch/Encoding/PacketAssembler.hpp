@@ -546,7 +546,17 @@ private:
             }
             for (uint32_t ch = 0; ch < chCount; ++ch) {
                 const uint32_t s = static_cast<uint32_t>(frameIn[ch]);
-                uint8_t* dst = block + 10u + ch * 3u;
+                // Fix 72: OS stereo goes to PCM slots 10/11, not 0/1.
+                // Ground-truth from the El Capitan snoop (MB2009, working Apple driver,
+                // playing on Main+Phones): across all 194 captured DATA packets the ONLY
+                // non-zero PCM was at block byte 40 (slot 10) and byte 43 (slot 11) — e.g.
+                // slot10=0x38b524, slot11=0x389e5f. Every other slot was zero. MOTU's
+                // internal CueMix fans that one stereo pair out to Main + Phones. Our prior
+                // byte-10/13 (slot 0/1) placement was wrong (the old doc misread the map),
+                // which is why MOTU squealed / lit Analog 7 + S/PDIF instead of playing.
+                // kMotuV3OutputSlotBase=10 shifts ch0→slot10 (byte40), ch1→slot11 (byte43).
+                constexpr uint32_t kMotuV3OutputSlotBase = 10u;
+                uint8_t* dst = block + 10u + (kMotuV3OutputSlotBase + ch) * 3u;
                 // Fix 52: high-aligned int32 (ADK with FormatFlagIsAlignedHigh → bits [31:8])
                 // IORegistry confirms: IOAudioStreamAlignment=1 (kIOAudioStreamAlignmentHighByte)
                 dst[0] = static_cast<uint8_t>((s >> 24) & 0xFFu); // MSB — bits [31:24]
