@@ -570,6 +570,9 @@ Przy ponownym uruchomieniu apki (gdy dext już jest [activated enabled]), `activ
 | `documentation/PHY_COMMAND_CONTRACTS.md` | Kontrakty dla PHY commands i alpha PHY packets |
 | `documentation/ieee1394_bus_reset.md` | IEEE 1394 bus reset state machine (modernizowana dokumentacja) |
 | `documentation/ieee1394_tree_identification.md` | IEEE 1394 tree identification state machine |
+| `documentation/MOTU_KEXT_GHIDRA.md` | Analiza statyczna MOTUFireWireAudio.kext (Ghidra/otool) — pcm_param=FC+10, parametry startstreaming |
+| `documentation/LINUX_MBP2009_SSH.md` | SSH do MB2009 Linux (cube666@192.168.0.38) — dostęp do referencji MOTU; zawiera ostrzeżenie ⛔ ślepa uliczka dla audio |
+| `documentation/REFACTOR_PLAN_IOBUFFER_ZTS.md` | Plan refaktoru push→pull (IOBufferMemoryDescriptor + ZTS z OHCI CycleTimer) — likwidacja underrunów |
 
 ### Referencje Linux MOTU (`docs/linux/motu/`)
 
