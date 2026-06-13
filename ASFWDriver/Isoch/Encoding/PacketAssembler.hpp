@@ -234,9 +234,18 @@ public:
                       uint32_t frames,
                       uint32_t* outWireQuadlets) const noexcept {
         if (encoding_ == PacketEncoding::kMotuV3) {
-            // Update SPH for each frame before writing PCM.
+            // Fix 70: zero the ENTIRE data block before writing SPH + PCM.
+            // encodeToWire is the production InjectNearHw path. It previously wrote only
+            // SPH (bytes 0-3) and the active PCM channels (ch0→byte10, ch1→byte13), leaving
+            // MSG bytes 4-9 and all unused PCM slots (bytes 16..) holding whatever stale DMA
+            // payload was there. MOTU then played that garbage on Analog 7 (slot 8, byte 34)
+            // and S/PDIF (slot 12, byte 46) → squeal + wrong LEDs, even though Main Out L/R
+            // were correct. Mirror assembleDataPacket's fillSilent-then-overwrite: zero the
+            // whole block, lay down SPH, then encodeInterleavedFramesToMotuV3 overwrites only
+            // the active PCM bytes — every other slot stays true silence (El Cap default).
             for (uint32_t f = 0; f < frames; ++f) {
                 uint32_t* blockQuad = outWireQuadlets + static_cast<size_t>(f) * am824SlotCount_;
+                for (uint32_t q = 0; q < am824SlotCount_; ++q) { blockQuad[q] = 0; }
                 writeMotuV3InjectSphAndAdvance(reinterpret_cast<uint8_t*>(blockQuad));
             }
             encodeInterleavedFramesToMotuV3(pcmInterleaved, frames, outWireQuadlets);
