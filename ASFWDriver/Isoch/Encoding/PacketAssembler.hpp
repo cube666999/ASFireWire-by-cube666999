@@ -493,7 +493,7 @@ private:
         // to the next chunk every 3 s. Zeros every other PCM chunk. Lets the listener map
         // chunk index → physical output empirically, and locate which chunk squeaks.
         if (kChannelSweepTest) {
-            constexpr uint32_t kSweepFramesPerChunk = 480000u; // 10 s @ 48 kHz
+            constexpr uint32_t kSweepFramesPerChunk = 240000u; // 5 s @ 48 kHz
             constexpr uint32_t kSquarePeriod        = 109u;    // ~440 Hz @ 48 kHz
             constexpr uint32_t kSquareHalf          = 54u;
             constexpr int32_t  kAmp                 = 0x10000000; // ~ -8 dBFS, high-aligned
@@ -517,8 +517,14 @@ private:
                 if (++sweepFrameCtr_ >= kSweepFramesPerChunk) {
                     sweepFrameCtr_ = 0u;
                     sweepChunk_ = (sweepChunk_ + 1u) % pcmSlots;
-                    ASFW_LOG(Isoch, "[SWEEP] tone now on chunk %u (of %u PCM chunks)",
-                             sweepChunk_, pcmSlots);
+                    // CueMix output-channel names (MOTU 828mk3, screenshot map) per stream slot.
+                    static const char* const kSlotName[14] = {
+                        "Main Out 1","Main Out 2","Analog 1","Analog 2","Analog 3","Analog 4",
+                        "Analog 5","Analog 6","Analog 7","Analog 8","Phones 1","Phones 2",
+                        "S/PDIF 1","S/PDIF 2"};
+                    const char* nm = (sweepChunk_ < 14u) ? kSlotName[sweepChunk_] : "?";
+                    ASFW_LOG(Isoch, "[SWEEP] tone now on chunk %u = expected '%s' (of %u slots)",
+                             sweepChunk_, nm, pcmSlots);
                 }
             }
             return;
@@ -656,7 +662,7 @@ private:
     mutable bool injectSphSeeded_{false};   ///< Fix 68: whether injectSphCursor_ has been seeded
 
     // Channel sweep diagnostic state (active only when kChannelSweepTest == true).
-    static constexpr bool kChannelSweepTest = false;  ///< DIAGNOSTIC: rotate test tone across PCM chunks (off — real PCM → slots 0/1 Main Out)
+    static constexpr bool kChannelSweepTest = true;  ///< DIAGNOSTIC (temp): map slot→physical output on THIS unit's current mixer state
     mutable uint32_t sweepChunk_{0};         ///< Active PCM chunk index for the sweep tone
     mutable uint32_t sweepFrameCtr_{0};      ///< Frames elapsed on the current chunk
     mutable uint32_t sweepSquarePhase_{0};   ///< Square-wave phase counter
