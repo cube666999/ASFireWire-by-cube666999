@@ -683,18 +683,18 @@ void IsochAudioTxPipeline::InjectNearHw(uint32_t hwPacketIndex, Tx::IsochTxDescr
                 // p = CIP(8) + block. block starts at p[8]: SPH(4)+msg(6)+PCM(14×3).
                 // Scan the PCM region (block bytes 10..51 => p[18..59]) and report the
                 // offset of the first non-zero PCM chunk = where the sweep tone landed.
-                int toneChunk = -1;
-                for (int c = 0; c < 14; ++c) {
-                    const uint8_t* d = p + 18 + c * 3;
-                    if (d[0] || d[1] || d[2]) { toneChunk = c; break; }
-                }
+                // Full-block dump matching the El Capitan snoop format (CIP + block0 13q
+                // + block1 SPH = 16 quadlets, wire/big-endian order) so we can diff our
+                // transmit byte-for-byte against the working Apple driver's capture.
+                auto Q = [p](int q) -> uint32_t {
+                    const uint8_t* d = p + q * 4;
+                    return (uint32_t(d[0])<<24)|(uint32_t(d[1])<<16)|(uint32_t(d[2])<<8)|d[3];
+                };
                 ASFW_LOG(Isoch,
-                    "[WIRE] CIP %02x%02x%02x%02x %02x%02x%02x%02x | SPH %02x%02x%02x%02x | "
-                    "msg %02x%02x%02x%02x%02x%02x | firstNonZeroPcmChunk=%d",
-                    p[0],p[1],p[2],p[3],p[4],p[5],p[6],p[7],
-                    p[8],p[9],p[10],p[11],
-                    p[12],p[13],p[14],p[15],p[16],p[17],
-                    toneChunk);
+                    "[WIRE16] %08x %08x %08x %08x %08x %08x %08x %08x "
+                    "%08x %08x %08x %08x %08x %08x %08x %08x",
+                    Q(0),Q(1),Q(2),Q(3),Q(4),Q(5),Q(6),Q(7),
+                    Q(8),Q(9),Q(10),Q(11),Q(12),Q(13),Q(14),Q(15));
             }
         }
     }
