@@ -143,7 +143,7 @@ Kolejne pakiety ze snoopa (DBC cycling co 8):
 0x030d0478  0x030d0480  0x030d0488  0x030d0490 ...  (DBC +8 per data pkt)
 ```
 
-### Bit ordering — górne czy dolne bity int32?
+### Bit ordering — górne czy dolne bity int32? ⚠️ NIEPOTWIERDZONE
 
 Z danych snoopa nie da się rozstrzygnąć na poziomie wire — oba warianty produkują identyczne
 3 bajty na drucie:
@@ -151,15 +151,24 @@ Z danych snoopa nie da się rozstrzygnąć na poziomie wire — oba warianty pro
 int32 left-justified  (górne): 0x38B52400 → [38][B5][24]  ✓
 int32 right-justified (dolne): 0x0038B524 → [38][B5][24]  ✓
 ```
-Rozstrzyga **Linux amdtp-motu.c** (IT write, host→device):
+
+**⚠️ Linux NIE jest referencją dla bit ordering.** Linux `snd-firewire-motu` ma znane bugi
+powodujące artefakty dźwiękowe (issue #27: lost interrupts, timing), przez co:
+- Odtwarzanie na Linuxie = ŚLEPA ULICZKA (piszczy, nie używać)
+- Kod źródłowy (`val >> 8` w `amdtp-motu.c`) może być błędny
+
+**Co mówi Linux source (traktować jako hipotezę, NIE jako fakt):**
 ```c
-d[0] = (val >> 24) & 0xff;  // bits[31:24] — MSB
-d[1] = (val >> 16) & 0xff;  // bits[23:16]
-d[2] = (val >>  8) & 0xff;  // bits[15:8]
-// bits[7:0] odrzucone
+d[0] = (val >> 24);  // bits[31:24] — górne
+d[1] = (val >> 16);
+d[2] = (val >>  8);  // bits[7:0] odrzucone
 ```
-**Wniosek: górne bity** — bierzemy bits[31:8] int32 (left-justified), dolny bajt odrzucamy.
-Dla CoreAudio int32 to naturalne — audio siedzi w górnych bitach.
+Hipoteza: górne 24 bity int32. Zgodne ze standardem CoreAudio (left-justified).
+
+**Jak zweryfikować niezależnie:**
+IR capture z Virus TI → MOTU Analog In → sinus 440 Hz. MOTU's własne ADC packuje sampel
+do 3 bajtów — pattern sinusa jednoznacznie pokaże czy MSB jest w byte[0] czy byte[2],
+i czy dane są left- czy right-justified. To da bezpośrednią hardware odpowiedź bez Linux.
 
 ### Pełne 24 bity potwierdzone z payload snoopa
 

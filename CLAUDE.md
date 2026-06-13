@@ -559,6 +559,9 @@ Przy ponownym uruchomieniu apki (gdy dext już jest [activated enabled]), `activ
 
 | Plik | Zawartość |
 |------|-----------|
+| `documentation/MOTU_V3_WIRE_GROUNDTRUTH.md` | **Ground-truth wire format MOTU 828 MK3** — DBS=13, CIP nagłówek, mapa 14 kanałów IT, format MOTU timestamp, bit ordering (hipoteza), snoop El Cap. Plan IR capture z Virus TI |
+| `documentation/SESSION_2026-06-12_GROUNDTRUTH.md` | Sesja przełomowa — diagnoza "świeci tylko ch7": zły slot PCM (slot 8 zamiast 0/1), 4 niezależne źródła, Linux = ślepa uliczka dla audio |
+| `documentation/AUDIODRIVERKIT_PIPELINE.md` | **Prawidłowa architektura AudioDriverKit** — IOBufferMemoryDescriptor, ZTS z OHCI CycleTimer, push vs pull model, przeliczenie OHCI→mach_time, znany bug Apple input/output sync |
 | `documentation/FWOHCI_IR.md` | Architektura IR (Isoch Receive) z dekompilacji Apple AppleFWOHCI — jak Apple implementuje DMA ring dla IR |
 | `documentation/IRM_EXPLAINED.md` | Trace IRM protocol krok po kroku — jak Mac rezerwuje kanał i bandwidth (CAS na CHANNELS_AVAILABLE) |
 | `documentation/COMPLETION_STRATEGIES.md` | Strategie completion dla AT async stack — kiedy sygnalizować finalizację |
