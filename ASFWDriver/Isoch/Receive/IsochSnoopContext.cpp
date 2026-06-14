@@ -182,7 +182,7 @@ uint32_t IsochSnoopContext::Poll() {
             HexDumpPacket(pkt.payload, pkt.actualLength, pkt.descriptorIndex, seq);
             // Structured slot parser for DATA packets (skip NO-DATA, which are <64 bytes).
             if (pkt.actualLength >= 64) {
-                ParseAndLogBlock0(pkt.payload, pkt.actualLength, seq);
+                ParseAndLogBlock0(pkt.payload, pkt.actualLength, seq, pkt.xferStatus);
             }
         }
     });
@@ -208,16 +208,18 @@ uint32_t IsochSnoopContext::Poll() {
 // Diagnostics
 // ============================================================================
 
-void IsochSnoopContext::ParseAndLogBlock0(const uint8_t* payload, uint16_t length, uint32_t seq) {
-    // OHCI IR prepends a 4-byte isochronous packet header quadlet before the CIP data.
-    // Buffer layout (big-endian wire values where noted):
-    //   [0..3]   OHCI isoch header (LE: data_length[15:0], tag[1:0], ch[5:0], tcode, sy)
-    //   [4..7]   CIP Q0 (BE): [EOH:1][sid:6][DBS:8][fn:2][qpc:1][sph:1][rsv:2][dbc:8]
-    //   [8..11]  CIP Q1 (BE): [EOH:1=1][FMT:6][FDF:8][SYT:16]
-    //   [12..63] First data block (52 bytes): SPH[4] + MSG×2[6] + slot[0..12][39]
-    if (length < 64) return;  // should not happen (caller guards), but be safe
+void IsochSnoopContext::ParseAndLogBlock0(const uint8_t* payload, uint16_t length, uint32_t seq,
+                                          uint16_t rxXferStatus) {
+    // The captured payload buffer holds the bare CIP + data blocks — NO OHCI isoch
+    // header is prepended (confirmed from the raw hex dump: payload[0..3] decodes as a
+    // valid CIP Q0 with DBS=13). Buffer layout (big-endian wire values where noted):
+    //   [0..3]   CIP Q0 (BE): [EOH:1][sid:6][DBS:8][fn:2][qpc:1][sph:1][rsv:2][dbc:8]
+    //   [4..7]   CIP Q1 (BE): [EOH:1=1][FMT:6][FDF:8][SYT:16]
+    //   [8..59]  First data block (52 bytes): SPH[4] + MSG×2[6] + slot[0..12][39]
+    //            slot N PCM (3 bytes) at block byte 10 + N*3.
+    if (length < 60) return;  // should not happen (caller guards), but be safe
 
-    const uint8_t* cip = payload + 4;  // skip OHCI isoch header
+    const uint8_t* cip = payload;      // CIP starts at byte 0 (no OHCI header in buffer)
     const uint8_t dbs     = cip[1];                                     // DBS = CIP Q0 bits[23:16]
     const uint8_t cipB2   = cip[2];                                     // fn/qpc/sph nibble
     const uint8_t dbc     = cip[3];                                     // DBC = CIP Q0 bits[7:0]
@@ -225,7 +227,7 @@ void IsochSnoopContext::ParseAndLogBlock0(const uint8_t* payload, uint16_t lengt
     const uint8_t fdf     = cip[5];                                     // FDF = CIP Q1 bits[23:16]
     const uint16_t syt    = (uint16_t(cip[6]) << 8) | cip[7];         // SYT = CIP Q1 bits[15:0]
 
-    const uint8_t* blk = payload + 12;  // first data block
+    const uint8_t* blk = payload + 8;   // first data block (after 2-quadlet CIP)
 
     const uint32_t sph  = (uint32_t(blk[0]) << 24) | (uint32_t(blk[1]) << 16) |
                           (uint32_t(blk[2]) << 8)  | blk[3];
@@ -238,10 +240,31 @@ void IsochSnoopContext::ParseAndLogBlock0(const uint8_t* payload, uint16_t lengt
         s[n] = (uint32_t(p[0]) << 16) | (uint32_t(p[1]) << 8) | p[2];
     }
 
+    // === SPH presentation-ahead vs the cycle the packet was actually transmitted ===
+    // The SPH (MOTU format) encodes the presentation time: bits[24:12] = cycleCount,
+    // bits[11:0] = cycleOffset (1/3072 of a cycle). The OHCI IR descriptor records the
+    // RECEIVE timestamp in its status word (xferStatus): bits[12:0] = cycleCount at the
+    // cycle the packet arrived. On a shared FireWire bus, receive cycle == transmit
+    // cycle, so (sphCycle - rxCycle) mod 8000 is exactly how far ahead El Capitan stamps
+    // its presentation time — the number we need to match (ours currently = aheadCyc=-2).
+    // Cross-check: ReadCycleTime() sampled now (has poll latency, so a few cycles later).
+    const uint32_t sphCyc = (sph >> 12) & 0x1FFF;
+    const uint32_t sphOff = sph & 0x0FFF;
+    const uint32_t rxCyc  = static_cast<uint32_t>(rxXferStatus) & 0x1FFF;
+    int aheadRx = static_cast<int>(sphCyc) - static_cast<int>(rxCyc);
+    if (aheadRx < -4000) aheadRx += 8000;
+    if (aheadRx >  4000) aheadRx -= 8000;
+    const uint32_t ct     = hardware_ ? hardware_->ReadCycleTime() : 0u;
+    const uint32_t hwCyc  = (ct >> 12) & 0x1FFF;
+    int aheadHw = static_cast<int>(sphCyc) - static_cast<int>(hwCyc);
+    if (aheadHw < -4000) aheadHw += 8000;
+    if (aheadHw >  4000) aheadHw -= 8000;
+
     ASFW_LOG(Isoch, "[Snoop] pkt#%u len=%u DBS=%u FMT=0x%02x FDF=0x%02x SYT=0x%04x DBC=%u b2=0x%02x",
              seq, length, dbs, fmt, fdf, syt, dbc, cipB2);
-    ASFW_LOG(Isoch, "[Snoop] pkt#%u sph=0x%08x msg=[0x%06x 0x%06x]",
-             seq, sph, msg0, msg1);
+    ASFW_LOG(Isoch, "[Snoop] pkt#%u sph=0x%08x sphCyc=%u sphOff=%u | rxCyc=%u aheadRx=%d | hwCyc=%u aheadHw=%d (xfer=0x%04x)",
+             seq, sph, sphCyc, sphOff, rxCyc, aheadRx, hwCyc, aheadHw, rxXferStatus);
+    ASFW_LOG(Isoch, "[Snoop] pkt#%u msg=[0x%06x 0x%06x]", seq, msg0, msg1);
     ASFW_LOG(Isoch, "[Snoop] pkt#%u s0=%06x s1=%06x s2=%06x s3=%06x s4=%06x s5=%06x s6=%06x",
              seq, s[0], s[1], s[2], s[3], s[4], s[5], s[6]);
     ASFW_LOG(Isoch, "[Snoop] pkt#%u s7=%06x s8=%06x s9=%06x s10=%06x s11=%06x s12=%06x",
