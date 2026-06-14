@@ -10,6 +10,25 @@ Two components:
 - **ASFWDriver/** — C++23 DriverKit driver extension (dext)
 - **ASFW/** — Swift 6 control app and installer (required to install the dext)
 
+## MOTU 828 MK3 (V3) — canonical hardware facts
+
+> **Single source of truth lives in the `main` branch:** `documentation/MOTU_828_MK3_FACTS.md`
+> (channels, DBS, rates, CLOCK_STATUS register, slot map, source hierarchy). Link there; do
+> not copy numbers into other docs. Hard sources (El Capitan wire snoop + Linux) are authoritative
+> over any hand-written summary — a CLAUDE.md summary once had these inverted and misled a fix.
+
+Channel geometry @ 48 kHz (confirmed by El Cap wire + Linux spec + Sequoia kext):
+
+| direction | roles | PCM | DBS |
+|-----------|-------|:---:|:---:|
+| host→device | IT · playback · `outputChannelCount` | **14** | 13 |
+| device→host | IR · capture · `inputChannelCount` | **18** | 16 |
+
+These must stay consistent in two places: `MOTUVendorProtocol::BuildRuntimeCaps` (drives the
+wire) and `MOTU828Mk3Profile` (drives CoreAudio geometry + graph validation). `Tx` == host→device,
+`Rx` == device→host. The MOTU clock register is `CLOCK_STATUS` (0x0b14): rate index in bits [15:8],
+`0x02000000` is a write-only FETCH-PCM command bit (never read it back as status).
+
 ## Build Commands
 
 **Primary build (Xcode — required for signing and producing `.dext`):**
