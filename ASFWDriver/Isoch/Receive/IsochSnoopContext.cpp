@@ -175,10 +175,15 @@ uint32_t IsochSnoopContext::Poll() {
             return;
         }
         const uint32_t seq = ++packetSeq_;
-        // Throttle: full hex for the first few packets, then 1-in-2000 (~once every
-        // ~250 ms at 8 kHz). Avoids flooding the unified log while still sampling.
-        if (seq <= 8 || (seq % 2000 == 0)) {
+        // Log first 50 packets fully (covers ~8 ms of El Cap stream — enough for ground
+        // truth), then 1-in-2000 (~once per 250 ms) to confirm ongoing reception.
+        const bool doLog = (seq <= 50) || (seq % 2000 == 0);
+        if (doLog) {
             HexDumpPacket(pkt.payload, pkt.actualLength, pkt.descriptorIndex, seq);
+            // Structured slot parser for DATA packets (skip NO-DATA, which are <64 bytes).
+            if (pkt.actualLength >= 64) {
+                ParseAndLogBlock0(pkt.payload, pkt.actualLength, seq);
+            }
         }
     });
 
@@ -202,6 +207,46 @@ uint32_t IsochSnoopContext::Poll() {
 // ============================================================================
 // Diagnostics
 // ============================================================================
+
+void IsochSnoopContext::ParseAndLogBlock0(const uint8_t* payload, uint16_t length, uint32_t seq) {
+    // OHCI IR prepends a 4-byte isochronous packet header quadlet before the CIP data.
+    // Buffer layout (big-endian wire values where noted):
+    //   [0..3]   OHCI isoch header (LE: data_length[15:0], tag[1:0], ch[5:0], tcode, sy)
+    //   [4..7]   CIP Q0 (BE): [EOH:1][sid:6][DBS:8][fn:2][qpc:1][sph:1][rsv:2][dbc:8]
+    //   [8..11]  CIP Q1 (BE): [EOH:1=1][FMT:6][FDF:8][SYT:16]
+    //   [12..63] First data block (52 bytes): SPH[4] + MSG×2[6] + slot[0..12][39]
+    if (length < 64) return;  // should not happen (caller guards), but be safe
+
+    const uint8_t* cip = payload + 4;  // skip OHCI isoch header
+    const uint8_t dbs     = cip[1];                                     // DBS = CIP Q0 bits[23:16]
+    const uint8_t cipB2   = cip[2];                                     // fn/qpc/sph nibble
+    const uint8_t dbc     = cip[3];                                     // DBC = CIP Q0 bits[7:0]
+    const uint8_t fmt     = cip[4] & 0x3F;                             // FMT = CIP Q1 bits[29:24]
+    const uint8_t fdf     = cip[5];                                     // FDF = CIP Q1 bits[23:16]
+    const uint16_t syt    = (uint16_t(cip[6]) << 8) | cip[7];         // SYT = CIP Q1 bits[15:0]
+
+    const uint8_t* blk = payload + 12;  // first data block
+
+    const uint32_t sph  = (uint32_t(blk[0]) << 24) | (uint32_t(blk[1]) << 16) |
+                          (uint32_t(blk[2]) << 8)  | blk[3];
+    const uint32_t msg0 = (uint32_t(blk[4]) << 16) | (uint32_t(blk[5]) << 8) | blk[6];
+    const uint32_t msg1 = (uint32_t(blk[7]) << 16) | (uint32_t(blk[8]) << 8) | blk[9];
+
+    uint32_t s[13];
+    for (int n = 0; n < 13; ++n) {
+        const uint8_t* p = blk + 10 + n * 3;
+        s[n] = (uint32_t(p[0]) << 16) | (uint32_t(p[1]) << 8) | p[2];
+    }
+
+    ASFW_LOG(Isoch, "[Snoop] pkt#%u len=%u DBS=%u FMT=0x%02x FDF=0x%02x SYT=0x%04x DBC=%u b2=0x%02x",
+             seq, length, dbs, fmt, fdf, syt, dbc, cipB2);
+    ASFW_LOG(Isoch, "[Snoop] pkt#%u sph=0x%08x msg=[0x%06x 0x%06x]",
+             seq, sph, msg0, msg1);
+    ASFW_LOG(Isoch, "[Snoop] pkt#%u s0=%06x s1=%06x s2=%06x s3=%06x s4=%06x s5=%06x s6=%06x",
+             seq, s[0], s[1], s[2], s[3], s[4], s[5], s[6]);
+    ASFW_LOG(Isoch, "[Snoop] pkt#%u s7=%06x s8=%06x s9=%06x s10=%06x s11=%06x s12=%06x",
+             seq, s[7], s[8], s[9], s[10], s[11], s[12]);
+}
 
 void IsochSnoopContext::HexDumpPacket(const uint8_t* payload, uint16_t length,
                                       uint32_t descIndex, uint32_t seq) {

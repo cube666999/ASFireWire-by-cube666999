@@ -69,6 +69,7 @@ public:
     void LogHardwareState();
 
 private:
+    void ParseAndLogBlock0(const uint8_t* payload, uint16_t length, uint32_t seq);
     struct Registers {
         ::ASFW::Driver::Register32 CommandPtr;
         ::ASFW::Driver::Register32 ContextControlSet;
