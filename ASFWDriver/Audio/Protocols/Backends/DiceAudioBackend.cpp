@@ -276,6 +276,12 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     };
     static ASFW::Isoch::Audio::DICE::DiceProfileRegistry diceRegistry{};
     const auto* profile = diceRegistry.FindProfile(identity);
+    if (!profile) {
+        // We neither retrieve stream geometry for unknown device nor fail loudly.
+        // Skip the logic of retrieving geometry and stick to only known profiles for now.
+        // TODO: Support dynamic stream geometry retrieval for unknown devices.
+        return;
+    }
 
     auto protocol = runtime_.FindShared(guid);
 
@@ -283,28 +289,9 @@ void DiceAudioBackend::EnsureNubForGuid(uint64_t guid) noexcept {
     dev.guid = record->guid;
     dev.vendorId = record->vendorId;
     dev.modelId = record->modelId;
-
-    if (profile) {
-        // Known DICE-family profile supplies the stream geometry.
-        dev.deviceName = profile->Name();
-        dev.inputChannelCount = profile->RxChannelCount();
-        dev.outputChannelCount = profile->TxChannelCount();
-    } else if (protocol) {
-        // Vendor-specific protocols (e.g. MOTU V3) are not in the DICE profile
-        // registry; take stream geometry from their runtime caps instead.
-        AudioStreamRuntimeCaps caps{};
-        if (!protocol->GetRuntimeAudioStreamCaps(caps)) {
-            // No authoritative geometry available — cannot publish a nub.
-            return;
-        }
-        dev.deviceName = protocol->GetName();
-        dev.inputChannelCount = caps.hostInputPcmChannels;
-        dev.outputChannelCount = caps.hostOutputPcmChannels;
-    } else {
-        // Neither a known DICE profile nor a runtime protocol — nothing to publish.
-        return;
-    }
-
+    dev.deviceName = profile->Name();
+    dev.inputChannelCount = profile->RxChannelCount();
+    dev.outputChannelCount = profile->TxChannelCount();
     dev.channelCount = std::max(dev.inputChannelCount, dev.outputChannelCount);
     dev.inputPlugName = "Input";
     dev.outputPlugName = "Output";
