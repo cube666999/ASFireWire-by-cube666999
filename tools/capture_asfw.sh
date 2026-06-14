@@ -36,23 +36,43 @@ CHANNEL="${1:-}"
 N_PACKETS="${2:-300}"
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o PubkeyAuthentication=no -o PreferredAuthentications=password"
+
 ssh_cmd() {
-    sshpass -p "$MB2009_PASS" ssh \
-        -o StrictHostKeyChecking=no \
-        -o ConnectTimeout=10 \
-        "${MB2009_USER}@${MB2009_HOST}" "$@"
+    # expect handles password prompt (sshpass hangs when local id_rsa has passphrase)
+    /usr/bin/expect -c "
+set timeout 60
+spawn ssh $SSH_OPTS ${MB2009_USER}@${MB2009_HOST} {$*}
+expect {
+    \"password:\" { send \"${MB2009_PASS}\r\"; exp_continue }
+    timeout       { exit 1 }
+    eof           {}
+}
+" 2>/dev/null
 }
 
 scp_to() {   # local → remote
-    sshpass -p "$MB2009_PASS" scp \
-        -o StrictHostKeyChecking=no \
-        "$1" "${MB2009_USER}@${MB2009_HOST}:$2"
+    /usr/bin/expect -c "
+set timeout 30
+spawn scp $SSH_OPTS {$1} ${MB2009_USER}@${MB2009_HOST}:{$2}
+expect {
+    \"password:\" { send \"${MB2009_PASS}\r\"; exp_continue }
+    timeout       { exit 1 }
+    eof           {}
+}
+" 2>/dev/null
 }
 
 scp_from() {  # remote → local
-    sshpass -p "$MB2009_PASS" scp \
-        -o StrictHostKeyChecking=no \
-        "${MB2009_USER}@${MB2009_HOST}:$1" "$2"
+    /usr/bin/expect -c "
+set timeout 30
+spawn scp $SSH_OPTS ${MB2009_USER}@${MB2009_HOST}:{$1} {$2}
+expect {
+    \"password:\" { send \"${MB2009_PASS}\r\"; exp_continue }
+    timeout       { exit 1 }
+    eof           {}
+}
+" 2>/dev/null
 }
 
 check_sshpass() {

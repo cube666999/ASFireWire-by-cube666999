@@ -163,9 +163,10 @@ bool BusResetCoordinator::BuildTopology() {
         RecordRecoveryReason(std::string{"Topology build failed: "} +
                              TopologyManager::TopologyBuildErrorCodeString(snapshot.error().code));
         cycle_.acceptedTopology.reset();
-        RequestSoftwareReset({ResetRequestKind::Recovery, ResetFlavor::Short, std::nullopt,
-                              "Invalid Self-ID topology"});
-        ASFW_LOG_V2(BusReset, "Topology build failed: %{public}s (%{public}s)",
+        // Do not issue a recovery reset here — self-triggering on topology failure creates a
+        // bus reset storm when a third node joins the bus (e.g. a passive sniffer). The bus
+        // will naturally stabilize; we process the next organic reset when it arrives.
+        ASFW_LOG_V2(BusReset, "Topology build failed (no reset): %{public}s (%{public}s)",
                     TopologyManager::TopologyBuildErrorCodeString(snapshot.error().code),
                     snapshot.error().detail.c_str());
         return false;

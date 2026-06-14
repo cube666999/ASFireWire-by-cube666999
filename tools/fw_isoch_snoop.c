@@ -104,7 +104,7 @@ int main(int argc, char** argv) {
     int     dumped = 0;
     while (dumped < want) {
         struct pollfd pfd = { .fd = fd, .events = POLLIN };
-        if (poll(&pfd, 1, 5000) <= 0) { fprintf(stderr, "[snoop] timeout — no packets on ch %d\n", channel); break; }
+        if (poll(&pfd, 1, 30000) <= 0) { fprintf(stderr, "[snoop] timeout — no packets on ch %d\n", channel); break; }
 
         ssize_t n = read(fd, evbuf, sizeof(evbuf));
         if (n < (ssize_t)sizeof(struct fw_cdev_event_common)) continue;
@@ -115,8 +115,13 @@ int main(int argc, char** argv) {
         struct fw_cdev_event_iso_interrupt* ev = (void*)evbuf;
         const uint32_t nquads = ev->header_length / 4;
         for (uint32_t h = 0; h < nquads && dumped < want; h += HEADER_QUADS) {
-            // iso receive header quadlet (native endian as delivered by kernel):
-            const uint32_t hdr = ev->header[h];
+            // iso receive header quadlet. EMPIRICALLY (2026-06-14, MB2009 x86 LE host)
+            // the kernel delivers this quadlet byte-swapped vs the bit layout below:
+            // reading it raw gave len=41025 / ch=40, a full bswap32 yields the correct
+            // len=424 / ch=1 / tag=1 / sy=0. Without the swap `len` >> MAX_PKT_BYTES, so
+            // the dump capped at 1024B — over-dumping ~600B of zeroed buffer tail per
+            // packet and inflating the apparent "zero block" count. Always bswap first.
+            const uint32_t hdr = __builtin_bswap32(ev->header[h]);
             const uint32_t len = (hdr >> 16) & 0xFFFF;   // data_length in bytes
             const uint32_t tag = (hdr >> 14) & 0x3;
             const uint32_t ch  = (hdr >>  8) & 0x3F;

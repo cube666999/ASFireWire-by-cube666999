@@ -8,20 +8,144 @@ Archiwum ukończonych etapów i sesji debugowania → `DevLog.md`
 
 ## ⚡ AKTUALNY STAN — Przeczytaj to na starcie
 
-> **Stan na 2026-06-12 — ZAGADKA "świeci tylko ch7 + pisk" ROZWIĄZANA.**
+> **Stan na 2026-06-14 (noc, 3:35) — PRZEŁOM. Snoop naprawiony i ZWALIDOWANY na żywo.
+> Strumień na drucie jest IDEALNY: czyste stereo, format perfekcyjny, ZERO underrunów.
+> Jedyny problem = MOTU nie routuje naszego byte 10/13 → Main Out. To problem POZYCJI
+> BAJTOWEJ PCM w bloku (+ puste kanały MSG), NIE underruny, NIE timing, NIE generowanie danych.
+> Decydujący krok jutro: przechwycić strumień El Capitan→MOTU (ground-truth bajtów).**
+
+### 🎯 Wire capture ZWALIDOWANY (MB2009, naprawiony snoop, 2026-06-14 noc)
+
+Snoop naprawiony (`__builtin_bswap32` na nagłówku) → rebuild + capture 60 pkt na żywo (IT v119).
+Walidacja: `len=424` (45 DATA) + `len=8` (15 NO-DATA), `blocks=8`, `ch=1`. Miarka OK.
+
+**✅ Co jest IDEALNE na drucie (twardo, z czystego capture):**
+- DBS=13, FMT=0x02, FDF=0x22, SYT=0xFFFF ✓ — format CIP zgodny z El Cap/Linux ground truth
+- SPH Δ=512 ticks/blok @ 48kHz ✓
+- **DBC: 136→144→152→...→224 — idealne +8, ZERO nieciągłości** (wcześniejszy "chaos DBC" = bug snoopa)
+- **slot[0] (byte 10) = 100% audio, slot[1] (byte 13) = 100% audio**, reszta = cisza
+- Próbki to PRAWDZIWE zmienne stereo (L: −299k…+490k, R: −491k…+536k, 320/360 unikalnych, gładka fala)
+- `len=8` pakiety = normalne NO-DATA keepalive blocking mode (45:15 ≈ 3:1), **NIE underruny**
+
+**❌ "69% underrunów" było ARTEFAKTEM zepsutego snoopa — SKASOWANE jako teoria.**
+Snoop czytał `len` byte-swapped (41025 zamiast 424) → cap 1024B → 19 "bloków" zamiast 8,
+11 to śmieciowy ogon zer. `exitZero=13348` z dextu = ~0.1% z 13.9M pakietów = pomijalne.
+
+### 🔴 JEDYNY problem: MOTU nie routuje naszego PCM na Main Out
+
+**Test hardware (v119, base=0):** LEDy = **Analog 7 + lewy Digital + prawy MAIN** + PISK.
+
+Sprzeczność rozstrzygająca: na drucie są **2 czyste kanały** (tylko byte 10-15), a MOTU
+zapala **3 wyjścia** + piszczy. Dwa czyste kanały nie mogą rozjechać się na trzy wyjścia —
+**MOTU czyta nasze bajty w złych pozycjach** (zła pozycja PCM w bloku i/lub puste kanały MSG).
+
+Wskazówki:
+- **Analog 7 świeci uparcie od wielu sesji**, niezależnie od `kMotuV3OutputSlotBase` →
+  NIE jest napędzany naszym PCM. Podejrzenie: kanały MSG (bytes 4-9) których nie wypełniamy,
+  albo CueMix monitor routing.
+- **El Capitan snoop (194 pkt, archiwum) pokazał audio w slot 10/11 (byte 40/43), NIE 0/1** →
+  Apple wkładał stereo gdzie indziej. To prawdopodobnie właściwa pozycja, nie nasza byte 10.
+- Pisk z czystych danych = MOTU misinterpretuje alignment (zła pozycja → rozjazd kanałów).
+
+**To NIE jest:** problem generowania danych (idealne), underrunów (zero), timingu (SPH OK),
+DBC (idealne). **To JEST:** zła mapa byte-offset PCM→fizyczne wyjście MOTU + prawdopodobnie
+brakujące kanały MSG/control.
+
+> **Poprzedni stan (2026-06-12) — ZAGADKA "świeci tylko ch7 + pisk" ROZWIĄZANA.**
 > Pełne podsumowanie: `documentation/SESSION_2026-06-12_GROUNDTRUTH.md`
 
 
-Stworzyłeś /Users/cube666/Library/Mobile\ Documents/com\~apple\~CloudDocs/FireWire/ASFireWire-snoop/SNOOP_IMPLEMENTATION_NOTES.md - przeczytaj go i wykonaj to
 
+---
 
+## 📋 PLAN NA JUTRO (sesja 2026-06-15)
+
+### Cel: znaleźć WŁAŚCIWĄ pozycję bajtową PCM → audio na Main Out L+R
+
+**Nowa hipoteza robocza (po przełomie nocnym):** nasz strumień jest format-perfekcyjny,
+ale wkładamy PCM w złe miejsce w bloku. MOTU oczekuje stereo gdzie indziej (prawdopodobnie
+byte 40/43 = slot 10/11 wg El Cap) i/lub oczekuje wypełnionych kanałów MSG (byte 4-9).
+**NIE marnuj czasu na underruny — są pomijalne.**
+
+### Krok 1 — DECYDUJĄCY: przechwyć strumień El Capitan→MOTU (ground-truth) ⬅️ ZACZNIJ TU
+
+El Capitan gra przez MOTU IDEALNIE → jego bajty są ground-truth z definicji.
+Snoop jest już naprawiony i zwalidowany. Wystarczy podpiąć łańcuch El Cap + MOTU + MB2009.
+
+1. Boot maszyny na El Capitan (Focus.md: "El Capitan oficjalny, gra ✅"), podłącz MOTU + MB2009 (FW).
+2. Odtwórz muzykę na El Cap przez MOTU 828 MK3 jako wyjście.
+3. Na MB2009 znajdź kanał El Capa i przechwyć:
+   ```bash
+   # snoop już zbudowany w /tmp/fw_isoch_snoop (z fixem). Sniff wszystkie kanały, znajdź IT:
+   echo 72044277 | sudo -S /tmp/fw_isoch_snoop /dev/fw1 <CH> 400 > /tmp/elcap.txt
+   # CH El Capa nieznany — sprawdź różne (El Cap IRM może dać inny niż nasz ch=1)
+   ```
+4. Analiza — porównaj z naszym:
+   ```bash
+   python3 tools/analyze_isoch.py /tmp/elcap.txt
+   ```
+   **Szukaj:** który byte offset Apple wypełnia stereo? Co jest w kanałach MSG (byte 4-9)?
+   DBS=13 czy inne? To powie DOKŁADNIE czego MOTU oczekuje.
+
+### Krok 2 — Skopiuj layout El Capa 1:1 w naszym kodzie
+
+Plik: `ASFWDriver/Isoch/Encoding/PacketAssembler.hpp`
+- Ustaw `kMotuV3OutputSlotBase` na właściwy slot (prawdopodobnie 10 → byte 40, wg El Cap).
+- Jeśli El Cap wypełnia kanały MSG (byte 4-9) — dodaj to (teraz są zero).
+- Build → deploy → test słuchowy.
+
+### Krok 3 — Walidacja: nasz strumień == El Cap (porównanie wire)
+
+Po fixie przechwyć NASZ strumień naprawionym snoopem i porównaj byte-po-byte z El Cap.
+Cel: identyczny layout → Main Out L+R grają czysto, bez pisku, bez Analog 7.
+
+### Alternatywa jeśli El Cap niedostępny — empiryczny sweep slotów
+
+Bez El Capa: wkładaj rozpoznawalny sygnał (np. tylko L, sinus) pod KAŻDY slot po kolei
+(base 0..13), capture+LED, zmapuj który byte offset → które fizyczne wyjście MOTU.
+Wolniejsze (14 buildów/testów), ale deterministyczne.
+
+### Kolejność priorytetów
+
+```
+Jutro:
+  1. El Cap → MOTU capture naprawionym snoopem   ← GROUND TRUTH bajtów
+  2. Porównaj: który byte = Main L/R? co w MSG?
+  3. Skopiuj layout 1:1 w PacketAssembler.hpp
+  4. Build + test słuchowy → Main Out L+R grają
+  → jeśli gra: COMMIT + git push cube666 main
+  (underruny ZIGNORUJ — pomijalne, nie blokują dźwięku)
+```
+
+### Gotowe narzędzia (stan: zwalidowane tej nocy)
+
+- `tools/fw_isoch_snoop.c` — **NAPRAWIONY + zbudowany na MB2009** w `/tmp/fw_isoch_snoop`
+  (fix zwalidowany: daje `len=424, blocks=8, ch=1`). Repo source już z byteswapem.
+- `tools/analyze_isoch.py` — analyzer (poprawny gdy snoop daje len=424)
+- `tools/capture_asfw.sh` — one-command: SCP + rebuild + capture + analyze (ch=1)
+- v119 na Tahoe: `[activated enabled]` ✓, itCh=1, irCh=0, IT streamuje OK
+- MB2009: `cube666@192.168.0.38`/`72044277`, local FW node = `/dev/fw1`, quirks=0x10
+  - SSH: `expect` + `-o PubkeyAuthentication=no -o PreferredAuthentications=password`
+    (sshpass wisi bo lokalny id_rsa ma passphrase); sudo: `echo PASS | sudo -S ...`
+
+### ⚠️ Uncommitted zmiany do rozważenia (git)
+`tools/fw_isoch_snoop.c` (byteswap fix) + Focus.md + memory. `git push cube666 main` gdy zdecydujesz.
+Inne pre-existing M: `BusResetCoordinatorActions.cpp`, `TopologyManager.cpp`,
+`PacketAssembler.hpp`, `capture_asfw.sh` — sprzed tej sesji, nie ruszane dziś.
+
+---
 
 ### 🎯 Root cause ustalony (ground-truth z Linux + El Capitan)
 
+> ⚠️ **KOREKTA 2026-06-14:** Mapa slotów poniżej (slot 0 = Main L) jest PODWAŻONA przez
+> test hardware LED: slot[0] → Digital L, NIE Main L. slot[1] → Main R OK. Mapowanie
+> slot→output wymaga empirycznej weryfikacji (Krok 4 planu jutro). Nie traktuj poniższego
+> "slot 0 = Main L" jako pewnik.
+
 Bug NIE był w timingu/DBS/Command DSP — był w **slocie PCM**:
 - **DBS=13** potwierdzony (Fix 66→16 BŁĘDNY, Fix 69→13 OK), **SYT=0xFFFF**, 14 kanałów
-- Mapa slotów (z CueMix): **slot 0 = Main L (byte 10), slot 1 = Main R (byte 13)**, 2-9=Analog 1-8,
-  10-11=Phones, 12-13=S/PDIF. Mapowanie slot→wyjście STAŁE w sprzęcie.
+- Mapa slotów (z CueMix, HIPOTEZA — podważona przez LED): slot 0 = Main L (byte 10),
+  slot 1 = Main R (byte 13), 2-9=Analog 1-8, 10-11=Phones, 12-13=S/PDIF.
 - **Wkładaliśmy stereo na slot 8 (Analog 7, byte 34)** → stąd "świeci ch7".
 
 ### 📋 ROADMAP (kolejność)

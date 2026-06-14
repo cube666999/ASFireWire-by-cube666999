@@ -272,59 +272,61 @@ void BuildTreeLinks(std::vector<TopologyNode>& nodes, std::vector<std::string>& 
         return;
     }
 
-    uint32_t edgesConstructed = 0;
-    uint32_t orphanedPorts = 0;
+    // IEEE 1394-1995 Annex G stack-based topology reconstruction.
+    // Self-ID packets arrive in bottom-up order: leaves first, root last.
+    // Processing nodes in ascending nodeId order (= Self-ID arrival order):
+    // each node's Child-port count tells how many already-announced nodes
+    // are its direct children — pop that many from the stack and link them.
+    // This correctly handles hub/star topologies (e.g. 3-port LaCie repeater)
+    // where the prior greedy Parent↔Child matching produced multiple roots.
+    std::vector<uint8_t> stack;
+    stack.reserve(nodes.size());
 
-    for (size_t i = 0; i < nodes.size(); ++i) {
-        TopologyNode& nodeA = nodes[i];
+    for (auto& node : nodes) {
+        uint32_t childPortCount = 0;
+        for (const auto& state : node.portStates) {
+            if (state == PortState::Child) {
+                ++childPortCount;
+            }
+        }
 
-        for (size_t portA = 0; portA < nodeA.portStates.size(); ++portA) {
-            if (nodeA.portStates[portA] == PortState::Parent) {
-                bool foundMatch = false;
+        if (childPortCount > static_cast<uint32_t>(stack.size())) {
+            warnings.push_back("Node " + std::to_string(node.nodeId) +
+                                " claims " + std::to_string(childPortCount) +
+                                " children but only " + std::to_string(stack.size()) +
+                                " nodes available on stack");
+            childPortCount = static_cast<uint32_t>(stack.size());
+        }
 
-                for (size_t j = 0; j < nodes.size(); ++j) {
-                    if (i == j) continue;
-                    TopologyNode& nodeB = nodes[j];
+        for (uint32_t i = 0; i < childPortCount; ++i) {
+            const uint8_t childId = stack.back();
+            stack.pop_back();
 
-                    for (size_t portB = 0; portB < nodeB.portStates.size(); ++portB) {
-                        if (nodeB.portStates[portB] == PortState::Child) {
-                            bool alreadyConnected = std::find(
-                                nodeB.parentNodeIds.begin(),
-                                nodeB.parentNodeIds.end(),
-                                nodeA.nodeId
-                            ) != nodeB.parentNodeIds.end();
-
-                            if (!alreadyConnected) {
-                                nodeA.childNodeIds.push_back(nodeB.nodeId);
-                                nodeB.parentNodeIds.push_back(nodeA.nodeId);
-                                edgesConstructed++;
-                                foundMatch = true;
-                                break;
-                            }
-                        }
-                    }
-                    if (foundMatch) break;
-                }
-
-                if (!foundMatch) {
-                    orphanedPorts++;
-                    warnings.push_back("Orphaned Parent port on node " +
-                                     std::to_string(nodeA.nodeId) + " port " +
-                                     std::to_string(portA));
+            for (auto& childNode : nodes) {
+                if (childNode.nodeId == childId) {
+                    node.childNodeIds.push_back(childId);
+                    childNode.parentNodeIds.push_back(node.nodeId);
+                    break;
                 }
             }
         }
+
+        stack.push_back(node.nodeId);
     }
 
-    if (nodes.size() > 0 && edgesConstructed != (nodes.size() - 1)) {
+    if (stack.size() != 1) {
+        warnings.push_back("Topology stack has " + std::to_string(stack.size()) +
+                            " entries after reconstruction (expected 1 root)");
+    }
+
+    uint32_t edgesConstructed = 0;
+    for (const auto& n : nodes) {
+        edgesConstructed += static_cast<uint32_t>(n.childNodeIds.size());
+    }
+    if (!nodes.empty() && edgesConstructed != static_cast<uint32_t>(nodes.size() - 1)) {
         warnings.push_back("Edge count " + std::to_string(edgesConstructed) +
                          " != expected " + std::to_string(nodes.size() - 1) +
                          " for tree structure");
-    }
-
-    if (orphanedPorts > 0) {
-        warnings.push_back("Found " + std::to_string(orphanedPorts) +
-                         " orphaned Parent ports");
     }
 }
 
