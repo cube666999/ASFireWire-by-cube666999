@@ -260,8 +260,8 @@ void IsochSnoopContext::ParseAndLogBlock0(const uint8_t* payload, uint16_t lengt
     if (aheadHw < -4000) aheadHw += 8000;
     if (aheadHw >  4000) aheadHw -= 8000;
 
-    ASFW_LOG(Isoch, "[Snoop] pkt#%u len=%u DBS=%u FMT=0x%02x FDF=0x%02x SYT=0x%04x DBC=%u b2=0x%02x",
-             seq, length, dbs, fmt, fdf, syt, dbc, cipB2);
+    ASFW_LOG(Isoch, "[Snoop] ch=%u pkt#%u len=%u DBS=%u FMT=0x%02x FDF=0x%02x SYT=0x%04x DBC=%u b2=0x%02x",
+             channel_, seq, length, dbs, fmt, fdf, syt, dbc, cipB2);
     ASFW_LOG(Isoch, "[Snoop] pkt#%u sph=0x%08x sphCyc=%u sphOff=%u | rxCyc=%u aheadRx=%d | hwCyc=%u aheadHw=%d (xfer=0x%04x)",
              seq, sph, sphCyc, sphOff, rxCyc, aheadRx, hwCyc, aheadHw, rxXferStatus);
     ASFW_LOG(Isoch, "[Snoop] pkt#%u msg=[0x%06x 0x%06x]", seq, msg0, msg1);
@@ -289,7 +289,7 @@ void IsochSnoopContext::HexDumpPacket(const uint8_t* payload, uint16_t length,
     }
     hex[j] = '\0';
 
-    ASFW_LOG(Isoch, "[Snoop] pkt#%u desc=%u len=%u: %{public}s", seq, descIndex, length, hex);
+    ASFW_LOG(Isoch, "[Snoop] ch=%u pkt#%u desc=%u len=%u: %{public}s", channel_, seq, descIndex, length, hex);
 }
 
 void IsochSnoopContext::LogHardwareState() {

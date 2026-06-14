@@ -93,7 +93,11 @@ public:
     /// 0 = revert to CIP DBS field (default).  Primarily for MOTU V3 devices.
     void SetRxOverrideWireDbs(uint8_t dbs) noexcept;
 
+    /// Snoop a host→device stream (e.g. El Capitan's IT) on IR context index 1.
     kern_return_t StartSnoop(uint8_t channel, HardwareInterface& hardware);
+    /// Snoop the device→host stream (MOTU's own TX) on IR context index 2, captured
+    /// simultaneously so its SPH/clock can be correlated with the host's IT stream.
+    kern_return_t StartSnoopTx(uint8_t channel, HardwareInterface& hardware);
     void StopSnoop();
     void PollSnoop();
 
@@ -118,6 +122,7 @@ private:
     OSSharedPtr<ASFW::Isoch::IsochReceiveContext> isochReceiveContext_;
     std::unique_ptr<ASFW::Isoch::IsochTransmitContext> isochTransmitContext_;
     OSSharedPtr<ASFW::Isoch::IsochSnoopContext> isochSnoopContext_;
+    OSSharedPtr<ASFW::Isoch::IsochSnoopContext> isochSnoopContextTx_;  // MOTU device→host snoop
 
     SharedQueueMapping rxQueue_{};
     SharedQueueMapping txQueue_{};

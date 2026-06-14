@@ -518,9 +518,21 @@ void MOTUAudioBackend::TryStartSnoop(FW::NodeId nodeId, FW::Generation gen) noex
                 return;
             }
 
+            // Rx channel = host→device (El Capitan's IT into MOTU). IR snoop ctx=1.
             const uint8_t snoopCh = static_cast<uint8_t>((ctrl >> kRxChannelShift) & 0x3F);
             ASFW_LOG(Audio, "[Snoop] Second host active on isoch ch=%u (ctrl=0x%08x), starting snoop", snoopCh, ctrl);
             const kern_return_t kr = isoch_.StartSnoop(snoopCh, hardware_);
+
+            // Tx channel = device→host (MOTU's own stream). IR snoop ctx=2, captured at
+            // the same time so its SPH/clock can be correlated with the host's IT stream.
+            if (ctrl & kTxIsocActivated) {
+                const uint8_t txCh = static_cast<uint8_t>((ctrl >> kTxChannelShift) & 0x3F);
+                ASFW_LOG(Audio, "[Snoop] MOTU TX active on isoch ch=%u, starting TX snoop (ctx=2)", txCh);
+                isoch_.StartSnoopTx(txCh, hardware_);
+            } else {
+                ASFW_LOG(Audio, "[Snoop] MOTU TX not activated yet (ctrl=0x%08x)", ctrl);
+            }
+
             if (kr == kIOReturnSuccess) {
                 pendingSnoopValid_ = false; // Snoop started — stop retrying
             }

@@ -449,18 +449,25 @@ void IsochService::StopAll() {
         isochSnoopContext_->Stop();
         isochSnoopContext_.reset();
     }
+    if (isochSnoopContextTx_) {
+        isochSnoopContextTx_->Stop();
+        isochSnoopContextTx_.reset();
+    }
     externalSyncBridge_.Reset();
     activeGuid_ = 0;
 }
 
-kern_return_t IsochService::StartSnoop(uint8_t channel, HardwareInterface& hardware) {
-    if (isochSnoopContext_ &&
-        isochSnoopContext_->GetState() == ASFW::Isoch::IsochSnoopContext::State::Running) {
-        ASFW_LOG(Controller, "[Isoch] Snoop already running on ch=%u", channel);
+// Shared body for both snoop directions. ctxIndex 1 = host→device (El Capitan IT),
+// ctxIndex 2 = device→host (MOTU TX). Index 0 is reserved for regular audio IR.
+static kern_return_t StartSnoopCtx(OSSharedPtr<ASFW::Isoch::IsochSnoopContext>& slot,
+                                   uint8_t channel, uint8_t ctxIndex,
+                                   HardwareInterface& hardware) {
+    if (slot && slot->GetState() == ASFW::Isoch::IsochSnoopContext::State::Running) {
+        ASFW_LOG(Controller, "[Isoch] Snoop ctx=%u already running on ch=%u", ctxIndex, channel);
         return kIOReturnSuccess;
     }
 
-    if (!isochSnoopContext_) {
+    if (!slot) {
         ASFW::Isoch::Memory::IsochMemoryConfig config;
         config.numDescriptors = ASFW::Isoch::IsochSnoopContext::kNumDescriptors;
         config.packetSizeBytes = ASFW::Isoch::IsochSnoopContext::kMaxPacketSize;
@@ -468,52 +475,62 @@ kern_return_t IsochService::StartSnoop(uint8_t channel, HardwareInterface& hardw
         config.payloadPageAlignment = 16384;
 
         auto isochMem = ASFW::Isoch::Memory::IsochDMAMemoryManager::Create(config);
-        if (!isochMem) {
-            ASFW_LOG(Controller, "[Isoch] ❌ StartSnoop: Failed to create Memory Manager");
+        if (!isochMem || !isochMem->Initialize(hardware)) {
+            ASFW_LOG(Controller, "[Isoch] ❌ StartSnoop ctx=%u: Memory Manager init failed", ctxIndex);
             return kIOReturnNoMemory;
         }
 
-        if (!isochMem->Initialize(hardware)) {
-            ASFW_LOG(Controller, "[Isoch] ❌ StartSnoop: Failed to initialize DMA slabs");
-            return kIOReturnNoMemory;
-        }
-
-        isochSnoopContext_ = ASFW::Isoch::IsochSnoopContext::Create(&hardware, isochMem);
-        if (!isochSnoopContext_) {
-            ASFW_LOG(Controller, "[Isoch] ❌ StartSnoop: Context creation failed");
+        slot = ASFW::Isoch::IsochSnoopContext::Create(&hardware, isochMem);
+        if (!slot) {
+            ASFW_LOG(Controller, "[Isoch] ❌ StartSnoop ctx=%u: Context creation failed", ctxIndex);
             return kIOReturnNoMemory;
         }
     }
 
-    // IR context index 1 — index 0 is used by regular audio IR (IsochReceiveContext)
-    auto result = isochSnoopContext_->Configure(channel, 1);
+    auto result = slot->Configure(channel, ctxIndex);
     if (result != kIOReturnSuccess) {
-        ASFW_LOG(Controller, "[Isoch] ❌ StartSnoop: Configure failed: 0x%x", result);
+        ASFW_LOG(Controller, "[Isoch] ❌ StartSnoop ctx=%u: Configure failed: 0x%x", ctxIndex, result);
         return result;
     }
 
-    result = isochSnoopContext_->Start();
+    result = slot->Start();
     if (result != kIOReturnSuccess) {
-        ASFW_LOG(Controller, "[Isoch] ❌ StartSnoop: Start failed: 0x%x", result);
+        ASFW_LOG(Controller, "[Isoch] ❌ StartSnoop ctx=%u: Start failed: 0x%x", ctxIndex, result);
         return result;
     }
 
-    ASFW_LOG(Controller, "[Isoch] ✅ Snoop started on isoch channel %u (IR ctx=1)", channel);
+    ASFW_LOG(Controller, "[Isoch] ✅ Snoop started on isoch channel %u (IR ctx=%u)", channel, ctxIndex);
     return kIOReturnSuccess;
+}
+
+kern_return_t IsochService::StartSnoop(uint8_t channel, HardwareInterface& hardware) {
+    return StartSnoopCtx(isochSnoopContext_, channel, 1, hardware);
+}
+
+kern_return_t IsochService::StartSnoopTx(uint8_t channel, HardwareInterface& hardware) {
+    return StartSnoopCtx(isochSnoopContextTx_, channel, 2, hardware);
 }
 
 void IsochService::StopSnoop() {
     if (isochSnoopContext_) {
         isochSnoopContext_->Stop();
         isochSnoopContext_.reset();
-        ASFW_LOG(Controller, "[Isoch] Snoop stopped");
     }
+    if (isochSnoopContextTx_) {
+        isochSnoopContextTx_->Stop();
+        isochSnoopContextTx_.reset();
+    }
+    ASFW_LOG(Controller, "[Isoch] Snoop stopped");
 }
 
 void IsochService::PollSnoop() {
     if (isochSnoopContext_ &&
         isochSnoopContext_->GetState() == ASFW::Isoch::IsochSnoopContext::State::Running) {
         isochSnoopContext_->Poll();
+    }
+    if (isochSnoopContextTx_ &&
+        isochSnoopContextTx_->GetState() == ASFW::Isoch::IsochSnoopContext::State::Running) {
+        isochSnoopContextTx_->Poll();
     }
 }
 
