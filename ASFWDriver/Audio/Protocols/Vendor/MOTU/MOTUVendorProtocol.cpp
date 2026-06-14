@@ -6,6 +6,7 @@
 #include "MOTUVendorProtocol.hpp"
 #include "../../../../Logging/Logging.hpp"
 #include "../../DICE/Core/DICERestartSession.hpp"
+#include "../../DICE/Core/DICETypes.hpp"   // StatusBits, NominalRate helpers
 
 #include <DriverKit/IOLib.h>   // IOSleep
 #include <atomic>
@@ -190,20 +191,60 @@ void MOTUVendorProtocol::ApplyClockConfig(const DICE::DiceDesiredClockConfig& de
 }
 
 void MOTUVendorProtocol::ReadDuplexHealth(HealthCallback callback) {
-    // Read CLOCK_STATUS to check if streaming is active.
+    // The generic DiceDuplexRestartCoordinator::WaitForStableGlobalClock gate
+    // polls this before isoch start and requires, on a DICE GLOBAL_STATUS value:
+    //   IsSourceLocked(status) && NominalRateHz(status) == desiredClock.sampleRateHz
+    // MOTU V3 has no DICE GLOBAL_STATUS register and no "lock acquired" bit, but
+    // CLOCK_STATUS does carry the device's current nominal rate in bits [15:8]
+    // (ref Linux motu-protocol-v3.c snd_motu_protocol_v3_get_clock_rate). We read
+    // the real rate and re-encode it into the DICE status format so the gate
+    // validates honestly: it passes only when the MOTU is actually running at the
+    // rate CoreAudio requested. (The kFetchPCMFrames bit is a write-only command,
+    // never a readable status — polling it here would never succeed.)
     uint32_t clk = 0;
     (void)ReadReg(kClockStatusOff, clk);
-    const bool healthy = (clk & kFetchPCMFrames) != 0;
+
+    // MOTU rate index -> Hz (snd_motu_clock_rates; note: no 32 kHz entry).
+    const uint32_t motuRateIndex = (clk & kClockRateMask) >> kClockRateShift;
+    uint32_t rateHz = 0;
+    switch (motuRateIndex) {
+        case 0: rateHz = 44100;  break;
+        case 1: rateHz = 48000;  break;
+        case 2: rateHz = 88200;  break;
+        case 3: rateHz = 96000;  break;
+        case 4: rateHz = 176400; break;
+        case 5: rateHz = 192000; break;
+        default: rateHz = 0;     break; // unknown -> report unlocked
+    }
+
+    // Hz -> DICE nominal-rate index (RateHzFromIndex; DICE index 0 == 32 kHz).
+    uint32_t diceStatus = 0;
+    switch (rateHz) {
+        case 32000:  diceStatus = (0u << DICE::StatusBits::kNominalRateShift); break;
+        case 44100:  diceStatus = (1u << DICE::StatusBits::kNominalRateShift); break;
+        case 48000:  diceStatus = (2u << DICE::StatusBits::kNominalRateShift); break;
+        case 88200:  diceStatus = (3u << DICE::StatusBits::kNominalRateShift); break;
+        case 96000:  diceStatus = (4u << DICE::StatusBits::kNominalRateShift); break;
+        case 176400: diceStatus = (5u << DICE::StatusBits::kNominalRateShift); break;
+        case 192000: diceStatus = (6u << DICE::StatusBits::kNominalRateShift); break;
+        default:     diceStatus = 0; break;
+    }
+    if (rateHz != 0) {
+        // Internal/external clock locked: MOTU V3 exposes no lock bit, so a valid
+        // decoded rate is treated as locked.
+        diceStatus |= DICE::StatusBits::kSourceLocked;
+    }
+
     ASFW_LOG(Audio,
-             "MOTUVendorProtocol: ReadDuplexHealth CLK_STATUS=0x%08x healthy=%d",
-             clk, (int)healthy);
+             "MOTUVendorProtocol: ReadDuplexHealth CLK_STATUS=0x%08x motuRateIdx=%u rate=%u diceStatus=0x%08x",
+             clk, motuRateIndex, rateHz, diceStatus);
 
     const DICE::DiceDuplexHealthResult result{
         .generation   = busInfo_.GetGeneration(),
         .appliedClock = appliedClock_,
         .runtimeCaps  = BuildRuntimeCaps(),
         .notification = 0,
-        .status       = healthy ? 1u : 0u,  // non-zero = locked
+        .status       = diceStatus,
         .extStatus    = 0,
     };
     callback(kIOReturnSuccess, result);

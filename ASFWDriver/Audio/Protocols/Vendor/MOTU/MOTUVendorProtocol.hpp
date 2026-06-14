@@ -89,8 +89,10 @@ private:
     static constexpr uint32_t kRxExcludeDiffered = 0x00000040u;
     static constexpr uint8_t  kSpeedS400         = 0x2u;
 
-    // CLOCK_STATUS bits
-    static constexpr uint32_t kFetchPCMFrames = 0x02000000u;
+    // CLOCK_STATUS bits (MOTU V3, ref Linux motu-protocol-v3.c)
+    static constexpr uint32_t kFetchPCMFrames = 0x02000000u; // write-only command bit, not status
+    static constexpr uint32_t kClockRateMask  = 0x0000FF00u; // V3_CLOCK_RATE_MASK
+    static constexpr uint8_t  kClockRateShift = 8u;          // V3_CLOCK_RATE_SHIFT
 
     // MOTU 828 MK3 stream geometry at 48kHz
     // IT (host→MOTU): 14 PCM + 2 MSG = DBS 13
