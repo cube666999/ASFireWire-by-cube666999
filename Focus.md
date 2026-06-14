@@ -370,8 +370,9 @@ IR context traci ~75% pakietów (ring buffer za mały? overrideWireDbs_?).
 ### Priorytet 4 — HALS_IORawClock
 Zastąpić `mach_absolute_time()` czytaniem OHCI `CurrentIsochronousCycleTime` (rejestr `0x1E8`).
 
-### Priorytet 5 — Rozszerzyć do 18ch IT / 14ch IR
-Po potwierdzeniu działającego audio.
+### Priorytet 5 — Rozszerzyć do 14ch IT / 18ch IR
+Po potwierdzeniu działającego audio. Kanały: kanon `documentation/MOTU_828_MK3_FACTS.md`
+(IT host→device = 14, IR device→host = 18 @48k).
 
 ---
 

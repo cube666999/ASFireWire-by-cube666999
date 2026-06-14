@@ -749,10 +749,13 @@ IR HW[0] ch=0: ctl=0x0800 run=0 active=0 dead=1 ← context DEAD — problem des
 **Objaw:** Brak audio mimo że IT DMA nadaje. MOTU 828 MK3 milczy.
 
 **Przyczyna:** `StartTransmit` używał `config.outputChannelCount` (=2) dla `requestedAm824Slots`.
-CIP header miał `DBS=2`. MOTU oczekuje `DBS=21` (14 PCM + overhead = 21 quadlety/event).
-Pakiety z DBS=2 były ignorowane.
+CIP header miał `DBS=2`. MOTU oczekuje większego DBS. Pakiety z DBS=2 były ignorowane.
 
-**Fix:** `requestedAm824Slots` zmieniony na `kMOTUV3WireDbs48k` (=21). Commit po potwierdzeniu audio.
+**Fix:** `requestedAm824Slots` zmieniony na `kMOTUV3WireDbs48k`. Commit po potwierdzeniu audio.
+
+> ⚠️ **SUPERSEDED (zapis historyczny):** wartość DBS=21 z tej notatki była BŁĘDNA. Realny
+> wire DBS dla host→device (IT) = **13** (14 PCM, potwierdzone El Cap + Linux). Aktualne fakty:
+> `documentation/MOTU_828_MK3_FACTS.md`. Zostawione dla kontekstu debugowania.
 
 ### HALS_IORawClock re-anchoring — zidentyfikowane, nienaprawione
 

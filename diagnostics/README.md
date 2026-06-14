@@ -28,9 +28,9 @@ Key findings documented in `MOTU_828_MK3_BringUp.md` and `CHANGES.md` (Fix 13).
 | `MOTUFireWireAudio_Info.plist` | MOTU kext Info.plist — bundle ID `com.motu.driver.FireWireAudio` |
 | `run.log` | Script execution log |
 
-**Critical data points from this session:**
-- `fNumFWOutputChannels 14` = device→host (IR, our `inputChannelCount`)
-- `fNumFWInputChannels 18` = host→device (IT, our `outputChannelCount`)
+**Critical data points from this session** (channel directions — canonical: `documentation/MOTU_828_MK3_FACTS.md`):
+- `fNumFWOutputChannels 14` = host's FW output = **host→device (IT, playback, our `outputChannelCount`)**
+- `fNumFWInputChannels 18` = host's FW input = **device→host (IR, capture, our `inputChannelCount`)**
 - MOTU uses `FireWireBlockRWCommand` (confirms Fix 10 was necessary)
 - Bus reset recovery: Apple kext does stop→release→free→reinit→allocate→start (matches our `AudioCoordinator` bus reset handler)
 - `HALC_ShellObject` not an issue for Apple kext (uses IOAudio, not AudioDriverKit)

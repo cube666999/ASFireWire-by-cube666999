@@ -1,5 +1,8 @@
 # MOTU 828 MK3 — Bring-up audio (V3 Protocol)
 
+> 📌 Kanoniczne fakty sprzętowe (kanały/DBS/rate/CLOCK_STATUS) → **`documentation/MOTU_828_MK3_FACTS.md`**.
+> Ten plik = sekwencja StartStreaming i mapa rejestrów.
+
 > Zaktualizowano: 2026-05-24. Poprzednia wersja tego dokumentu (AV/C/FCP/CMP) jest
 > **nieaktualna i błędna** — MOTU 828 MK3 nie implementuje FCP mimo deklarowania AV/C
 > w Config ROM. Właściwe podejście: **V3 register protocol** (patrz niżej).

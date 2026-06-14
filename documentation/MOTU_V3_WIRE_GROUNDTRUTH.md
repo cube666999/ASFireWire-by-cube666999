@@ -1,5 +1,7 @@
 # MOTU 828 MK3 — wire ground-truth z Linux snd-firewire-motu
 
+> 📌 Kanoniczne fakty (kanały/DBS/rate/sloty) → **`MOTU_828_MK3_FACTS.md`**. Ten plik = szczegóły wire host→device.
+
 **Data:** 2026-06-12. Źródło: ALSA tracepoint `snd_firewire_lib:amdtp_packet` na MacBooku 2009
 (Linux Mint 22.3, kernel 6.14) z **działającym** sterownikiem referencyjnym, podczas odtwarzania
 audio (YouTube) przez MOTU 828 MK3 (GUID 0001f20000087236, S400, IT host→device).

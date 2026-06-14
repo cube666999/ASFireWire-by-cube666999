@@ -17,7 +17,7 @@ When compacting this conversation, **preserve**:
 - Aktualny stan wersji dextu: `CURRENT_PROJECT_VERSION` w `project.pbxproj`, wynik `systemextensionsctl list`
 - Aktywne ustalenia debugowania: co działa (IT running, IR decode status, buffer fill %, underruns)
 - Cel bieżącej sesji — co próbujemy naprawić i dlaczego
-- Wszelkie potwierdzone fakty sprzętowe (MOTU 828 MK3: DBS IR=16, DBS IT=21, 18ch IT / 14ch IR)
+- Wszelkie potwierdzone fakty sprzętowe → **kanon: `documentation/MOTU_828_MK3_FACTS.md`** (MOTU 828 MK3 @48k: IT host→device = 14ch DBS=13, IR device→host = 18ch DBS=16). NIE kopiuj liczb — linkuj kanon.
 - Zasady git: zawsze `git push cube666 main`, nigdy `git push` bez remote
 - Wnioski z disassembly/logów które potwierdziły działanie fixa
 
@@ -486,8 +486,8 @@ Device Discovery pokazuje:
 - Unit: Spec ID: 0x0001F2, SW Version: 0x000015, ROM Offset: 5 quadlets
 - Model ID: `EffectiveModelId()` zwraca `unitSwVersion=0x000015` → `kMOTUV3` ✅ (Fix 11)
 
-Sequoia diagnostic (2026-05-25) potwierdził:
-- `fNumFWOutputChannels 14` (IR, device→host) · `fNumFWInputChannels 18` (IT, host→device)
+Sequoia diagnostic (2026-05-25) potwierdził (interpretacja kierunków: patrz kanon `documentation/MOTU_828_MK3_FACTS.md`):
+- `fNumFWOutputChannels 14` = host's FW out = **host→device (IT, playback, `outputChannelCount`)** · `fNumFWInputChannels 18` = host's FW in = **device→host (IR, capture, `inputChannelCount`)**
 - MOTU kext używa `FireWireBlockRWCommand` (potwierdza Fix 10)
 - Bus reset recovery działa tak samo jak nasz `AudioCoordinator`
 
@@ -518,10 +518,10 @@ Sequoia diagnostic (2026-05-25) potwierdził:
 - OHCI register offset `0x1E8`: bits[25:12]=cycleCount (0-7999), bits[11:0]=cycleOffset
 - Przeliczenie: `cycleCount/8000 × timebaseFreq` → hostTime zsynchronizowany z 1394 bus
 
-**Priorytet 3 (po audio) — Rozszerzyć do 18 kanałów IT / 14 IR:**
+**Priorytet 3 (po audio) — Rozszerzyć kanały (kanon: `documentation/MOTU_828_MK3_FACTS.md`):**
 - Teraz `ASFWAudioNub` publikuje tylko "2 In / 2 Out"
-- MOTU 828 MK3 ma 18ch IT (host→device) i 14ch IR (device→host)
-- Zmiana: `outputChannelCount=18`, `inputChannelCount=14` w konfiguracji nuba
+- MOTU 828 MK3 @48k: **14ch IT (host→device, playback)** i **18ch IR (device→host, capture)**
+- Zmiana: `outputChannelCount=14`, `inputChannelCount=18` w konfiguracji nuba
 
 4. **Disable FCP spam dla MOTU V3** — AVCDiscovery wysyła FCP co ~2s do MOTU który ignoruje AVC
 
@@ -559,6 +559,7 @@ Przy ponownym uruchomieniu apki (gdy dext już jest [activated enabled]), `activ
 
 | Plik | Zawartość |
 |------|-----------|
+| `documentation/MOTU_828_MK3_FACTS.md` | ⭐ **KANON — jedyne źródło prawdy dla faktów sprzętowych MOTU** (kanały, DBS, rate, CLOCK_STATUS, sloty + hierarchia źródeł). Linkuj tu, nie kopiuj liczb. |
 | `documentation/MOTU_V3_WIRE_GROUNDTRUTH.md` | **Ground-truth wire format MOTU 828 MK3** — DBS=13, CIP nagłówek, mapa 14 kanałów IT, format MOTU timestamp, bit ordering (hipoteza), snoop El Cap. Plan IR capture z Virus TI |
 | `documentation/SESSION_2026-06-12_GROUNDTRUTH.md` | Sesja przełomowa — diagnoza "świeci tylko ch7": zły slot PCM (slot 8 zamiast 0/1), 4 niezależne źródła, Linux = ślepa uliczka dla audio |
 | `documentation/AUDIODRIVERKIT_PIPELINE.md` | **Prawidłowa architektura AudioDriverKit** — IOBufferMemoryDescriptor, ZTS z OHCI CycleTimer, push vs pull model, przeliczenie OHCI→mach_time, znany bug Apple input/output sync |
@@ -578,7 +579,7 @@ Przy ponownym uruchomieniu apki (gdy dext już jest [activated enabled]), `activ
 
 | Plik | Zawartość |
 |------|-----------|
-| `docs/linux/motu/README.md` | **Szybka referencja** — kanały 828 MK3 (18 IT / 14 IR fixed), wzór DBS, wyjaśnienie DBS=21 |
+| `docs/linux/motu/README.md` | **Szybka referencja** — kanały 828 MK3 z perspektywy urządzenia: `tx_fixed_pcm_chunks={18,18,14}` (device→Mac = nasz IR), `rx_fixed_pcm_chunks={14,14,10}` (Mac→device = nasz IT). Czyli @48k: IT=14, IR=18 (patrz kanon FACTS). Wzór DBS |
 | `docs/linux/motu/motu-protocol-v3.c` | Rejestry V3, sekwencja StartStreaming, detekcja ADAT, definicje `snd_motu_spec_828mk3_fw` |
 | `docs/linux/motu/amdtp-motu.c` | AMDTP streaming: DBS = `1 + DIV_ROUND_UP((msg+pcm)*3, 4)`, PCM byte offset=10, SPH |
 | `docs/linux/motu/motu.h` | Struktury: `snd_motu_spec`, `snd_motu_packet_format`, flagi, stałe V3 |
