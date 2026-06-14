@@ -555,15 +555,17 @@ private:
             }
             for (uint32_t ch = 0; ch < chCount; ++ch) {
                 const uint32_t s = static_cast<uint32_t>(frameIn[ch]);
-                // Fix 72: OS stereo goes to PCM slots 10/11, not 0/1.
-                // Ground-truth from the El Capitan snoop (MB2009, working Apple driver,
-                // playing on Main+Phones): across all 194 captured DATA packets the ONLY
-                // non-zero PCM was at block byte 40 (slot 10) and byte 43 (slot 11) — e.g.
-                // slot10=0x38b524, slot11=0x389e5f. Every other slot was zero. MOTU's
-                // internal CueMix fans that one stereo pair out to Main + Phones. Our prior
-                // byte-10/13 (slot 0/1) placement was wrong (the old doc misread the map),
-                // which is why MOTU squealed / lit Analog 7 + S/PDIF instead of playing.
-                // kMotuV3OutputSlotBase=10 shifts ch0→slot10 (byte40), ch1→slot11 (byte43).
+                // Fix 74 (v120): Send to slots 10/11 (Main L/R, byte 40/43).
+                // DECISIVE live ground-truth (2026-06-14, MB2009 snoop dext v112 on
+                // ch=33 while El Capitan actively played through the MOTU): El Cap's IT
+                // stream (DBS=13, FMT=0x02, FDF=0x22, SYT=0xFFFF — identical CIP to ours)
+                // carries the only two non-zero PCM samples at byte 40 and byte 43, i.e.
+                //   block q10 = slot 10 = Main L, block q11 = slot 11 = Main R.
+                // MSG chunks (byte 4-9) and slots 0-9 are ALL zero in El Cap's stream.
+                // The earlier slot-10/11 attempt (Fix 72, v116/v118) was CONFOUNDED — it
+                // predated Fix 67 (DBC) and Fix 68 (SPH), so a correct slot still failed
+                // for unrelated timing reasons. Fix 73's revert to slot 0/1 was therefore
+                // based on a contaminated test, not on wire truth.
                 constexpr uint32_t kMotuV3OutputSlotBase = 10u;
                 uint8_t* dst = block + 10u + (kMotuV3OutputSlotBase + ch) * 3u;
                 // Fix 52: high-aligned int32 (ADK with FormatFlagIsAlignedHigh → bits [31:8])
@@ -662,7 +664,7 @@ private:
     mutable bool injectSphSeeded_{false};   ///< Fix 68: whether injectSphCursor_ has been seeded
 
     // Channel sweep diagnostic state (active only when kChannelSweepTest == true).
-    static constexpr bool kChannelSweepTest = true;  ///< DIAGNOSTIC (temp): map slot→physical output on THIS unit's current mixer state
+    static constexpr bool kChannelSweepTest = false;
     mutable uint32_t sweepChunk_{0};         ///< Active PCM chunk index for the sweep tone
     mutable uint32_t sweepFrameCtr_{0};      ///< Frames elapsed on the current chunk
     mutable uint32_t sweepSquarePhase_{0};   ///< Square-wave phase counter
