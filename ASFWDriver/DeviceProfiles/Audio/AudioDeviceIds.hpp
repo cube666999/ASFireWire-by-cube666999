@@ -36,6 +36,10 @@ inline constexpr uint32_t kApogeeDuetModelId = 0x01dddd;
 inline constexpr uint32_t kAlesisVendorId        = 0x000595;
 inline constexpr uint32_t kAlesisMultiMixModelId = 0x000000;
 
+// ---- MOTU (vendor-specific V3 family) ----
+inline constexpr uint32_t kMotuVendorId       = 0x0001F2;
+inline constexpr uint32_t kMotu828Mk3ModelId  = 0x000000; // root-dir model key (match any)
+
 // ---- Display names ----
 inline constexpr const char* kFocusriteVendorName     = "Focusrite";
 inline constexpr const char* kSPro40ModelName         = "Saffire Pro 40";
@@ -49,5 +53,7 @@ inline constexpr const char* kApogeeVendorName        = "Apogee";
 inline constexpr const char* kApogeeDuetModelName     = "Duet";
 inline constexpr const char* kAlesisVendorName        = "Alesis";
 inline constexpr const char* kAlesisMultiMixModelName = "MultiMix FireWire";
+inline constexpr const char* kMotuVendorName          = "MOTU";
+inline constexpr const char* kMotu828Mk3ModelName     = "828 MK3 FireWire";
 
 } // namespace ASFW::DeviceProfiles::Audio
