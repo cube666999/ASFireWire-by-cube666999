@@ -12,13 +12,17 @@ namespace {
 
 constexpr uint32_t kMotuVendorId = 0x0001F2;
 
-// PCM channel counts at 48 kHz (confirmed hardware facts).
-constexpr uint32_t kTxPcmChannels = 18; // host->device (playback / IT)
-constexpr uint32_t kRxPcmChannels = 14; // device->host (capture  / IR)
+// PCM channel counts at 48 kHz, from the El Capitan wire ground-truth capture
+// (diagnostics/elcap_groundtruth/README.md, main branch):
+//   host->device (IT, playback/output): len=424 -> DBS=13 -> 14 PCM slots
+//   device->host (IR, capture/input):   len=520 -> DBS=16 -> 18 PCM slots
+// This matches MOTUVendorProtocol::BuildRuntimeCaps (the values that drive the
+// actual wire format). Linux's channel map differs and is NOT authoritative for
+// the macOS host path. Tx == host->device, Rx == device->host.
+constexpr uint32_t kTxPcmChannels = 14; // host->device (playback / IT)
+constexpr uint32_t kRxPcmChannels = 18; // device->host (capture  / IR)
 
-// Data block size in quadlets. MOTU V3 wire DBS as observed on the bus
-// (IT=13, IR=16). Used only by the streaming engine; the channel count above
-// is what makes the CoreAudio device appear with the correct geometry.
+// Data block size in quadlets, El Cap ground-truth (IT=13, IR=16).
 constexpr uint32_t kTxDbs = 13;
 constexpr uint32_t kRxDbs = 16;
 
