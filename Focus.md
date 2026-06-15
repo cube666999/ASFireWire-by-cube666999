@@ -10,13 +10,13 @@ Archiwum ukończonych sesji → `DevLog.md`
 
 1. **Uruchom `claude` z `ASFireWire-dice/`** (nie z `ASFireWire/`) — wtedy ten CLAUDE.md +
    indeks CodeGraph dice ładują się automatycznie. Zatwierdź MCP „codegraph" (opcja 2) jeśli pyta.
-2. **Zainstaluj świeży dext:** uruchom `~/Desktop/ASFW_dice_v11.app` (zbudowany czysto 2026-06-15,
-   CFBundleVersion=**11**). Stare na Desktopie (v9, v10) możesz usunąć.
+2. **Zainstaluj świeży dext:** uruchom `~/Desktop/ASFW_dice_v12.app` (zbudowany 2026-06-15,
+   CFBundleVersion=**12**, zawiera fix kWake). Stare na Desktopie (v9–v11) możesz usunąć.
 3. **POTWIERDŹ że biegnie NOWY kod** (krytyczne — patrz lekcja version-bump w DevLog):
    ```bash
-   systemextensionsctl list   # MUSI pokazać 1.0/11 [activated enabled], NIE 8
+   systemextensionsctl list   # MUSI pokazać 1.0/12 [activated enabled]
    ```
-   Jeśli pokazuje 8 → upgrade się nie wykonał, NIE ufaj logom dopóki nie zobaczysz 11.
+   Jeśli pokazuje niższą wersję → upgrade się nie wykonał, NIE ufaj logom dopóki nie zobaczysz 12.
 4. **Dopiero wtedy** wznów debug ZTS poniżej. Logi:
    ```bash
    /usr/bin/log stream --predicate 'senderImagePath CONTAINS "ASFWDriver"' --level debug 2>/dev/null | grep -E "(ZTS|IR|DMA|Arming|DrainCompleted|DICE|timeout)"
@@ -28,64 +28,45 @@ Archiwum ukończonych sesji → `DevLog.md`
 
 ---
 
-## ⚡ AKTUALNY STAN — problem do rozwiązania
+## ⚡ AKTUALNY STAN — do weryfikacji na hardware
 
-> **ZTS timeout (problem otwarty):**
-> Geometry check naprawiony (kRxPcmChannels=16 → inCh=16 ✅).
-> CoreAudio widzi 16 wejść, IR zbrojony na właściwym kanale.
-> **Problem: DrainCompleted() zwraca 0 ukończonych deskryptorów w ciągu 500ms.**
->
-> ⚠️ **Uwaga:** poprzednie sesje ZTS biegły na dexcie z zawodnym wersjonowaniem — możliwe, że część
-> obserwacji dotyczyła STAREJ wersji (patrz „lekcja version-bump", DevLog). Po instalacji v11 i
-> potwierdzeniu `systemextensionsctl = 11`, **zweryfikuj inCh=16 i DrainCompleted od nowa** zanim
-> pogłębisz diagnozę — żeby mieć pewność że to stan aktualnego kodu, nie ducha.
-> ZTS (Zero Timestamp) nie jest publikowany → `WaitForInitialHardwareZts` timeout (0xe00002d6).
-> MOTU albo nie nadaje na oczekiwanym kanale isoch, albo OHCI IR kontekst nie odbiera.
+> **Bug D (kWake) naprawiony w v12 — czeka na test hardware.**
+> Przyczyna `DrainCompleted()=0` znaleziona: `IsochReceiveContext::Start()` programował kontekst
+> OHCI IR bitami `kRun | kIsochHeader` zamiast `kRun | kWake` (jak działający main). Bez `kWake`
+> (bit 12) DMA nigdy nie rusza od `CommandPtr` → zero deskryptorów → ZTS timeout (0xe00002d6).
+> Fix: [`IsochReceiveContext.cpp:108`](ASFWDriver/Isoch/Receive/IsochReceiveContext.cpp:108).
+> Szczegóły → DevLog „Bug D".
 
-### Potwierdzone fakty z logów (v11 / CFBundleVersion=8)
+### 🔬 Następny krok — zweryfikuj v12 na hardware
 
-```
-DICE DUPLEX START guid=0x0001f20000087236 ir=0 it=1 inCh=16 outCh=14 inSlots=16 outSlots=13
-IR: direct audio binding changed (gen 0 -> 2). Arming direct Rx inBase=... inCh=16 ... rate=48000
-[500ms przerwy — ZERO wpisów IR]
-ASFWAudioDevice: initial hardware ZTS timed out after 500 ms (err 0xe00002d6)
-```
+1. Zainstaluj `~/Desktop/ASFW_dice_v12.app`, potwierdź `systemextensionsctl list` = **12**.
+2. Odtwórz audio przez MOTU, zbierz logi:
+   ```bash
+   /usr/bin/log stream --predicate 'senderImagePath CONTAINS "ASFWDriver"' --level debug 2>/dev/null | grep -E "(Readback|DrainCompleted|ZTS|IR RX|Arming|timeout)"
+   ```
+3. **Oczekiwane:** log `Start: Readback ... Ctl=0x...` z ustawionym run/active (nie dead),
+   potem wpisy IR (DrainCompleted > 0), ZTS publikowany, **brak** `ZTS timed out`.
+4. Jeśli nadal timeout → kontekst może być `DEAD` (nowy dead-check to pokaże) lub MOTU nadaje na
+   innym kanale isoch niż `channel_` — sprawdź `Start: Wrote Match=0x...` vs kanał IRM.
 
-Zero wpisów IR między "Arming" a timeout = `Poll()→DrainCompleted()` = 0 przez cały czas.
-
-### Co jest NAPRAWIONE
-
-- ✅ **v9 — SYT cadence (Bug C):** `IsochReceiveContext.cpp` — SYT fallback gdy `syt=0x0000`.
-  MOTU V3 zawsze wysyła `syt=0x0000`; brama SYT zabijała IT po 3000ms. Fix: bypass dla MOTU V3.
-- ✅ **v11 — Geometry check (Bug B):** `MOTU828Mk3Profile.cpp` — `kRxPcmChannels=16` (było 18).
-  `RxAudioPacketProcessor` ma sprawdzenie AM824: `cip->dataBlockSize < channels` → 16 < 18 → każdy
-  pakiet IR był odrzucany. Fix: 16 < 16 = false → pakiety przechodzą.
-  Źródło `inputChannelCount=16`: `AudioProfileRegistry::FindProfile()→RxChannelCount()→kRxPcmChannels`
-  (NIE `kHostInputPcm` w `MOTUVendorProtocol.hpp` — ten jest nieistotny dla tej ścieżki).
-
-### Co czeka na rozwiązanie
-
-**🔴 Główny problem: OHCI IR DMA nie dostarcza żadnych deskryptorów**
-
-`Poll()` w `IsochReceiveContext.cpp` linia ~160 → `DrainCompleted()` = 0 przez 500ms.
-Możliwe przyczyny (niezbadane):
-1. MOTU nie nadaje na kanale isoch którego oczekujemy (zły kanał IR).
-2. OHCI IR DMA context nie jest uruchamiany lub zatrzymuje się natychmiast.
-3. DMA ring nie jest prawidłowo skonfigurowany (deskryptory nie spełniają OHCI).
-4. Brakuje wznowienia OHCI kontekstu po konfiguracji.
-
-**Następny krok: przejrzeć `IsochReceiveContext.cpp` — jak zbroi IR, uruchamia OHCI i jak DMA ring
-dostarcza pakiety. Porównać z main branch (`IsochReceiveContext.cpp` w ASFireWire/).**
-
-### TODO per `docs/MOTU_V3_DICE_TODO.md`
+### Co czeka po ZTS (post-ZTS TODO)
 
 | Bug | Opis | Status |
 |-----|------|--------|
-| Bug A (SYT) | Brama SYT blokowała IT | ✅ Naprawiony v9 |
-| Bug B (geometry) | AM824 check 16 < 18 odrzucał IR | ✅ Naprawiony v11 |
-| Bug C (kRxDbs) | kRxPcmChannels=18 zamiast 16 | ✅ Naprawiony v11 |
 | Bug 1 (MOTU V3 decoder) | `kRxPcmChannels` powinien =18, wymaga `DecodeMOTUV3Frame` | ⏳ Post-ZTS |
 | Bug 2 (IT encoder) | `Quirks()` zwraca `kAM824` zamiast MOTU V3 dla TX | ⏳ Post-ZTS |
+
+---
+
+## ✅ Ukończone (archiwum — szczegóły w DevLog.md)
+
+> **System:** gdy element z „AKTUALNY STAN" zostaje rozwiązany i zweryfikowany, przenoś go tutaj
+> jednolinijkowo (z numerem wersji + plikiem), a pełny opis (root cause + fix) wędruje do `DevLog.md`.
+> Focus.md trzyma TYLKO aktywny stan + następny krok; nie rośnie historią.
+
+- ✅ **Bug A/C (SYT, v9)** — brama SYT zabijała IT (MOTU V3 wysyła `syt=0x0000`) → fallback w `IsochReceiveContext.cpp`.
+- ✅ **Bug B (geometry, v11)** — AM824 check `16<18` odrzucał IR → `kRxPcmChannels=16` w `MOTU828Mk3Profile.cpp`.
+- ✅ **Bug D (kWake, v12)** — IR DMA nie startował (`kRun|kIsochHeader` zamiast `kRun|kWake`) → `IsochReceiveContext.cpp:108`. *(czeka na finalną weryfikację hardware)*
 
 ---
 

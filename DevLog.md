@@ -58,14 +58,31 @@ AM824 check: `16 < 16 = false` → pakiety IR mogą przejść.
 Xcode nie rekompilował `MOTU828Mk3Profile.cpp` — iCloud File Provider zachowuje timestamps.
 Fix: `rm -rf /tmp/ASFWBuild` → pełny clean rebuild → CFBundleVersion=8 → `inCh=16` ✅.
 
-### Stan na koniec sesji
+### Bug D (naprawiony v12) — IR DMA nigdy nie startował (brak bitu kWake)
 
-v11 (CFBundleVersion=8): geometry check naprawiony, `inCh=16`.
-**ZTS nadal timeout** — DrainCompleted() = 0 przez 500ms.
-IR DMA nie dostarcza żadnych deskryptorów. Przyczyna niezbadana.
+**Symptom:** po v11 (geometry OK, `inCh=16`) ZTS nadal timeout. Log: `Arming direct Rx`,
+potem 500ms ZERO wpisów IR, `ZTS timed out (0xe00002d6)`. `DrainCompleted()` = 0 cały czas.
+Potwierdzone na świeżo na **CFBundleVersion=11** (`systemextensionsctl list` = 11) — to nie był
+„duch starej wersji", lecz realny stan kodu.
 
-Następny krok: zbadać `IsochReceiveContext.cpp` — jak zbraja OHCI IR DMA, czy kontekst
-startuje, czy MOTU nadaje na oczekiwanym kanale.
+**Root cause:** `IsochReceiveContext::Start()` (dice) programował kontekst OHCI IR bitami
+`kRun | kIsochHeader`, podczas gdy działający main pisze `kRun | kWake`:
+- **Brak `kWake` (bit 12):** bez WAKE kontekst OHCI „zbroi się", ale DMA nigdy nie rusza od
+  `CommandPtr` → zero ukończonych deskryptorów. Linux pisze `CONTEXT_RUN | CONTEXT_WAKE` przy starcie.
+- **Ustawiony bit 30:** dla IR to `isochHeader` (dice nazywa go `kIsochHeader`, main nazywa ten sam
+  bit `kCycleMatchEnable` — etykieta IT-centryczna). Ring (`IsochRxDmaRing::SetupRings`, identyczny
+  z main: INPUT_LAST, reqCount=4096, Z=1) **nie rezerwuje** 4 bajtów na nagłówek isoch → przesunąłby CIP.
+
+**Fix (v12):** `IsochReceiveContext.cpp:108` — `ctlValue = kRun | kWake` (było `kRun | kIsochHeader`),
++ port readback i dead-check z main (log `Start: Readback ...` potwierdza, że kontekst wstał;
+return `kIOReturnNotPermitted` gdy `kDead`). Plik: [`IsochReceiveContext.cpp`](ASFWDriver/Isoch/Receive/IsochReceiveContext.cpp:108).
+
+> 🔑 **Lekcja procesowa:** ta klasa istnieje też w działającym main (`../ASFireWire`). Problem był
+> tam już rozwiązany (komentarz w main `Start()`: „matching Linux CONTEXT_RUN | CONTEXT_WAKE").
+> Porównanie z main od razu wskazało regresję. → Reguła w CLAUDE.md: zawsze sprawdzaj main.
+
+**Stan:** zmiana wprowadzona, build v12 (do weryfikacji hardware — czy log pokazuje
+`DrainCompleted > 0` i ZTS publikowany).
 
 ---
 

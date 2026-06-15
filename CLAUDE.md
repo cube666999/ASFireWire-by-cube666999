@@ -113,6 +113,14 @@ Gdy Twoje zmiany tworzą „osierocone" elementy:
 - **Fazy:** Nie zaczynaj USB/komunikacji (Faza 2) dopóki Faza 1.5 nie zamknięta
 - **Konflikt danych:** Nigdy nie zgaduj — pokaż rozbieżność z nazwami plików i wartościami
 - **Hierarchia źródeł:** → [[Docs/BVERHUE-REFERENCE]]
+- **⭐ NAJPIERW sprawdź poprzedni sterownik (main, `../ASFireWire`):** dice dzieli wiele klas z
+  działającym sterownikiem main (np. `IsochReceiveContext`, `IsochRxDmaRing`, `OHCIConstants`).
+  Zanim zaczniesz debugować bug w warstwie współdzielonej (OHCI/DMA/Isoch/Async/Bus), **porównaj
+  odpowiednik w main** — `codegraph_explore` z `projectPath` na `../ASFireWire`, albo czytaj plik
+  wprost. main ma `.codegraph` zaindeksowane. Bardzo często problem jest tam już rozwiązany z
+  komentarzem wyjaśniającym (regresja w dice = rozbieżność z main). To pierwszy krok, nie ostatni.
+  *(Przykład: Bug D/kWake — main `IsochReceiveContext::Start()` miał `kRun|kWake` z komentarzem
+  „matching Linux CONTEXT_RUN | CONTEXT_WAKE"; dice miał `kRun|kIsochHeader` → DMA nie startował.)*
 
 ## Architecture
 
@@ -372,6 +380,10 @@ Prowadź dokumentację i historię **sam, bez przypominania** — to część za
 **Notuj na bieżąco (`Focus.md` / `DevLog.md`):**
 - Po każdym fixie: numer wersji (CFBundleVersion), co zmienia, w którym pliku, wynik testu hardware.
 - `Focus.md` = ZAWSZE aktualny stan + następny krok. `DevLog.md` = archiwum rozwiązanych bugów.
+- **System Focus → Ukończone:** gdy element z „AKTUALNY STAN" zostanie rozwiązany i zweryfikowany,
+  **przenieś go** do sekcji `## ✅ Ukończone` w `Focus.md` (jednolinijkowo: wersja + plik), a pełny
+  opis (root cause + fix + dowód z logów) zapisz w `DevLog.md`. Focus.md NIE rośnie historią —
+  trzyma tylko aktywny stan i następny krok. Nie zostawiaj nieaktualnych „problemów otwartych".
 - Potwierdzone fakty sprzętowe → **NIE kopiuj liczb**, linkuj kanon `../ASFireWire/documentation/MOTU_828_MK3_FACTS.md`.
 - Aktualizuj memory (`MEMORY.md` + plik faktu) gdy ustalisz coś nieoczywistego i trwałego.
 

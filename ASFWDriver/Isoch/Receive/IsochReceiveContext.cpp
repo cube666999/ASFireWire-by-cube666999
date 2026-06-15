@@ -105,12 +105,30 @@ kern_return_t IsochReceiveContext::Start() {
     hardware_->Write(registers_.CommandPtr, cmdPtr);
 
     hardware_->Write(registers_.ContextControlClear, 0xFFFFFFFFu);
-    const uint32_t ctlValue = Driver::ContextControl::kRun | Driver::ContextControl::kIsochHeader;
+    // kRun (bit 15) | kWake (bit 12) = 0x9000, matching Linux CONTEXT_RUN | CONTEXT_WAKE
+    // and the working main-branch driver. kWake is what makes the context actually fetch
+    // from CommandPtr — without it the context arms but the IR DMA never runs and
+    // DrainCompleted() returns 0 forever (→ ZTS timeout 0xe00002d6).
+    // ⚠️ Do NOT set bit 30 here: for IR that is isochHeader (would prepend a 4-byte header
+    //    the descriptor ring does not reserve, shifting CIP); the prior code set it instead
+    //    of kWake, which left the context dead. See DevLog "IR DMA never delivered".
+    const uint32_t ctlValue = Driver::ContextControl::kRun | Driver::ContextControl::kWake;
     hardware_->Write(registers_.ContextControlSet, ctlValue);
 
     const uint32_t contextMask = 1u << contextIndex_;
     hardware_->Write(ASFW::Driver::Register32::kIsoRecvIntMaskSet, contextMask);
     ASFW_LOG(Isoch, "Start: Enabled IR interrupt for context %u (mask=0x%08x)", contextIndex_, contextMask);
+
+    const uint32_t readMatch = hardware_->Read(registers_.ContextMatch);
+    const uint32_t readCmd = hardware_->Read(registers_.CommandPtr);
+    const uint32_t readCtl = hardware_->Read(registers_.ContextControlSet);
+    ASFW_LOG(Isoch, "Start: Wrote Match=0x%08x Cmd=0x%08x Ctl=0x%08x", contextMatch, cmdPtr, ctlValue);
+    ASFW_LOG(Isoch, "Start: Readback Match=0x%08x Cmd=0x%08x Ctl=0x%08x", readMatch, readCmd, readCtl);
+
+    if ((readCtl & Driver::ContextControl::kDead) != 0) {
+        ASFW_LOG(Isoch, "❌ Start: Context is DEAD! Check descriptor program.");
+        return kIOReturnNotPermitted;
+    }
 
     while (rxLock_.test_and_set(std::memory_order_acquire)) {
     }
@@ -485,6 +503,16 @@ uint32_t IsochReceiveContext::Poll() {
                             rxCadenceEstablishedLogged_ = true;
                         }
                     }
+                }
+
+                // Some devices (e.g. MOTU V3) always send SYT=0xFFFF and never
+                // establish SYT cadence. Fall back to the IR receive timestamp as
+                // the ZTS clock source when cadence hasn't been established but we
+                // have a valid hardware timestamp. Accuracy is reduced (no
+                // SYT-based phase correction) but the HAL ZTS anchor is functional.
+                if (!rxClockEstablished && hasHardwareTimestamp &&
+                    packetReceiveHostTicks != 0) {
+                    rxClockEstablished = true;
                 }
 
                 const uint32_t hostNanosPerSampleQ8 =

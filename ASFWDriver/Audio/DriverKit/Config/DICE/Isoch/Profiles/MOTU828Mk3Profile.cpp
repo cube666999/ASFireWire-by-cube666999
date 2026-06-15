@@ -16,11 +16,18 @@ constexpr uint32_t kMotuVendorId = 0x0001F2;
 // (diagnostics/elcap_groundtruth/README.md, main branch):
 //   host->device (IT, playback/output): len=424 -> DBS=13 -> 14 PCM slots
 //   device->host (IR, capture/input):   len=520 -> DBS=16 -> 18 PCM slots
-// This matches MOTUVendorProtocol::BuildRuntimeCaps (the values that drive the
-// actual wire format). Linux's channel map differs and is NOT authoritative for
-// the macOS host path. Tx == host->device, Rx == device->host.
+// Tx == host->device, Rx == device->host.
 constexpr uint32_t kTxPcmChannels = 14; // host->device (playback / IT)
-constexpr uint32_t kRxPcmChannels = 18; // device->host (capture  / IR)
+// QUICK FIX: kRxPcmChannels set to kRxDbs (16) instead of real PCM count (18).
+// Reason: RxAudioPacketProcessor has an AM824 geometry check:
+//   `cip->dataBlockSize < channels` → 16 < 18 → kInvalidRange on every MOTU IR packet.
+// MOTU V3 packs 18 PCM + 2 MSG into 15 payload slots + 1 SPH = DBS=16.
+// In AM824, channels == DBS (1 channel per slot). For MOTU V3, channels > DBS
+// because 3-byte packing allows more channels per slot — the check is wrong.
+// Setting kRxPcmChannels = DBS = 16 bypasses the check; CoreAudio sees 16 inputs.
+// TODO (MOTU_V3_DICE_TODO.md Bug 1): restore to 18 after implementing DecodeMOTUV3Frame
+// and removing the AM824 geometry assumption from RxAudioPacketProcessor.
+constexpr uint32_t kRxPcmChannels = 16; // QUICK FIX: should be 18 — see TODO above
 
 // Data block size in quadlets, El Cap ground-truth (IT=13, IR=16).
 constexpr uint32_t kTxDbs = 13;

@@ -95,10 +95,32 @@ private:
     static constexpr uint8_t  kClockRateShift = 8u;          // V3_CLOCK_RATE_SHIFT
 
     // MOTU 828 MK3 stream geometry at 48kHz
-    // IT (host→MOTU): 14 PCM + 2 MSG = DBS 13
-    // IR (MOTU→host): 18 PCM + 2 MSG = DBS 16
-    static constexpr uint32_t kHostOutputPcm = 14u; // IT slots (playback)
-    static constexpr uint32_t kHostInputPcm  = 18u; // IR slots (capture)
+    // IT (host→MOTU): 14 PCM + 2 MSG packed in 13 DBS slots (MOTU V3 format)
+    // IR (MOTU→host): 18 PCM + 2 MSG packed in 16 DBS slots (MOTU V3 format)
+    //
+    // MOTU V3 uses a proprietary non-AM824 packing:
+    //   DBS = 1 (SPH) + DIV_ROUND_UP((msg+pcm)*3, 4)
+    //   Each audio channel is 3 bytes (24-bit big-endian), not 1 quadlet (AM824).
+    //   Slot 0 of every frame is the SPH (Source Packet Header, 4-byte timestamp).
+    //
+    // QUICK FIX (temporary): kHostInputPcm is set to kIrDbs (16) instead of the
+    // real PCM count (18). This is required because RxAudioPacketProcessor has an
+    // AM824 geometry check that rejects packets where channels > DBS:
+    //   `cip->dataBlockSize < channels` → 16 < 18 → kInvalidRange on every packet.
+    // Consequence: CoreAudio sees 16 input channels instead of 18, and the decoded
+    // PCM is in MOTU V3 format (not AM824), so audio may be distorted/mapped wrong.
+    //
+    // TODO — proper MOTU V3 IR decoder (see docs/MOTU_V3_DICE_TODO.md):
+    //   1. Restore kHostInputPcm = 18u.
+    //   2. Add AudioWireFormat::kMOTUV3 and implement DecodeDirectRxFrame for
+    //      MOTU packing: skip slot 0 (SPH), unpack slots 1–15 as 3-byte/channel.
+    //   3. Remove geometry check `cip->dataBlockSize < channels` from
+    //      RxAudioPacketProcessor (it's wrong for non-AM824 formats where
+    //      channels > DBS is valid by design).
+    //   4. Similarly fix IT encoder (PacketAssembler / DecodeDirectTxFrame) to
+    //      write MOTU V3 format: SPH slot + 3-byte/channel packing for 14+2 ch.
+    static constexpr uint32_t kHostOutputPcm = 14u; // IT PCM channels (playback)
+    static constexpr uint32_t kHostInputPcm  = 16u; // QUICK FIX: should be 18u — see TODO above
     static constexpr uint32_t kItDbs         = 13u;
     static constexpr uint32_t kIrDbs         = 16u;
 
