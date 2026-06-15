@@ -88,3 +88,9 @@ __pycache__/
 
 # mimo
 .mimocode
+
+# CodeGraph local index (rebuild with `codegraph index .`)
+.codegraph/
+
+# Machine-specific MCP config (absolute paths; keep local, not for upstream)
+.mcp.json
