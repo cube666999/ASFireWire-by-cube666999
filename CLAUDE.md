@@ -306,10 +306,16 @@ Xcode's codesign failuje z `resource fork, Finder information, or similar detrit
 
 **Jedyne działające rozwiązanie — zawsze buduj poza iCloud (`/tmp`):**
 ```bash
-./build.sh --derived /tmp/ASFWBuild --deploy   # ← hardware test build + deploy na Desktop
-./build.sh --derived /tmp/ASFWBuild            # ← zwykły build
-./build.sh --derived /tmp/ASFWBuild --clean    # ← full rebuild (usuwa DerivedData)
+./build.sh --derived /tmp/ASFWBuild --clean --deploy   # ← HARDWARE TEST: ZAWSZE z --clean
+./build.sh --derived /tmp/ASFWBuild                     # ← szybki build do sprawdzenia kompilacji
 ```
+
+> 🛑 **HARDWARE-DEPLOY = ZAWSZE `--clean`. Bez wyjątków.** Źródła leżą w iCloud → mtime są
+> niewiarygodne → build inkrementalny pomija rekompilację zmienionego `.cpp` i linkuje **stary `.o`**.
+> Bump wersji i tak zadziała (relink), więc `systemextensionsctl` pokaże nową wersję **z kodem ze
+> starego pliku** — i uwierzysz, że testujesz nowy fix, a testujesz ducha. To NIE dotyczy tylko
+> headerów/constexpr — dotyczy KAŻDEJ edycji źródła. `--clean` (rm DerivedData) to jedyny pewny sposób.
+> Build inkrementalny używaj wyłącznie do sprawdzenia, czy się kompiluje — NIGDY do testu hardware.
 
 **NEVER use `./build.sh --no-bump`** dla hardware test build — macOS pomija upgrade dextu jeśli CFBundleVersion się nie zmienił.
 
@@ -324,11 +330,10 @@ Xcode's codesign failuje z `resource fork, Finder information, or similar detrit
 
 **Build hardware-test (z deployem — tak jak w main):**
 ```bash
-./build.sh --derived /tmp/ASFWBuild --deploy
+./build.sh --derived /tmp/ASFWBuild --clean --deploy   # ← --clean OBOWIĄZKOWY (patrz wyżej)
 ```
 Wynik: `~/Desktop/ASFW_dice_vNN.app` (podpisany `Apple Development`, dext + app, signature zweryfikowana).
-Sam build bez deployu: `./build.sh --derived /tmp/ASFWBuild` → `/tmp/ASFWBuild/Build/Products/Debug/ASFW.app`.
-Pełny rebuild: dodaj `--clean` (usuwa DerivedData przed buildem).
+Sam build bez deployu (tylko sprawdzenie kompilacji): `./build.sh --derived /tmp/ASFWBuild`.
 
 > **`deploy_app()` w build.sh** (dodane 2026-06-15, port z main): kopiuje app do `/tmp` (omija iCloud
 > xattr), strippuje xattry, podpisuje **najpierw dext** (`ASFWDriver/ASFWDriver.entitlements`) potem
@@ -397,11 +402,17 @@ ukończona dokumentacja). `git push cube666 dice-motu`. Nie pushuj eksperymental
 
 **Czego NIE robić (lekcje z pierwszego sterownika):**
 - ❌ NIE `./build.sh --no-bump` na hardware test (macOS pominie upgrade dextu — patrz sekcja version bump).
-- ❌ NIE buduj w iCloud DerivedData (xattr breakage — zawsze `--derived /tmp/ASFWBuild`; pełny rebuild = `--clean`).
+- ❌ NIE buduj hardware-test bez `--clean` (iCloud mtime → stary `.o` w nowej wersji — patrz niżej). Zawsze `--derived /tmp/ASFWBuild --clean --deploy`.
 - ❌ NIE używaj `grep`/`find`/`Bash` do szukania kodu (CodeGraph first — patrz zakaz wyżej).
 - ❌ NIE `log stream` bez `/usr/bin/` (zsh builtin) ani z predykatem po procesie (użyj `senderImagePath`).
-- ❌ NIE zakładaj że incremental build rekompiluje zmieniony plik (iCloud zachowuje timestamps →
-  `rm -rf /tmp/ASFWBuild` dla pewności po edycji constexpr/header).
+- ❌ NIE zakładaj że incremental build rekompiluje zmieniony plik. iCloud psuje mtime → Xcode
+  pomija rekompilację KAŻDEGO zmienionego źródła (nie tylko constexpr/header) i linkuje stary `.o`.
+  Hardware-test ZAWSZE z `--clean`. *(2026-06-15: v12 zbudowane bez `--clean` linkowało stary
+  `IsochReceiveContext.o` — `systemextensionsctl`=12, ale kod ze starej wersji. Brak nowych
+  bezwarunkowych logów `Start: Readback` zdemaskował ducha; v13 z `--clean` naprawiło.)*
+- ❌ NIE ufaj samemu `systemextensionsctl list` jako dowodowi, że biegnie nowy kod — łapie podmianę
+  dextu, ale NIE łapie nieświeżego `.o` w tej samej wersji. **Weryfikuj kodem:** dodaj do fixa
+  bezwarunkowy log/marker i potwierdź go w logach dextu, zanim uznasz że testujesz nowy kod.
 
 ## ✅ Version bump — naprawiony (jak w main, 2026-06-15)
 
@@ -425,13 +436,15 @@ Ręczny bump bez buildu (np. żeby zsynchronizować przed czymś): `./bump.sh pa
 > Trzymaj VERSION.txt patch powyżej ostatnio zainstalowanej wersji.
 > *(2026-06-15: zainstalowane było 8, ustawiono VERSION.txt=0.2.9-audio.)*
 
-**ZAWSZE weryfikuj po instalacji:**
+**ZAWSZE weryfikuj po instalacji — DWA niezależne sprawdzenia:**
 ```bash
-systemextensionsctl list   # powinien pokazać NOWĄ wersję
-# + sprawdź w logach że nowy fix faktycznie działa (nie stary kod)
+systemextensionsctl list   # 1) podmiana dextu: pokazuje NOWĄ wersję
+# 2) świeżość kodu: sprawdź w logach bezwarunkowy log/marker dodany w tym fixie
 ```
-Jeśli zmieniłeś `constexpr`/header a log pokazuje starą wartość → incremental build miss →
-`rm -rf /tmp/ASFWBuild` + pełny clean rebuild.
+⚠️ Sam `systemextensionsctl` NIE wystarcza — pokazuje nową wersję nawet gdy zlinkowano stary `.o`
+(version bump i tak robi relink). Dopóki nie zobaczysz w logach markera z tego fixa, NIE zakładaj,
+że testujesz nowy kod. Jeśli markera brak mimo nowej wersji → incremental build miss →
+hardware-build ZAWSZE z `--clean` (`./build.sh --derived /tmp/ASFWBuild --clean --deploy`).
 
 ## CodeGraph MCP — instalacja na świeżej maszynie
 
