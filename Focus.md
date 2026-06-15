@@ -6,12 +6,39 @@ Archiwum ukończonych sesji → `DevLog.md`
 
 ---
 
-## ⚡ AKTUALNY STAN — Przeczytaj to na starcie
+## 🟢 ZACZNIJ TU — pierwsza świeża sesja (uruchom z katalogu dice!)
 
-> **Stan na 2026-06-15 (v11 / CFBundleVersion=8) — ZTS timeout:**
+1. **Uruchom `claude` z `ASFireWire-dice/`** (nie z `ASFireWire/`) — wtedy ten CLAUDE.md +
+   indeks CodeGraph dice ładują się automatycznie. Zatwierdź MCP „codegraph" (opcja 2) jeśli pyta.
+2. **Zainstaluj świeży dext:** uruchom `~/Desktop/ASFW_dice_v11.app` (zbudowany czysto 2026-06-15,
+   CFBundleVersion=**11**). Stare na Desktopie (v9, v10) możesz usunąć.
+3. **POTWIERDŹ że biegnie NOWY kod** (krytyczne — patrz lekcja version-bump w DevLog):
+   ```bash
+   systemextensionsctl list   # MUSI pokazać 1.0/11 [activated enabled], NIE 8
+   ```
+   Jeśli pokazuje 8 → upgrade się nie wykonał, NIE ufaj logom dopóki nie zobaczysz 11.
+4. **Dopiero wtedy** wznów debug ZTS poniżej. Logi:
+   ```bash
+   /usr/bin/log stream --predicate 'senderImagePath CONTAINS "ASFWDriver"' --level debug 2>/dev/null | grep -E "(ZTS|IR|DMA|Arming|DrainCompleted|DICE|timeout)"
+   ```
+
+> ℹ️ **Infrastruktura naprawiona 2026-06-15:** version-bump (build.sh→`bump.sh patch`, sync pbxproj,
+> auto-commit), deploy (`--deploy`/`--clean`), SSH remotes. Od teraz `./build.sh --derived /tmp/ASFWBuild --deploy`
+> daje deterministycznie rosnącą wersję → koniec z „duchem starej wersji". Szczegóły: DevLog.md.
+
+---
+
+## ⚡ AKTUALNY STAN — problem do rozwiązania
+
+> **ZTS timeout (problem otwarty):**
 > Geometry check naprawiony (kRxPcmChannels=16 → inCh=16 ✅).
 > CoreAudio widzi 16 wejść, IR zbrojony na właściwym kanale.
 > **Problem: DrainCompleted() zwraca 0 ukończonych deskryptorów w ciągu 500ms.**
+>
+> ⚠️ **Uwaga:** poprzednie sesje ZTS biegły na dexcie z zawodnym wersjonowaniem — możliwe, że część
+> obserwacji dotyczyła STAREJ wersji (patrz „lekcja version-bump", DevLog). Po instalacji v11 i
+> potwierdzeniu `systemextensionsctl = 11`, **zweryfikuj inCh=16 i DrainCompleted od nowa** zanim
+> pogłębisz diagnozę — żeby mieć pewność że to stan aktualnego kodu, nie ducha.
 > ZTS (Zero Timestamp) nie jest publikowany → `WaitForInitialHardwareZts` timeout (0xe00002d6).
 > MOTU albo nie nadaje na oczekiwanym kanale isoch, albo OHCI IR kontekst nie odbiera.
 
