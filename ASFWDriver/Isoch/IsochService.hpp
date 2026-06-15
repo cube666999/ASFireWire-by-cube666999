@@ -124,6 +124,9 @@ private:
     void RefreshReceiveTimingLossCallback() noexcept;
     void OnReceiveTimingLossDetected() noexcept;
     void StartDeferredTransmitIfReady() noexcept;
+    // Releases any IRM channel/bandwidth reserved by ReservePlayback/CaptureResources.
+    // Called from StopAll so a restart doesn't fail with NoResources on a self-held channel.
+    void ReleaseReservedIRM() noexcept;
 
     OSSharedPtr<ASFW::Isoch::IsochReceiveContext> isochReceiveContext_;
     std::unique_ptr<ASFW::Isoch::IsochTransmitContext> isochTransmitContext_;
@@ -154,6 +157,8 @@ private:
     OSSharedPtr<IOBufferMemoryDescriptor> txControlBlock_{nullptr};
 
     uint64_t activeGuid_{0};
+    // Non-owning; set when IRM resources are reserved, used by ReleaseReservedIRM on teardown.
+    IRM::IRMClient* reservedIrmClient_{nullptr};
     TimingLossCallback timingLossCallback_{};
     TxPreparationCallback txPreparationCallback_{};
     ZtsAnchorReadyCallback ztsAnchorReadyCallback_{};

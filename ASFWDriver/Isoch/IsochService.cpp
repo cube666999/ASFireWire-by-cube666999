@@ -3,12 +3,41 @@
 
 #include "IsochService.hpp"
 #include "../Logging/Logging.hpp"
+#include <atomic>
 #ifndef ASFW_HOST_TEST
 #include <DriverKit/IOBufferMemoryDescriptor.h>
 #include <DriverKit/IOMemoryMap.h>
+#include <DriverKit/IOLib.h>   // IOSleep
+#include "../Bus/IRM/IRMClient.hpp"   // real IRM channel/bandwidth reservation
 #endif
 #include "Memory/IsochDMAMemoryManager.hpp"
 #include "../Shared/Isoch/IsochAudioTransport.hpp"
+
+#ifndef ASFW_HOST_TEST
+namespace {
+
+// Synchronously wait for an IRM AllocateResources/ReleaseResources callback.
+// Mirrors main MOTUAudioBackend::WaitForIRM: poll the completion flag at 5ms
+// granularity until timeout. For a local IRM the callback fires inline (returns
+// at once); for a remote IRM it arrives on a different dispatch thread.
+[[nodiscard]] bool WaitForIRMResult(std::atomic<bool>& done,
+                                    std::atomic<ASFW::IRM::AllocationStatus>& status,
+                                    uint32_t timeoutMs) noexcept {
+    constexpr uint32_t kPollMs = 5;
+    for (uint32_t waited = 0; waited < timeoutMs; waited += kPollMs) {
+        if (done.load(std::memory_order_acquire)) {
+            return status.load(std::memory_order_acquire) ==
+                   ASFW::IRM::AllocationStatus::Success;
+        }
+        IOSleep(kPollMs);
+    }
+    return false;
+}
+
+constexpr uint32_t kIRMReserveTimeoutMs = 500;
+
+} // namespace
+#endif // !ASFW_HOST_TEST
 
 namespace ASFW::Driver {
 
@@ -309,7 +338,32 @@ kern_return_t IsochService::ReservePlaybackResources(uint64_t guid,
                                                      uint8_t channel,
                                                      uint32_t bandwidthUnits) {
     if (activeGuid_ != guid) return kIOReturnNotPrivileged;
-    
+
+#ifndef ASFW_HOST_TEST
+    // Actually reserve the isoch channel + bandwidth on the bus (self-IRM shadow
+    // path when local). Without this the channel is never marked allocated in
+    // CHANNELS_AVAILABLE — main needed real IRM allocation for IR packets to flow
+    // (DevLog "RxStats Pkts=0 mimo running IR").
+    std::atomic<bool> done{false};
+    std::atomic<IRM::AllocationStatus> status{IRM::AllocationStatus::Failed};
+    irmClient.AllocateResources(channel, bandwidthUnits,
+        [&done, &status](IRM::AllocationStatus s) {
+            status.store(s, std::memory_order_release);
+            done.store(true, std::memory_order_release);
+        });
+    if (!WaitForIRMResult(done, status, kIRMReserveTimeoutMs)) {
+        ASFW_LOG_ERROR(Isoch,
+            "IsochService: IRM playback alloc FAILED ch=%u bw=%u status=%u",
+            channel, bandwidthUnits,
+            static_cast<unsigned>(status.load(std::memory_order_acquire)));
+        return kIOReturnNoResources;
+    }
+    reservedIrmClient_ = &irmClient;
+    ASFW_LOG(Isoch, "IsochService: IRM playback reserved ch=%u bw=%u", channel, bandwidthUnits);
+#else
+    (void)irmClient;
+#endif
+
     reserved_.playbackActive = true;
     reserved_.playbackChannel = channel;
     reserved_.playbackBandwidthUnits = bandwidthUnits;
@@ -321,7 +375,28 @@ kern_return_t IsochService::ReserveCaptureResources(uint64_t guid,
                                                     uint8_t channel,
                                                     uint32_t bandwidthUnits) {
     if (activeGuid_ != guid) return kIOReturnNotPrivileged;
-    
+
+#ifndef ASFW_HOST_TEST
+    std::atomic<bool> done{false};
+    std::atomic<IRM::AllocationStatus> status{IRM::AllocationStatus::Failed};
+    irmClient.AllocateResources(channel, bandwidthUnits,
+        [&done, &status](IRM::AllocationStatus s) {
+            status.store(s, std::memory_order_release);
+            done.store(true, std::memory_order_release);
+        });
+    if (!WaitForIRMResult(done, status, kIRMReserveTimeoutMs)) {
+        ASFW_LOG_ERROR(Isoch,
+            "IsochService: IRM capture alloc FAILED ch=%u bw=%u status=%u",
+            channel, bandwidthUnits,
+            static_cast<unsigned>(status.load(std::memory_order_acquire)));
+        return kIOReturnNoResources;
+    }
+    reservedIrmClient_ = &irmClient;
+    ASFW_LOG(Isoch, "IsochService: IRM capture reserved ch=%u bw=%u", channel, bandwidthUnits);
+#else
+    (void)irmClient;
+#endif
+
     reserved_.captureActive = true;
     reserved_.captureChannel = channel;
     reserved_.captureBandwidthUnits = bandwidthUnits;
@@ -331,8 +406,41 @@ kern_return_t IsochService::ReserveCaptureResources(uint64_t guid,
 void IsochService::StopAll() {
     StopReceive();
     StopTransmit();
+    ReleaseReservedIRM();
     reserved_.Reset();
     activeGuid_ = 0;
+}
+
+void IsochService::ReleaseReservedIRM() noexcept {
+#ifndef ASFW_HOST_TEST
+    if (!reservedIrmClient_) return;
+
+    if (reserved_.playbackActive) {
+        std::atomic<bool> done{false};
+        std::atomic<IRM::AllocationStatus> status{IRM::AllocationStatus::Failed};
+        reservedIrmClient_->ReleaseResources(reserved_.playbackChannel,
+                                             reserved_.playbackBandwidthUnits,
+            [&done, &status](IRM::AllocationStatus s) {
+                status.store(s, std::memory_order_release);
+                done.store(true, std::memory_order_release);
+            });
+        (void)WaitForIRMResult(done, status, kIRMReserveTimeoutMs);
+        ASFW_LOG(Isoch, "IsochService: IRM playback released ch=%u", reserved_.playbackChannel);
+    }
+    if (reserved_.captureActive) {
+        std::atomic<bool> done{false};
+        std::atomic<IRM::AllocationStatus> status{IRM::AllocationStatus::Failed};
+        reservedIrmClient_->ReleaseResources(reserved_.captureChannel,
+                                             reserved_.captureBandwidthUnits,
+            [&done, &status](IRM::AllocationStatus s) {
+                status.store(s, std::memory_order_release);
+                done.store(true, std::memory_order_release);
+            });
+        (void)WaitForIRMResult(done, status, kIRMReserveTimeoutMs);
+        ASFW_LOG(Isoch, "IsochService: IRM capture released ch=%u", reserved_.captureChannel);
+    }
+    reservedIrmClient_ = nullptr;
+#endif
 }
 
 void IsochService::SetTimingLossCallback(TimingLossCallback callback) noexcept {
