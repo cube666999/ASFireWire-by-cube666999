@@ -5,6 +5,104 @@ Aktywny plan → `Focus.md`
 
 ---
 
+## Sesja 2026-06-22 — ROOT CAUSE ZTS: IR MOTU używa niestandardowego nagłówka (przełom)
+
+### Ścieżka diagnostyczna (v34→v36)
+- **v34**: `Start()` = `kRun|kWake|kIsochHeader`. Potwierdzone na HW: `ctl=0x40008451` (bit30
+  isochHeader aktywny), `drainedTotal=54569` — OHCI odbiera mnóstwo pakietów IR. Ale ZTS nadal
+  timeout, zero logów CADENCE/QUALIFIED → każdy pakiet odrzucony w `ProcessPacket`.
+- **v35**: dump 24 bajtów odrzuconych pakietów. Offset 8 = `0d 04 04 00 22 ff ff ff`, **identyczny
+  w każdym pakiecie** (timestampy 0x3aac→0x43ac). Podejrzenie: martwa pamięć.
+- **v36**: skan offsetów 4..28 szukający poprawnego CIP (EOH0=0/EOH1=1) — **nie znalazł żadnego**
+  sensownego kandydata z DBS≈16. Bajt `0x10` nie występował nigdzie. Ślepa uliczka zgadywania.
+
+### Rozstrzygnięcie — snoop działającego El Capitan (ground-truth)
+Wgrano snoop-mode v115 (architektura main) na Tahoe; El Capitan (MB2009) **aktywnie nagrywał** z
+MOTU → wymuszone nadawanie IR; M3 pasywnie snoopował ctx=2 kanał TX MOTU (ch=34).
+
+**Wynik:** nagłówek IR (device→host) to **stałe `0d040400 22ffffff`** — `Q1` ma **EOH1=0** →
+NIE jest standardowym CIP. Potwierdzone 3 niezależnymi stosami (snoop El Cap, dice, Linux ALSA).
+- DATA pakiet = 520 B = 8 (nagłówek) + 8 bloków × 16 quad. **DBS=16, 18 PCM** (nie 16).
+- Blok = SPH(4B) + 2 MSG + 18 PCM (×3B). SPH **żywy** (rośnie, synca z `ReadCycleTime`).
+- PCM niesie realny sygnał → MOTU NADAJE żywe dane (hipoteza „DBC=0=idle" była błędna).
+
+### Root cause
+`RxAudioPacketProcessor::ProcessPacket` → `CIPHeader::Decode(q0,q1)` wymaga **EOH1=1**. IR MOTU ma
+EOH1=0 → `nullopt` → `kInvalidRange` → każdy pakiet odrzucony → ZTS nie publikuje → timeout
+`0xe00002d6`. **Offset `payload+8`/isochHeader=1 (v34) był poprawny** — bug to wyłącznie walidacja
+standardowego CIP na niestandardowym nagłówku IR.
+
+### Fix (do implementacji) + pełne dane
+Patrz `Focus.md` §AKTUALNY STAN i `../ASFireWire/documentation/MOTU_V3_WIRE_GROUNDTRUTH.md`
+§„✅ IR ground truth — ZEBRANE". Raw capture:
+`../ASFireWire/documentation/raw-captures/2026-06-22_el_capitan_snoop_IR_ch34_device-to-host.txt`.
+
+### Uboczne ustalenia tej sesji
+- **origin/DICE (mrmidi) 28 commitów przed nami** — `git fetch origin`. Nie rozwiązują tego buga
+  (ten sam `RxAudioPacketProcessor`/CIP). Warte integracji później: FW-62 use-after-free guard
+  (`0950319`), HAL safety offset 624→128 (`5a0b306`), RX Float32 (`fc3f46b`), ZTS rework (`191302b`).
+- **Przeniesiono raw-captures do main** (`../ASFireWire/documentation/raw-captures/`): 6 plików z
+  El Cap/Linux/DTrace + nowy IR snoop. Opisane w `MOTU_V3_WIRE_GROUNDTRUTH.md` i `MOTU_828_MK3_BringUp.md`.
+
+---
+
+## Sesja 2026-06-18 (cd.) — v34: fix isochHeader IR (root cause ZTS)
+
+### Diagnoza (z v33 DIAG)
+`IR DIAG drainedTotal>0` potwierdziło: **MOTU nadaje IR, OHCI odbiera pakiety.** Ale zero logów
+„RX timestamp invalid" mimo 300+ pakietów → `packetAccepted=false` dla wszystkich → cała ścieżka
+ZTS (cadence/replay/publish) pomijana w `IsochReceiveContext::Poll()` → `ZTS timed out`.
+
+### Root cause — niespójność OHCI isochHeader vs procesor
+`RxAudioPacketProcessor` (host data path dice) jest napisany pod format **IR packet-per-buffer
+WITH header/trailer**: `kIsochHeaderSize=8` (CIP na `payload+8`), RX timestamp z `payload[0..3]`.
+To wymaga `isochHeader=1` w IRContextControl. Ale „Bug D fix" (v12) ustawił `Start()` na
+`kRun|kWake` (isochHeader=**0**, kopiując main) → OHCI pisze bufor **data-only** (CIP na offsecie 0):
+procesor czyta offset 8 → garbage → `CIPHeader::Decode` zwraca nullopt → `kInvalidRange` →
+`packetAccepted=false` → ZTS martwy.
+
+### Rozstrzygnięcie referencją — OHCI 1.1 spec (nie sterownik!)
+Pobrana oficjalna spec OHCI 1.1 (IBM `ohci092.pdf`). **Figure 10-5** (IRContextControl):
+bit 31=bufferFill, **bit 30=isochHeader**, bit 29=cycleMatchEnable, bit 28=multiChanMode.
+**Figure 10-11 / §10.6.2.1** (IR with header/trailer, bufferFill=0 isochHeader=1) — każdy pakiet
+poprzedzony 8 bajtami:
+```
+quadlet 0: [xferStatus(INVALID):16][timeStamp:16]   ← per-packet HW cycle stamp (cycleSeconds[2:0]<<13 | cycleCount[12:0])
+quadlet 1: [dataLength:16][tag:2][chanNum:6][tcode:4][sy:4]
+quadlet 2+: isochronous data (CIP...)
+```
+= dokładnie `kIsochHeaderSize=8` + timestamp w `payload[0..3]` bits[15:0]. **Procesor był poprawny;
+zepsuta była konfiguracja kontekstu OHCI.** §10.6.3 (isochHeader=0) = bufor data-only, CIP offset 0
+(to jest main + `kIsochHeaderSize=0`, timing z CIP SYT). Deskryptor IR INPUT_LAST status word =
+`[xferStatus:16][resCount:16]` (§10.2.2.1) — `DrainCompleted` czyta poprawnie; timestamp NIE jest
+w deskryptorze, tylko w buforze (przy isochHeader=1).
+
+**Korekta dla potomności:** main DevLog „Fix E" twierdził „bit 30 = cycleMatchEnable" — to BŁĄD,
+bit 30 = isochHeader, bit 29 = cycleMatchEnable. main miał `kRun|kIsochHeader` + `kIsochHeaderSize=0`
+(niespójne, CIP na 8 czytany jako 0) → „naprawił" przez isochHeader=0 (spójne dla *ich* offsetu 0).
+Fix main był poprawny dla main, ale diagnoza bitu zła.
+
+### Fix (v34) — `IsochReceiveContext::Start()` (~linia 108)
+```cpp
+const uint32_t ctlValue = kRun | kWake | kIsochHeader;   // były potrzebne WSZYSTKIE trzy
+```
+Bug D dodał kWake (DMA startuje) ale wyrzucił isochHeader → poprawka łączy oba. Daje **prawdziwy
+per-packet hardware timestamp** (cycle-granular, omija tylko 12-bit cycleOffset — najlepsze dostępne
+źródło, zgodne z designem ZTS dice). Zero zmian w procesorze. Naprawia ścieżkę RX dla **wszystkich
+kart** (obecny stan isochHeader=0 + procesor offset=8 był zepsuty dla każdej, nie tylko MOTU) —
+nie narusza architektury mrmidi, czyni ją spójną. Build v34 `--clean --deploy`, kompiluje czysto.
+
+> ⚠️ Świadoma różnica vs main: dice=isochHeader=1+offset8+HW timestamp, main=isochHeader=0+offset0+
+> CIP SYT. To NIE przeszczep z main — to naprawa dice pod jego własny design ZTS. MOTU V3 wysyła
+> SYT=0xFFFF (brak cadence) → ścieżka SYT-only main nie zadziałałaby dla MOTU; HW timestamp tak.
+
+### Następny krok
+Test hardware v34. Jeśli `drainedTotal>0` + brak `timed out` + ZTS publikowany → fix trafiony,
+usunąć DIAG z Poll()/Stop(). Jeśli CIP dekoduje ale timestamp zły → weryfikować endianness
+`DecodeReceiveTimestamp` vs format OHCI (payload[0..3] LE, bits[15:0]).
+
+---
+
 ## Sesja 2026-06-15 — ZTS debug (v9–v11)
 
 ### Kontekst
@@ -83,6 +181,67 @@ return `kIOReturnNotPermitted` gdy `kDead`). Plik: [`IsochReceiveContext.cpp`](A
 
 **Stan:** zmiana wprowadzona, build v12 (do weryfikacji hardware — czy log pokazuje
 `DrainCompleted > 0` i ZTS publikowany).
+
+---
+
+## Sesja 2026-06-18 — IT/IR deadlock: CIP format + kolejność startu (v26–v33)
+
+### Kontekst
+v25 (IRM non-fatal) wciąż nie grał. Symptom przez całą sesję niezmienny:
+`ZTS timed out after 3000 ms`, `replay=0`, `IT WIRE final data=20k+` (IT leci),
+**zero odebranych pakietów IR**. MOTU nie nadaje IR (`seq=0`).
+
+### Co zmieniono (kolejno)
+- **v26** — hipoteza „IT wysyła tylko NO-DATA": wymuszono DATA z zerowym PCM w prefill +
+  pre-replay (`ASFWAudioDriverZts.cpp`). Efekt: `wireDataPackets` wzrosło z 0 do ~20k. MOTU dalej cisza.
+- **v27→v28** — CIP **SPH=1** + **FDF=0x22** dla MOTU (`MOTU828Mk3Profile.cpp`, nowe pole
+  `sph` w `AmdtpStreamConfig`/`DiceStreamConfig`, propagacja `DiceTxStreamEngine`,
+  `AmdtpTxPacketizer` używa `config.sph` zamiast hardkodu). v27 błędnie zmienił `kTxPcmChannels`
+  14→12 i payload-writer offset — **cofnięte** (MOTU pakuje PCM 24-bit, 14 kanałów, SPH nie zjada
+  kanału; kanon = 14). Dalej cisza.
+- **v29** — **kolejność startu**: host IR DMA startuje PRZED device ProgramRx/ProgramTx (jak main
+  `MOTUAudioBackend`). Quirk `startHostReceiveBeforeDeviceProgram` (default false, true tylko MOTU)
+  w `DiceQuirks.hpp`; setter w `DiceDuplexRestartCoordinator` + wstrzyknięcie w `DiceAudioBackend`.
+  Log potwierdził odwróconą kolejność (`Starting prepared IR` przed `ProgramRx`). Dalej cisza.
+- **v30** — **CIP FMT=0x02** (był standardowy AM824 `0x10`). Po tym CIP Q1 = `0x8222ffff`
+  **byte-match wire**. Dalej cisza.
+- **v33** — build **diagnostyczny** (nie naprawczy): bezwarunkowe liczniki IR w
+  `IsochReceiveContext::Poll()`/`Stop()` (`IR DIAG poll#... processed=... drainedTotal=... ctl=`)
+  by rozstrzygnąć MOTU-silent vs dice-not-draining vs interrupt-not-firing. **Czeka na wynik.**
+  (v31/v32 zjedzone przez bump z `--test-only`.)
+
+### Ground-truth CIP host→device (zweryfikowane bajt-po-bajcie)
+Wire (El Cap snoop + Linux tracepoint, kanon `../ASFireWire/.../MOTU_V3_WIRE_GROUNDTRUTH.md`):
+`CIP Q0 byte2=0x04`, `CIP Q1=0x8222ffff`. Stąd: **SPH=1, QPC=0, FMT=0x02, FDF=0x22, SYT=0xFFFF, DBS=13**.
+⚠️ **Tabela w `MOTU_V3_WIRE_GROUNDTRUTH.md` ma błędną interpretację bitów** (pisze „QPC=1, SPH=0") —
+surowy bajt `0x04` to bit10=SPH=1, QPC=0. Drut = wyrocznia, nie tabela. v30 dice produkuje
+dokładnie `0x8222ffff`.
+
+### Co WYKLUCZONO (twardo, by nie wracać)
+Device-facing protokół MOTU w dice jest **w pełni zweryfikowany jako identyczny z działającym main**:
+- CIP (SPH/FMT/FDF/DBS/SYT/rozmiar 424) — byte-match wire ✅
+- Rejestry MOTU: offsety + wartości + kolejność (`0x0b00/0b04/0b10/0b14/0c04`, `0xffc10001`,
+  PACKET_FORMAT `0x02`, ROUTE_PORT `0x100`, FETCH `0x02000000`, shift 24/16, deactivate→activate) ✅
+- Writes docierają z `rcode=Complete` (`OnARResponse ... rcode=0x0`), gen poprawna ✅
+- IR DMA context zdrowy: readback `Ctl=0x9400` (Run|Wake|Active, nie Dead), `Match=0xf0000000` (ch0) ✅
+- IRM: `IRMClient` współdzielony z main (local CSR), CAS success ✅
+
+**Wniosek:** problem NIE leży w warstwie device-facing/protokołu (wyczerpana). Pozostają dwie
+hipotezy, które rozstrzyga v33: (a) **host-side IR receive path** (dice-specific DMA/DirectIO,
+per CLAUDE.md RÓŻNY od main) — context „aktywny" ale nie drenuje / interrupt nie strzela; lub
+(b) **MOTU faktycznie nie nadaje** z powodu niewidocznego w logach dice (wtedy krok 2 =
+porównanie z żywym main na tym samym MOTU, który tam realnie gra).
+
+### Uboczne
+- **Pre-existing luka testów naprawiona:** `tests/audio/CMakeLists.txt` — `DiceProfileTests`
+  referował `gMotu828Mk3Profile` przez registry, ale nie linkował `MOTU828Mk3Profile.cpp`
+  (undefined vtable → cały target się nie budował). Dodano brakujące źródło. Po tym **1114/1114
+  testów C++ przechodzi** (potwierdza brak regresji zmian tej sesji).
+- Wszystkie zmiany behawioralne są **bramkowane per-urządzenie** (nowe pola default
+  `false`/`0x10`, nadpisuje tylko `MOTU828Mk3Profile`); wspólny `RunDuplexStart` dla `false`
+  odtwarza 1:1 poprzedni przepływ → architektura mrmidi pod Generic/Saffire nienaruszona.
+
+**Stan:** niezacommitowane (czeka na rozstrzygnięcie hardware). v33 na Desktopie.
 
 ---
 
