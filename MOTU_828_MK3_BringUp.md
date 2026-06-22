@@ -165,6 +165,27 @@ Fix: `DeviceProtocolFactory::EffectiveModelId()` dla vendor `0x0001F2` zwraca
 
 ---
 
+## Raw capture: DTrace z oficjalnego sterownika El Capitan (2026-06-08)
+
+`documentation/raw-captures/2026-06-08_004331_official_driver_dcl_and_regwrites.txt` i
+`..._010315_..._v2.txt` zawierają DTrace probe trace na realnym El Capitan sterowniku:
+`[OUT] off=0x0bXX dataBE=... dataLE=...` (zapisy do rejestrów 0x0b00/0x0b04/0x0b08/0x0b10/0x0b14/0x0b1c/0x0b38)
+przeplatane z `[ISOCH] createDCLProgram talking=1/0` (talking=1 = TX DCL, talking=0 = RX DCL).
+
+**Potwierdza:** El Capitan tworzy DCL program dla **obu** kierunków (TX i RX) przy każdym
+restarcie strumienia, nawet gdy użytkownik nie nagrywa — RX/IR działa równolegle z TX/IT
+(prawdopodobnie do poziomów/monitoringu). Nie zawiera bajtów pakietów izochronicznych, tylko
+wywołania API i zapisy rejestrów.
+
+`2026-06-08_001235_official_driver_writerequest_trace.txt` — analogiczny DTrace, ale tylko
+`IOFireWireController::processWriteRequest`/`IOFWPseudoAddressSpace::doWrite` (async write
+requests), bez `[ISOCH]`/`[OUT]` adnotacji.
+
+`2026-06-08_020402_motu_register_dump.txt` — jednorazowy zrzut rejestrów 0x0b00–0x0c98 (raw +
+byte-swapped), użyteczny do weryfikacji wartości w tabeli rejestrów wyżej.
+
+---
+
 ## ✅ Logi dext — dostępne przez kernel log (Tahoe, 2026-05-25 update)
 
 `log stream` z predykatami `process ==` / `processID ==` nie działa. Ale logi dextu są widoczne

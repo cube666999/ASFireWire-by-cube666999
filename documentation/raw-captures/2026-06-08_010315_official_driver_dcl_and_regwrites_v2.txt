@@ -1,0 +1,87 @@
+=== MOTU official capture v2 started 2026 Jun  8 01:03:23 ===
+
+[QUAD] 2026 Jun  8 01:03:50 a1=0xffffff90b76f3ce0 a2=0xffffff803dc37538 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:03:50 off=0x0b14 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[OUT] 2026 Jun  8 01:03:50 off=0x0b38 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:03:50 a1=0xffffff90b76f3d30 a2=0xffffff803dc37538 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:03:50 off=0x0b08 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[OUT] 2026 Jun  8 01:03:50 off=0x0b08 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:03:50 a1=0xffffff90b76f3d30 a2=0xffffff803dc37538 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:03:50 off=0x0b04 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:03:50 a1=0xffffff90b76f3d30 a2=0xffffff803dc37538 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:03:50 off=0x0b08 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[ISOCH] 2026 Jun  8 01:03:51 createDCLProgram talking=1 DCL=0xffffff90e15d8920 a4=0x0 a5=0x0 a6=0xffffff9000000000
+[ISOCH] 2026 Jun  8 01:03:51 createDCLProgram talking=0 DCL=0xffffff90b73d8000 a4=0x0 a5=0x0 a6=0xffffff9000000000
+[QUAD] 2026 Jun  8 01:03:51 a1=0xffffff90b6bbb5e0 a2=0xffffff803de736f8 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:03:51 off=0x0b10 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:03:51 a1=0xffffff90b6bbb7b0 a2=0xffffff803de736f8 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:03:51 off=0x0b00 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:03:51 a1=0xffffff80b4e4bcd0 a2=0xffffff803dc37578 a3=0x1 a4=0xffffff7f9c73b230
+[OUT] 2026 Jun  8 01:03:51 off=0x0b1c node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:03:52 a1=0xffffff90b7783da0 a2=0xffffff803e0430b8 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:03:52 off=0x0b00 node=0xffff dataBE=0x80a5211c dataLE=0x1c21a580
+[OUT] 2026 Jun  8 01:03:52 off=0x0b00 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:03:52 a1=0xffffff90b7763dc0 a2=0xffffff803e152a78 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:03:52 off=0x0b08 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:03:52 a1=0xffffff90b7763dc0 a2=0xffffff803e152a78 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:03:52 off=0x0b04 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:03:52 a1=0xffffff90b7763dc0 a2=0xffffff803e152a78 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:03:52 off=0x0b08 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[OUT] 2026 Jun  8 01:03:52 off=0x0b38 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[ISOCH] 2026 Jun  8 01:03:52 createDCLProgram talking=1 DCL=0xffffff90b7533920 a4=0x0 a5=0x0 a6=0xffffff9000000000
+[ISOCH] 2026 Jun  8 01:03:53 createDCLProgram talking=0 DCL=0xffffff90e1685000 a4=0x0 a5=0x0 a6=0xffffff9000000000
+[QUAD] 2026 Jun  8 01:03:53 a1=0xffffff90b6b3b5e0 a2=0xffffff803c8ef878 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:03:53 off=0x0b10 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:03:53 a1=0xffffff90b6b3b7b0 a2=0xffffff803c8ef878 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:03:53 off=0x0b00 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:03:54 a1=0xffffff90b76c3d30 a2=0xffffff803e62c4b8 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:03:54 off=0x0b00 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[ISOCH] 2026 Jun  8 01:03:54 createDCLProgram talking=1 DCL=0xffffff90b7533920 a4=0x0 a5=0x0 a6=0xffffff9000000000
+[ISOCH] 2026 Jun  8 01:03:54 createDCLProgram talking=0 DCL=0xffffff90e1685000 a4=0x0 a5=0x0 a6=0xffffff9000000000
+[QUAD] 2026 Jun  8 01:03:54 a1=0xffffff90b76c35e0 a2=0xffffff803e62c478 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:03:54 off=0x0b10 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:03:54 a1=0xffffff90b76c37b0 a2=0xffffff803e62c478 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:03:54 off=0x0b00 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:03:55 a1=0xffffff90b776bd30 a2=0xffffff803eab31b8 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:03:55 off=0x0b00 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[ISOCH] 2026 Jun  8 01:03:55 createDCLProgram talking=1 DCL=0xffffff90b7533920 a4=0x0 a5=0x0 a6=0xffffff9000000000
+[ISOCH] 2026 Jun  8 01:03:55 createDCLProgram talking=0 DCL=0xffffff90e1685000 a4=0x0 a5=0x0 a6=0xffffff9000000000
+[QUAD] 2026 Jun  8 01:03:55 a1=0xffffff90b76c35e0 a2=0xffffff802d849ff8 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:03:55 off=0x0b10 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:03:55 a1=0xffffff90b76c37b0 a2=0xffffff803e84db38 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:03:55 off=0x0b00 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:03:55 a1=0xffffff90b775bc30 a2=0xffffff803eb00738 a3=0x1 a4=0xffffff7f9c73b230
+[OUT] 2026 Jun  8 01:03:55 off=0x0b1c node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:03:55 a1=0xffffff90b775bc70 a2=0xffffff803dc37ab8 a3=0x1 a4=0xffffff7f9c73b230
+[OUT] 2026 Jun  8 01:03:55 off=0x0b14 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[OUT] 2026 Jun  8 01:03:55 off=0x0b14 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:04:16 a1=0xffffff90b6b53d30 a2=0xffffff803ec8d538 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:04:16 off=0x0b14 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:04:16 a1=0xffffff90b6b53d30 a2=0xffffff803ec8d538 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:04:16 off=0x0b00 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[ISOCH] 2026 Jun  8 01:04:16 createDCLProgram talking=1 DCL=0xffffff90b7533920 a4=0x0 a5=0x0 a6=0xffffff9000000000
+[ISOCH] 2026 Jun  8 01:04:16 createDCLProgram talking=0 DCL=0xffffff90e1685000 a4=0x0 a5=0x0 a6=0xffffff9000000000
+[QUAD] 2026 Jun  8 01:04:16 a1=0xffffff90b6b535e0 a2=0xffffff803ec8d7b8 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:04:16 off=0x0b10 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:04:16 a1=0xffffff90b6b537b0 a2=0xffffff803ec8d7b8 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:04:16 off=0x0b00 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:04:17 a1=0xffffff80b5a83c30 a2=0xffffff803ec8d2b8 a3=0x1 a4=0xffffff7f9c73b230
+[OUT] 2026 Jun  8 01:04:17 off=0x0b1c node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:04:17 a1=0xffffff80b5a83c70 a2=0xffffff803dc37ab8 a3=0x1 a4=0xffffff7f9c73b230
+[OUT] 2026 Jun  8 01:04:17 off=0x0b14 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[OUT] 2026 Jun  8 01:04:17 off=0x0b14 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:04:30 a1=0xffffff90b6b6bd30 a2=0xffffff803178e638 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:04:30 off=0x0b14 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:04:30 a1=0xffffff90b6b6bd30 a2=0xffffff8039b587b8 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:04:30 off=0x0b00 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[ISOCH] 2026 Jun  8 01:04:30 createDCLProgram talking=1 DCL=0xffffff90b7533920 a4=0x0 a5=0x0 a6=0xffffff9000000000
+[ISOCH] 2026 Jun  8 01:04:30 createDCLProgram talking=0 DCL=0xffffff90e1685000 a4=0x0 a5=0x0 a6=0xffffff9000000000
+[QUAD] 2026 Jun  8 01:04:30 a1=0xffffff90b775b5e0 a2=0xffffff8039a7f2b8 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:04:30 off=0x0b10 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:04:30 a1=0xffffff90b775b7b0 a2=0xffffff8039a7f2b8 a3=0x1 a4=0x0
+[OUT] 2026 Jun  8 01:04:30 off=0x0b00 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:04:31 a1=0xffffff80b5c83c30 a2=0xffffff8039b15138 a3=0x1 a4=0xffffff7f9c73b230
+[OUT] 2026 Jun  8 01:04:31 off=0x0b1c node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[QUAD] 2026 Jun  8 01:04:31 a1=0xffffff80b5c83c70 a2=0xffffff803dc37ab8 a3=0x1 a4=0xffffff7f9c73b230
+[OUT] 2026 Jun  8 01:04:31 off=0x0b14 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580
+[OUT] 2026 Jun  8 01:04:31 off=0x0b14 node=0xffc0 dataBE=0x80a5211c dataLE=0x1c21a580

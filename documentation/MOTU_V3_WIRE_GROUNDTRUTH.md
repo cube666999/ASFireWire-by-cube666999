@@ -192,31 +192,102 @@ Poprzednia wersja tego pliku błędnie pisała "byte 2 bits[2]=1 → SPH=1". Pop
 
 ---
 
-## IR ground truth — DO ZEBRANIA (MOTU→host, device→host)
+## Raw capture files (źródła tego dokumentu)
 
-### Co wiemy z Linux spec (bez hardware capture)
+Pełne, nieprzycięte logi leżą w `documentation/raw-captures/`:
+
+| Plik | Zawartość |
+|------|-----------|
+| `2026-06-13_el_capitan_snoop_ch33_main.txt` | Pasywny snoop ch=33 (IT) z ASFWDriver snoop-mode na M3 Tahoe podczas odtwarzania El Capitan → MOTU. Źródło przykładów CIP Q0=0x030d04xx/Q1=0x8222ffff w tym dokumencie. |
+| `2026-06-13_el_capitan_snoop_ch33_connect.txt` | Ten sam snoop, sesja wokół podłączenia/handshake MOTU. |
+| `2026-06-08_001235_official_driver_writerequest_trace.txt` | DTrace `IOFireWireController::processWriteRequest`/`IOFWPseudoAddressSpace::doWrite` z oficjalnego sterownika El Capitan — async register writes, **bez** danych pakietów izochronicznych. |
+| `2026-06-08_004331_official_driver_dcl_and_regwrites.txt`, `2026-06-08_010315_official_driver_dcl_and_regwrites_v2.txt` | DTrace z `[OUT] off=0x0bXX` (zapisy rejestrów) + `[ISOCH] createDCLProgram talking=0/1` — potwierdza, że El Capitan tworzy DCL program **dla obu kierunków** (talking=1 TX, talking=0 RX) nawet gdy nie nagrywa — IR działa równolegle z IT do poziomów/monitoringu. |
+| `2026-06-08_020402_motu_register_dump.txt` | Zrzut rejestrów MOTU 0x0b00–0x0c98 (raw + byte-swapped) w jednym punkcie czasu. |
+| ✅ `2026-06-22_el_capitan_snoop_IR_ch34_device-to-host.txt` | **Pasywny snoop ctx=2 (v115) podczas gdy El Capitan AKTYWNIE NAGRYWAŁ z MOTU.** Zawiera ch=33 (IT) **oraz ch=34 (IR, device→host)** — pierwszy realny capture IR. Źródło sekcji „✅ IR ground truth — ZEBRANE" niżej. |
+
+⚠️ Pliki z 2026-06-08/06-13 NIE zawierają bajtów pakietu IR — tylko kanał 33 (IT) lub wywołania
+API/rejestry. **IR ground truth (device→host) został zebrany dopiero 2026-06-22** — patrz plik
+`..._IR_ch34_...` i sekcja „✅ IR ground truth — ZEBRANE" niżej.
+
+## ✅ IR ground truth — ZEBRANE (MOTU→host, device→host) — 2026-06-22
+
+**Źródło:** pasywny snoop ctx=2 w ASFWDriver snoop-mode (v115) na M3 Tahoe, podczas gdy **El Capitan
+(MB2009) aktywnie NAGRYWAŁ** z wejść MOTU (QuickTime audio recording). To wymusiło nadawanie IR
+przez MOTU. Topologia: M3 ↔ LaCie hub ↔ MOTU ↔ MB2009/El Capitan.
+Raw: `documentation/raw-captures/2026-06-22_el_capitan_snoop_IR_ch34_device-to-host.txt`
+(605 linii snoop: ch=33 IT host→device + **ch=34 IR device→host**, 50 DATA + 26 EMPTY pakietów IR).
+
+> ⚠️ **Kluczowa różnica względem IT — IR NIE używa standardowego nagłówka CIP.**
+
+### Nagłówek IR (device→host) — STAŁY, niestandardowy
+
+Pierwsze 2 quadlety każdego pakietu IR (DATA i EMPTY) są **stałe**:
+```
+Q0 = 0x0d040400    Q1 = 0x22ffffff
+```
+Bajtowo: `0d 04 04 00 22 ff ff ff` — **identyczne we wszystkich 50 pakietach DATA i 26 EMPTY**,
+DBC-byte (Q0 byte3) zawsze `0x00`, niezależnie od czasu.
+
+| | IT (host→device, działa) | IR (device→host) |
+|--|--------------------------|-------------------|
+| Q0 | `030d04xx` (SID=3, DBS=13, **DBC rośnie**) | `0d040400` (**stały**, DBC-byte=0x00) |
+| Q1 | `8222ffff` (**EOH1=1**, FMT=0x02, FDF=0x22, SYT=ffff) | `22ffffff` (**EOH1=0** ❌, NIE-CIP) |
+
+**Q1 IR = `0x22ffffff` ma bit31 (EOH1) = 0 → łamie IEC 61883 dwuquadletowy CIP.** To NIE jest błąd
+odczytu — potwierdzone niezależnie przez (a) snoop El Capitan ch=34 (offset 0), (b) nasz dice
+`RxAudioPacketProcessor` (offset 8, isochHeader=1), (c) Linux ALSA tracepoint (`13 4 4 0 34 255 255
+255`). **Trzy niezależne stosy widzą ten sam stały nagłówek.** MOTU IR po prostu nie wstawia
+poprawnego CIP — geometrię trzeba znać a-priori, NIE parsować z nagłówka.
+
+### Struktura pakietu IR
+
+| Typ | Rozmiar | Zawartość |
+|-----|---------|-----------|
+| DATA | **520 bajtów** | 8 (nagłówek) + 8 bloków × 16 quad × 4 B = 8 + 512 |
+| EMPTY | **8 bajtów** | sam nagłówek `0d040400 22ffffff`, 0 bloków |
+
+**DBS=16, 8 bloków danych/pakiet** ✅ (zgodne z kanonem `MOTU_828_MK3_FACTS.md`).
+
+### Blok danych IR = 16 quadletów (64 bajty)
 
 ```
-tx_fixed_pcm_chunks (MOTU→host) = {18, 18, 12}  @ 1x/2x/4x
-DBS_IR = 1 + DIV_ROUND_UP((2+18)×3, 4) = 1 + 15 = 16
+quad 0  (bajty 0-3)   = SPH (MOTU timestamp, ten sam format co IT — patrz wyżej)
+quad 1+ (bajty 4-63)  = 60 bajtów = 20 chunków × 3 bajty = 2 MSG + 18 PCM
 ```
-18 kanałów PCM: 8 Analog In + 2 S/PDIF + 2 Phones + ADAT (disabled: nie dotyczy) + 6 digi.
-Dokładna mapa slotów IR (który wejście analogowe = który numer slotu) — **nieznana bez capture**.
+`1 + DIV_ROUND_UP((2+18)×3, 4) = 1 + 15 = 16` ✅. **18 kanałów PCM** (NIE 16 — to potwierdza,
+że dice „Quick Fix" `kRxPcmChannels=16` powinien być **18**; El Capitan negocjował 18-kanałowy IR,
+ALSA `arecord` zaakceptował tylko `-c 18`).
 
-### Plan capture IR ground truth
+### Potwierdzenie: dane są ŻYWE (nie idle)
 
-Wymagany sprzęt: **Access Virus TI** (dostępny) → MOTU Analog In 1 → sinus 440 Hz.
+- **SPH rośnie i jest zsynchronizowany z zegarem**: sphCyc 1706→3706→5665→7665 (zawija na 8000),
+  `aheadHw=-5` względem `ReadCycleTime()` → realny zegar urządzenia, nie placeholder.
+- **Sloty PCM niosą realny sygnał**: pierwsze pakiety `s0=00001e s1=fffffa s2=fffffc …`
+  (szum dna ~±0x25, 24-bit signed), potem `000000` gdy nic nie grało na wejściu. Realne nagrywanie.
 
-Metoda:
-1. Odczytać MOTU TX channel z `ISOC_COMM_CONTROL` bits[21:16] (`kTxChannelShift=16`)
-2. Dodać 2. pasywny IR context w snoop branchu na tym kanale
-3. Puścić sinus 440 Hz z Virus TI na jedno wejście analogowe MOTU
-4. Zidentyfikować niezerowy slot w IR stream → mapa kanałów
+> 📌 **Korekta wcześniejszej hipotezy (2026-06-19):** „DBC=0 na stałe = MOTU nie nadaje / idle"
+> było **BŁĘDNE**. MOTU nadaje pełne, żywe dane IR — tyle że DBC-byte w (niestandardowym) nagłówku
+> jest zawsze 0, a nagłówek jest stały. To normalne dla IR MOTU, nie oznaka idle.
 
-Technicznie: ~2h do brancha `snoop-mode`. Warunek: El Cap aktywnie streamuje do MOTU (IT musi być aktywne).
+### Konsekwencje dla dekodera dice (root cause „ZTS timed out")
+
+`RxAudioPacketProcessor::ProcessPacket` woła `CIPHeader::Decode(q0,q1)` które **wymaga EOH1=1**.
+Dla IR (`Q1=0x22ffffff`, EOH1=0) → `nullopt` → `kInvalidRange` → **każdy pakiet IR odrzucony** →
+ZTS nigdy nie publikuje → timeout `0xe00002d6`. Offset (`payload+8`, isochHeader=1) był **poprawny
+cały czas** — bug to wyłącznie walidacja standardowego CIP na niestandardowym nagłówku IR.
+
+**Fix (dice):** dla IR nie walidować/parsować standardowego CIP. Użyć stałego DBS=16, pominąć
+8-bajtowy nagłówek, dekodować 8 bloków (każdy: SPH 4B → pomiń 2 MSG chunki (6B) → 18 PCM × 3B),
+wziąć SPH bloku[0] jako timestamp do ZTS.
+
+### Mapa slotów IR (który wejście = który slot PCM) — WCIĄŻ DO ZEBRANIA
+
+Ten capture był z **cichym/szumowym** wejściem (nic nie wpięte). Żeby zmapować 18 slotów IR na
+fizyczne wejścia, potrzeba **znanego sygnału** (np. Virus TI sinus 440 Hz → MOTU Analog In 1) i
+identyfikacji niezerowego slotu — analogicznie do mapy slotów IT (CueMix, wyżej). Metoda jak w
+nagłówku tej sekcji, tylko z wpiętym sygnałem.
 
 ### Dlaczego IR jest priorytetem
 
 Wejścia są **feature blokującym** — workflow = nagrywanie syntezatorów (Virus TI + inne).
 Bez zmapowanych slotów IR nie można poprawnie zdekodować audio z wejść MOTU.
-IR pipeline do wdrożenia po naprawieniu IT (slot PCM fix).
