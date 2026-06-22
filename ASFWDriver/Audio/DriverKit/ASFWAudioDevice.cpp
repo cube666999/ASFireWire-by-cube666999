@@ -299,7 +299,10 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
         // AudioDriverKit needs a valid clock anchor when StartIO transitions
         // the device into the running state. The hardware ZTS action executes
         // on its dedicated queue, so it can publish while this work queue waits.
-        constexpr uint32_t kInitialHardwareZtsTimeoutMs = 500;
+        // MOTU V3 can take up to ~3 s to lock its PLL and begin IR transmission after
+        // FETCH_PCM. 500 ms was too short (mirrors working main driver Fix 19: SYT gate
+        // 500 ms → 3000 ms). The wait exits immediately once the hardware ZTS is published.
+        constexpr uint32_t kInitialHardwareZtsTimeoutMs = 3000;
         uint32_t ztsWaitMs = 0;
         while (ivars.runtime.lastHalZeroTimestampHostTicks.load(
                    std::memory_order_acquire) == 0 &&

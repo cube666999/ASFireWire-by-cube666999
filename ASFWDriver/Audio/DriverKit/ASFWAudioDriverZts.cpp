@@ -180,12 +180,24 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
     while (nextPacketToPrepare < targetPacketIndex &&
            preparedCount < maxToPrepare) {
         ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
-        timing.replayValid = true;
+        // Before IR replay is established: send DATA with zero PCM so MOTU V3
+        // starts IR. Without DATA packets MOTU ignores CIP-header-only IT and
+        // never begins streaming → replay never arrives → deadlock.
+        timing.replayValid = false; // use blocking cadence until replay active
+        timing.txClockValid = false; // SYT=0xFFFF until replay provides timing
         timing.disposition =
             ASFW::Protocols::Audio::AMDTP::
-                AmdtpPacketDisposition::NoData;
+                AmdtpPacketDisposition::Data;
 
         if (allowRecoveredClock) {
+            // Replay path overrides the pre-replay defaults set above:
+            // replayValid=true so replayDataBlocks drives frame count, and
+            // NoData is the default until replay confirms dataBlocks != 0.
+            timing.replayValid = true;
+            timing.disposition =
+                ASFW::Protocols::Audio::AMDTP::
+                    AmdtpPacketDisposition::NoData;
+
             int64_t packetAnchorTicks = 0;
             if (!ivars.runtime.txExecutionTimeline.AnchorForPacket(
                     nextPacketToPrepare, packetAnchorTicks)) {
@@ -335,12 +347,16 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
     // still be delayed. A lead-only prefill can therefore be consumed before
     // the producer gets its first turn. Steady state still targets completion
     // + kTxPreparationLeadPackets.
+    //
+    // MOTU V3 requires DATA IT packets (not CIP-header-only) to start its IR
+    // stream. Use cadence-driven DATA with zero PCM (txClockValid=false →
+    // SYT=0xFFFF) so MOTU starts IR before replay is established.
     ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
-    timing.replayValid = true;
-    timing.txClockValid = false;
+    timing.replayValid = false; // use blocking cadence, not replay count
+    timing.txClockValid = false; // SYT=0xFFFF (no-info) until clock locked
     timing.disposition =
         ASFW::Protocols::Audio::AMDTP::
-            AmdtpPacketDisposition::NoData;
+            AmdtpPacketDisposition::Data;
 
     uint32_t prepared = 0;
     for (uint64_t packetIndex = 0;
@@ -354,7 +370,7 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
     }
 
     ASFW_LOG(DirectAudio,
-             "ADK DBG TX prefill seeded %u/%u committed NO-DATA packets before isoch start (steadyLead=%u)",
+             "ADK DBG TX prefill seeded %u/%u committed DATA/silence packets before isoch start (steadyLead=%u)",
              prepared,
              numSlots,
              ASFW::IsochTransport::AudioTimingGeometry::

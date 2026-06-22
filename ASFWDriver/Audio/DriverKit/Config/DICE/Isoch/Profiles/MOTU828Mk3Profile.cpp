@@ -13,10 +13,16 @@ namespace {
 constexpr uint32_t kMotuVendorId = 0x0001F2;
 
 // PCM channel counts at 48 kHz, from the El Capitan wire ground-truth capture
-// (diagnostics/elcap_groundtruth/README.md, main branch):
-//   host->device (IT, playback/output): len=424 -> DBS=13 -> 14 PCM slots
-//   device->host (IR, capture/input):   len=520 -> DBS=16 -> 18 PCM slots
+// (MOTU_V3_WIRE_GROUNDTRUTH.md, main branch — confirmed by Linux tracepoint +
+// El Cap snoop):
+//   host->device (IT, playback/output): 424 B DATA -> DBS=13 -> 14 PCM slots
+//   device->host (IR, capture/input):   520 B DATA -> DBS=16 -> 18 PCM slots
 // Tx == host->device, Rx == device->host.
+//
+// MOTU V3 packs PCM as 24-bit (3 bytes), NOT 4-byte AM824 slots: each 52-byte
+// data block = SPH(4) + MSG(6 = 2x3) + PCM(42 = 14x3). So channel count (14) is
+// NOT dbs-1; the SPH quadlet does not consume a PCM channel. Keep 14 (matches
+// MOTUVendorProtocol::BuildRuntimeCaps and MOTU_828_MK3_FACTS.md canon).
 constexpr uint32_t kTxPcmChannels = 14; // host->device (playback / IT)
 // QUICK FIX: kRxPcmChannels set to kRxDbs (16) instead of real PCM count (18).
 // Reason: RxAudioPacketProcessor has an AM824 geometry check:
@@ -40,17 +46,28 @@ void FillDefaultStreamConfig(DiceStreamConfig& outConfig,
     outConfig.sampleRate = 48000;
     outConfig.streamMode = Encoding::StreamMode::kBlocking;
     outConfig.sid = 0;
-    if (direction == DiceStreamDirection::HostToDevice) {
-        outConfig.pcmChannels = kTxPcmChannels;
-        outConfig.dbs = kTxDbs;
-    } else {
-        outConfig.pcmChannels = kRxPcmChannels;
-        outConfig.dbs = kRxDbs;
-    }
     outConfig.midiSlots = 0;
     outConfig.framesPerDataPacket = 8;
     outConfig.fdf = 0x02;
     outConfig.fmt = 0x10;
+    if (direction == DiceStreamDirection::HostToDevice) {
+        outConfig.pcmChannels = kTxPcmChannels;
+        outConfig.dbs = kTxDbs;
+        // MOTU V3 IT, from wire ground-truth (MOTU_V3_WIRE_GROUNDTRUTH.md) —
+        // CIP Q1 on the wire is 0x8222ffff (byte-for-byte from El Cap snoop +
+        // Linux tracepoint):
+        //   CIP Q0 byte2 = 0x04 -> SPH=1 (first quadlet of each data block is
+        //                                 the MOTU Source Packet Header).
+        //   CIP Q1 byte4 = 0x82 -> EOH=1, FMT=0x02 (MOTU's vendor format, NOT
+        //                          the standard AM824 FMT=0x10).
+        //   CIP Q1 byte5 = 0x22 -> FDF=0x22 (NOT the 0x02 spec default).
+        outConfig.sph = true;
+        outConfig.fmt = 0x02;
+        outConfig.fdf = 0x22;
+    } else {
+        outConfig.pcmChannels = kRxPcmChannels;
+        outConfig.dbs = kRxDbs;
+    }
 }
 
 } // namespace
@@ -67,6 +84,14 @@ DiceDeviceQuirks MOTU828Mk3Profile::Quirks() const noexcept {
     DiceDeviceQuirks quirks{};
     quirks.tx.hostToDevicePcmEncoding = Encoding::AudioWireFormat::kAM824;
     quirks.tx.dbsPolicy = DbsPolicy::Constant;
+    // MOTU V3 emits IR only after it receives IT. Start IT immediately rather
+    // than deferring it behind IR replay (which would deadlock). See
+    // DiceTxQuirks::startTxBeforeRxReplay and main DevLog "Fix II".
+    quirks.tx.startTxBeforeRxReplay = true;
+    // MOTU starts IR the instant it sees FETCH_PCM_FRAMES — host IR DMA must be
+    // running first. Start host RX before device ProgramRx/ProgramTx (matches
+    // working main MOTUAudioBackend StartReceive→ISOC→FETCH order).
+    quirks.tx.startHostReceiveBeforeDeviceProgram = true;
     quirks.rx.deviceToHostPcmEncoding = Encoding::AudioWireFormat::kAM824;
     quirks.rx.dbsPolicy = DbsPolicy::Constant;
     return quirks;

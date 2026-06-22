@@ -199,6 +199,16 @@ private:
     uint64_t prevAnchorHostTicks_{0};
     bool prevAnchorValid_{false};
 
+    // v31 DIAG (temporary): unconditional IR liveness counters to decide
+    // whether MOTU is transmitting IR at all. Remove after diagnosis.
+    uint64_t diagPollCalls_{0};
+    uint64_t diagDrainedTotal_{0};
+
+    // v35 DIAG (temporary): dump raw payload bytes + ProcessPacket status for
+    // the first few rejected packets, to see exactly why CIP decode/geometry
+    // is failing post-isochHeader fix. Remove after diagnosis.
+    uint64_t diagRejectCount_{0};
+
     Registers GetRegisters(uint8_t index) const;
 };
 
