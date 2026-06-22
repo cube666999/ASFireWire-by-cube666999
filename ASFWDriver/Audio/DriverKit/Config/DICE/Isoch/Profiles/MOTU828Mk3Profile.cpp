@@ -24,16 +24,14 @@ constexpr uint32_t kMotuVendorId = 0x0001F2;
 // NOT dbs-1; the SPH quadlet does not consume a PCM channel. Keep 14 (matches
 // MOTUVendorProtocol::BuildRuntimeCaps and MOTU_828_MK3_FACTS.md canon).
 constexpr uint32_t kTxPcmChannels = 14; // host->device (playback / IT)
-// QUICK FIX: kRxPcmChannels set to kRxDbs (16) instead of real PCM count (18).
-// Reason: RxAudioPacketProcessor has an AM824 geometry check:
-//   `cip->dataBlockSize < channels` → 16 < 18 → kInvalidRange on every MOTU IR packet.
-// MOTU V3 packs 18 PCM + 2 MSG into 15 payload slots + 1 SPH = DBS=16.
-// In AM824, channels == DBS (1 channel per slot). For MOTU V3, channels > DBS
-// because 3-byte packing allows more channels per slot — the check is wrong.
-// Setting kRxPcmChannels = DBS = 16 bypasses the check; CoreAudio sees 16 inputs.
-// TODO (MOTU_V3_DICE_TODO.md Bug 1): restore to 18 after implementing DecodeMOTUV3Frame
-// and removing the AM824 geometry assumption from RxAudioPacketProcessor.
-constexpr uint32_t kRxPcmChannels = 16; // QUICK FIX: should be 18 — see TODO above
+// device->host (IR): 18 PCM, from El Cap wire ground-truth (confirmed 2026-06-22:
+// El Capitan negotiated an 18-channel IR stream; ALSA arecord accepted only -c 18).
+// MOTU V3 packs 18 PCM + 2 MSG into a DBS=16 data block as 3-byte chunks (NOT
+// 4-byte AM824 slots), so channels (18) > DBS (16). The standard AM824 geometry
+// check no longer applies: IR is decoded via AudioWireFormat::kMotuV3Packed
+// (RxAudioPacketProcessor MOTU path + DecodeMotuV3Frame), set in
+// DiceDuplexRestartCoordinator for this vendor. See MOTU_V3_WIRE_GROUNDTRUTH.md.
+constexpr uint32_t kRxPcmChannels = 18; // device->host PCM (was 16 quick-fix)
 
 // Data block size in quadlets, El Cap ground-truth (IT=13, IR=16).
 constexpr uint32_t kTxDbs = 13;
@@ -92,7 +90,11 @@ DiceDeviceQuirks MOTU828Mk3Profile::Quirks() const noexcept {
     // running first. Start host RX before device ProgramRx/ProgramTx (matches
     // working main MOTUAudioBackend StartReceive→ISOC→FETCH order).
     quirks.tx.startHostReceiveBeforeDeviceProgram = true;
-    quirks.rx.deviceToHostPcmEncoding = Encoding::AudioWireFormat::kAM824;
+    // MOTU V3 IR is NOT standard AM824 — fixed non-standard CIP header + 3-byte
+    // packed PCM. Decoded via the kMotuV3Packed path. (Note: the active RX format
+    // is currently selected in DiceDuplexRestartCoordinator by vendor id; this
+    // mirrors that for profile-driven consumers.)
+    quirks.rx.deviceToHostPcmEncoding = Encoding::AudioWireFormat::kMotuV3Packed;
     quirks.rx.dbsPolicy = DbsPolicy::Constant;
     return quirks;
 }

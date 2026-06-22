@@ -8,8 +8,6 @@
 #include "../../Hardware/RegisterMap.hpp"
 #include "../../Diagnostics/Signposts.hpp"
 
-#include <cstdio>
-#include <cstring>
 #include <utility>
 
 namespace ASFW::Isoch {
@@ -178,12 +176,6 @@ void IsochReceiveContext::Stop() {
         return;
     }
 
-    // v31 DIAG (temporary): final IR liveness summary before teardown.
-    ASFW_LOG(Isoch,
-             "IR DIAG STOP polls=%llu drainedTotal=%llu finalCtl=0x%08x",
-             diagPollCalls_, diagDrainedTotal_,
-             hardware_ ? hardware_->Read(registers_.ContextControlSet) : 0u);
-
     hardware_->Write(registers_.ContextControlClear, Driver::ContextControl::kRun);
 
     const uint32_t contextMask = 1u << contextIndex_;
@@ -302,75 +294,6 @@ uint32_t IsochReceiveContext::Poll() {
                 result.status ==
                     AudioEngine::Direct::Rx::
                         DirectRxWriteStatus::kInvalidBinding;
-            if (!packetAccepted && diagRejectCount_ < 8 &&
-                pkt.actualLength >= 40) {
-                ++diagRejectCount_;
-                constexpr uint16_t kDumpLen = 40;
-                char hex[3 * kDumpLen + 1] = {0};
-                for (uint16_t i = 0; i < kDumpLen; ++i) {
-                    static const char* kDigits = "0123456789abcdef";
-                    hex[i * 3]     = kDigits[(pkt.payload[i] >> 4) & 0xF];
-                    hex[i * 3 + 1] = kDigits[pkt.payload[i] & 0xF];
-                    hex[i * 3 + 2] = ' ';
-                }
-                ASFW_LOG(Isoch,
-                         "IR DIAG reject#%llu status=%u actualLength=%u bytes=%{public}s",
-                         diagRejectCount_,
-                         static_cast<uint32_t>(result.status),
-                         pkt.actualLength,
-                         hex);
-
-                // v36 DIAG (temporary): scan candidate offsets 4..28 for a
-                // valid CIP EOH0=0/EOH1=1 pair, both as raw big-endian bytes
-                // (matching the validated IT ground-truth methodology) and
-                // as native-order (no swap) loads, to settle where the real
-                // CIP header sits relative to the OHCI-added isochHeader
-                // prefix. Remove after diagnosis.
-                char scan[256] = {0};
-                size_t scanLen = 0;
-                for (uint16_t off = 4; off + 8 <= kDumpLen && off <= 28;
-                     off += 1) {
-                    const uint8_t* p = pkt.payload + off;
-                    const uint32_t q0be =
-                        (static_cast<uint32_t>(p[0]) << 24) |
-                        (static_cast<uint32_t>(p[1]) << 16) |
-                        (static_cast<uint32_t>(p[2]) << 8) | p[3];
-                    const uint32_t q1be =
-                        (static_cast<uint32_t>(p[4]) << 24) |
-                        (static_cast<uint32_t>(p[5]) << 16) |
-                        (static_cast<uint32_t>(p[6]) << 8) | p[7];
-                    const uint32_t eoh0 = (q0be >> 31) & 1u;
-                    const uint32_t eoh1 = (q1be >> 31) & 1u;
-                    if (eoh0 == 0 && eoh1 == 1) {
-                        const uint32_t dbs = (q0be >> 16) & 0xFFu;
-                        const uint32_t fmt = (q1be >> 24) & 0x3Fu;
-                        const uint32_t fdf = (q1be >> 16) & 0xFFu;
-                        const uint32_t syt = q1be & 0xFFFFu;
-                        char entry[80];
-                        const int n = snprintf(
-                            entry, sizeof(entry),
-                            "[off=%u dbs=%u fmt=0x%02x fdf=0x%02x syt=0x%04x] ",
-                            off, dbs, fmt, fdf, syt);
-                        if (n > 0 &&
-                            scanLen + static_cast<size_t>(n) <
-                                sizeof(scan)) {
-                            memcpy(scan + scanLen, entry,
-                                   static_cast<size_t>(n));
-                            scanLen += static_cast<size_t>(n);
-                        }
-                    }
-                }
-                if (scanLen == 0) {
-                    ASFW_LOG(Isoch,
-                             "IR DIAG reject#%llu scan: no offset 4..28 has valid EOH0=0/EOH1=1",
-                             diagRejectCount_);
-                } else {
-                    ASFW_LOG(Isoch,
-                             "IR DIAG reject#%llu scan candidates: %{public}s",
-                             diagRejectCount_,
-                             scan);
-                }
-            }
             if (!packetAccepted) {
                 ResetReplayEpochForDiscontinuity();
             } else {
@@ -688,16 +611,6 @@ uint32_t IsochReceiveContext::Poll() {
                       callbackTimestamp);
         }
     });
-
-    // v31 DIAG (temporary): decide MOTU-silent vs dice-not-draining.
-    ++diagPollCalls_;
-    diagDrainedTotal_ += processed;
-    if (diagPollCalls_ <= 3 || (diagPollCalls_ % 64) == 0 || processed > 0) {
-        ASFW_LOG(Isoch,
-                 "IR DIAG poll#%llu processed=%u drainedTotal=%llu ctl=0x%08x",
-                 diagPollCalls_, processed, diagDrainedTotal_,
-                 hardware_ ? hardware_->Read(registers_.ContextControlSet) : 0u);
-    }
 
     rxLock_.clear(std::memory_order_release);
     return processed;

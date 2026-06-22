@@ -108,6 +108,12 @@ enum class StreamMode : uint8_t {
 enum class AudioWireFormat : uint8_t {
     kAM824 = 0,
     kRawPcm24In32 = 1,
+    // MOTU 828 MK3 V3 device->host (IR): fixed NON-standard 8-byte header
+    // (0d040400 22ffffff, EOH1=0 — not a valid IEC 61883 CIP), then 8 data
+    // blocks of DBS=16 quadlets, each = SPH(4B) + 2 MSG chunks + 18 PCM chunks
+    // (3-byte big-endian, NOT 4-byte AM824 slots). PCM starts at block byte
+    // offset 10. See main repo MOTU_V3_WIRE_GROUNDTRUTH.md §"IR ground truth".
+    kMotuV3Packed = 2,
 };
 
 } // namespace ASFW::Encoding

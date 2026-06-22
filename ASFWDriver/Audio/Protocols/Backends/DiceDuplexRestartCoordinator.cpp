@@ -1389,6 +1389,12 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
         session.runtimeCaps.deviceToHostAm824Slots == 9) {
         rxWireFormat = Encoding::AudioWireFormat::kRawPcm24In32;
     }
+    // MOTU V3 device->host (IR) uses a fixed non-standard header (0d040400
+    // 22ffffff, EOH1=0) and 3-byte-packed PCM — not standard CIP/AM824. Decode
+    // via the dedicated MOTU path. See MOTU_V3_WIRE_GROUNDTRUTH.md (main repo).
+    if (record.vendorId == DeviceProtocolFactory::kMotuVendorId) {
+        rxWireFormat = Encoding::AudioWireFormat::kMotuV3Packed;
+    }
     const uint32_t rxAm824Slots = session.runtimeCaps.deviceToHostAm824Slots;
     const Encoding::AudioWireFormat wireFormat =
         ResolveDicePlaybackWireFormat(record, session.runtimeCaps);
