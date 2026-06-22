@@ -302,7 +302,13 @@ kern_return_t IsochService::StartPreparedTransmit() {
     if (!isochTransmitContext_) {
         return kIOReturnNotReady;
     }
-    if (isochReceiveContext_ &&
+    // Devices like MOTU V3 only begin IR transmission once they receive IT
+    // packets, so deferring IT behind IR replay would deadlock. For those
+    // (startTxBeforeReplay_), fall through to an immediate IT start — the
+    // prefilled NO-DATA packets give the device the IT cadence it needs to
+    // start IR, after which ZTS/replay establishes. See main DevLog "Fix II".
+    if (!startTxBeforeReplay_ &&
+        isochReceiveContext_ &&
         isochReceiveContext_->GetState() ==
             ASFW::Isoch::IRPolicy::State::Running &&
         !isochReceiveContext_->IsReplayEstablished()) {
@@ -313,7 +319,9 @@ kern_return_t IsochService::StartPreparedTransmit() {
         return kIOReturnSuccess;
     }
     txStartPending_ = false;
-    ASFW_LOG(Isoch, "IsochService: Starting prepared IT (Direct-Only)");
+    ASFW_LOG(Isoch,
+             "IsochService: Starting prepared IT (Direct-Only) startTxBeforeReplay=%d",
+             startTxBeforeReplay_ ? 1 : 0);
     return isochTransmitContext_->Start();
 }
 
@@ -352,14 +360,17 @@ kern_return_t IsochService::ReservePlaybackResources(uint64_t guid,
             done.store(true, std::memory_order_release);
         });
     if (!WaitForIRMResult(done, status, kIRMReserveTimeoutMs)) {
-        ASFW_LOG_ERROR(Isoch,
-            "IsochService: IRM playback alloc FAILED ch=%u bw=%u status=%u",
-            channel, bandwidthUnits,
-            static_cast<unsigned>(status.load(std::memory_order_acquire)));
-        return kIOReturnNoResources;
+        // Non-fatal: MOTU pre-claims its channels via the bus protocol before the
+        // host driver starts; local IRM sees them as already taken. Log and continue —
+        // the device uses fixed channels 0/1 regardless of our software IRM state.
+        // Upstream DICE branch removed IRM allocation entirely for the same reason.
+        ASFW_LOG_WARNING(Isoch,
+            "IsochService: IRM playback alloc skipped ch=%u bw=%u (channel pre-claimed, continuing)",
+            channel, bandwidthUnits);
+    } else {
+        reservedIrmClient_ = &irmClient;
+        ASFW_LOG(Isoch, "IsochService: IRM playback reserved ch=%u bw=%u", channel, bandwidthUnits);
     }
-    reservedIrmClient_ = &irmClient;
-    ASFW_LOG(Isoch, "IsochService: IRM playback reserved ch=%u bw=%u", channel, bandwidthUnits);
 #else
     (void)irmClient;
 #endif
@@ -385,14 +396,13 @@ kern_return_t IsochService::ReserveCaptureResources(uint64_t guid,
             done.store(true, std::memory_order_release);
         });
     if (!WaitForIRMResult(done, status, kIRMReserveTimeoutMs)) {
-        ASFW_LOG_ERROR(Isoch,
-            "IsochService: IRM capture alloc FAILED ch=%u bw=%u status=%u",
-            channel, bandwidthUnits,
-            static_cast<unsigned>(status.load(std::memory_order_acquire)));
-        return kIOReturnNoResources;
+        ASFW_LOG_WARNING(Isoch,
+            "IsochService: IRM capture alloc skipped ch=%u bw=%u (channel pre-claimed, continuing)",
+            channel, bandwidthUnits);
+    } else {
+        reservedIrmClient_ = &irmClient;
+        ASFW_LOG(Isoch, "IsochService: IRM capture reserved ch=%u bw=%u", channel, bandwidthUnits);
     }
-    reservedIrmClient_ = &irmClient;
-    ASFW_LOG(Isoch, "IsochService: IRM capture reserved ch=%u bw=%u", channel, bandwidthUnits);
 #else
     (void)irmClient;
 #endif

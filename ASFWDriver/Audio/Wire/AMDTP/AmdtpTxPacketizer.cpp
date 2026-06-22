@@ -67,7 +67,7 @@ bool AmdtpTxPacketizer::Configure(const AmdtpStreamConfig& streamConfig,
     cipConfig.dbs = config.dbs;
     cipConfig.fn = 0;
     cipConfig.qpc = 0;
-    cipConfig.sph = false;
+    cipConfig.sph = config.sph;
     cipConfig.fmt = config.fmt;
     cipConfig.fdf = config.fdf;
     cipConfig.noDataFdf =

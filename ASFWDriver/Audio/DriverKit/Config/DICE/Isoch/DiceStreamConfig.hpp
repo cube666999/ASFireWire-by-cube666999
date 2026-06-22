@@ -30,6 +30,10 @@ struct DiceStreamConfig final {
     uint8_t framesPerDataPacket{8};
     uint8_t fdf{0x02};
     uint8_t fmt{0x10};
+
+    // IEC 61883-6 Source Packet Header: when true, each data block starts with
+    // a 4-byte SPH quadlet counted within DBS. Required by MOTU V3.
+    bool sph{false};
 };
 
 } // namespace ASFW::Isoch::Audio::DICE

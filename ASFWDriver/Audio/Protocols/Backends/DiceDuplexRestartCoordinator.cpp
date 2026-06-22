@@ -1455,6 +1455,36 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
                                       DiceRestartFailureCause::kGlobalClockLock);
     }
 
+    // Host IR DMA start, factored out so MOTU-class devices can run it BEFORE
+    // device ProgramRx/ProgramTx (quirk startHostReceiveBeforeDeviceProgram).
+    // MOTU begins IR transmission the instant it sees FETCH_PCM_FRAMES and needs
+    // the host RX context already running; pure DICE keeps the post-program order.
+    auto startHostReceive = [&]() -> IOReturn {
+        const kern_return_t startReceiveStatus =
+            hostTransport_.StartPreparedReceive();
+        if (startReceiveStatus != kIOReturnSuccess) {
+            return rollbackToFailure(startReceiveStatus,
+                                     DiceRestartPhase::kStartingHostReceive,
+                                     DiceRestartFailureCause::kStartReceive);
+        }
+        if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+            return rollbackToInvalidation(kIOReturnAborted,
+                                          DiceRestartPhase::kStartingHostReceive,
+                                          DiceRestartFailureCause::kStartReceive);
+        }
+        SetSessionPhase(session, DiceRestartPhase::kStartingHostReceive);
+        session.hostReceiveStarted = true;
+        StoreSession(session);
+        return kIOReturnSuccess;
+    };
+
+    if (startReceiveBeforeProgram_) {
+        const IOReturn earlyRx = startHostReceive();
+        if (earlyRx != kIOReturnSuccess) {
+            return earlyRx;
+        }
+    }
+
     const auto programRx = WaitForAsyncResult<DiceDuplexStageResult>(
         [&](auto callback) { diceProtocol.ProgramRx(std::move(callback)); },
         kSyncBridgeTimeoutMs,
@@ -1505,24 +1535,15 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
     // the already-allocated host isoch channels.
     IOSleep(2);
 
-    // RX first: the device needs to be receiving before it can lock its TX
-    // clock. Starting IT before IR causes the DICE PLL to see TX without
-    // a valid RX reference, leading to timing instability.
-    const kern_return_t startReceiveStatus =
-        hostTransport_.StartPreparedReceive();
-    if (startReceiveStatus != kIOReturnSuccess) {
-        return rollbackToFailure(startReceiveStatus,
-                                 DiceRestartPhase::kStartingHostReceive,
-                                 DiceRestartFailureCause::kStartReceive);
+    // RX first: pure DICE needs the host RX context running before host TX so
+    // the device PLL has a valid RX reference. MOTU-class devices already
+    // started RX before device program (startReceiveBeforeProgram_); skip here.
+    if (!startReceiveBeforeProgram_) {
+        const IOReturn lateRx = startHostReceive();
+        if (lateRx != kIOReturnSuccess) {
+            return lateRx;
+        }
     }
-    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
-        return rollbackToInvalidation(kIOReturnAborted,
-                                      DiceRestartPhase::kStartingHostReceive,
-                                      DiceRestartFailureCause::kStartReceive);
-    }
-    SetSessionPhase(session, DiceRestartPhase::kStartingHostReceive);
-    session.hostReceiveStarted = true;
-    StoreSession(session);
 
     const kern_return_t startTransmitStatus =
         hostTransport_.StartPreparedTransmit();

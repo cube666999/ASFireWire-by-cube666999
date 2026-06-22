@@ -82,6 +82,14 @@ public:
                                           uint32_t bandwidthUnits);
 
     void StopAll();
+
+    // When true, StartPreparedTransmit starts IT immediately instead of
+    // deferring it until the IR replay/cadence is established. Required by
+    // devices (MOTU V3) that only begin IR transmission once they receive IT
+    // packets — deferring would deadlock. Sourced from the device profile's
+    // DiceTxQuirks::startTxBeforeRxReplay. See StartPreparedTransmit().
+    void SetStartTxBeforeReplay(bool enabled) noexcept { startTxBeforeReplay_ = enabled; }
+
     void SetTimingLossCallback(TimingLossCallback callback) noexcept;
     void SetTxPreparationCallback(TxPreparationCallback callback) noexcept;
     void SetZtsAnchorReadyCallback(ZtsAnchorReadyCallback callback) noexcept;
@@ -163,6 +171,7 @@ private:
     TxPreparationCallback txPreparationCallback_{};
     ZtsAnchorReadyCallback ztsAnchorReadyCallback_{};
     bool txStartPending_{false};
+    bool startTxBeforeReplay_{false};
     uint32_t interruptInterval_{8};
 
     struct ReservedDuplexResources {

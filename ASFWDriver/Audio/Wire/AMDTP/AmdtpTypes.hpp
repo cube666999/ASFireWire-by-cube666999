@@ -34,6 +34,10 @@ struct AmdtpStreamConfig final {
 
     uint8_t framesPerDataPacket{8};
     uint32_t maxPacketBytes{512};
+
+    // IEC 61883-6 §6.2 Source Packet Header: when true, each data block starts
+    // with a 4-byte SPH quadlet (included in DBS count). Required by MOTU V3.
+    bool sph{false};
 };
 
 struct AmdtpTxPolicy final {

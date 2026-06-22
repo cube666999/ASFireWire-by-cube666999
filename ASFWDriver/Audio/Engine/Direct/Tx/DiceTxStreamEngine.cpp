@@ -16,6 +16,7 @@ AMDTP::AmdtpStreamConfig DiceStreamConfigMapper::ToAmdtpConfig(
     config.fmt = diceConfig.fmt;
     config.fdf = diceConfig.fdf;
     config.framesPerDataPacket = diceConfig.framesPerDataPacket;
+    config.sph = diceConfig.sph;
     // maxPacketBytes keeps the AmdtpStreamConfig default (512), matching the
     // lab slot capacity and the ASFW IT ring payload budget.
     return config;

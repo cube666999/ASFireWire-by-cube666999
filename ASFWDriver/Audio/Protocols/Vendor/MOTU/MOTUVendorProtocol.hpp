@@ -71,9 +71,18 @@ private:
     static constexpr uint32_t kAddrBase  = 0xF0000000u;
 
     // Register offsets
-    static constexpr uint32_t kIsocCtrlOff    = 0x0b00u; // ISOC_COMM_CONTROL
-    static constexpr uint32_t kPacketFmtOff   = 0x0b10u; // PACKET_FORMAT
-    static constexpr uint32_t kClockStatusOff = 0x0b14u; // CLOCK_STATUS
+    static constexpr uint32_t kIsocCtrlOff      = 0x0b00u; // ISOC_COMM_CONTROL
+    static constexpr uint32_t kStreamCtrlOff    = 0x0b04u; // V3 stream control (El Cap writes 0xffc10001 every init)
+    static constexpr uint32_t kPacketFmtOff     = 0x0b10u; // PACKET_FORMAT
+    static constexpr uint32_t kClockStatusOff   = 0x0b14u; // CLOCK_STATUS
+    static constexpr uint32_t kRoutePortConfOff = 0x0c04u; // ROUTE_PORT_CONF (El Cap leaves 0x00000100)
+
+    // Ground-truth init values (El Capitan wire snoop, confirmed in working main MOTUAudioBackend).
+    // These device-facing register writes are what makes MOTU V3 actually begin IR transmission;
+    // dice previously omitted 0x0b04/0x0c04 and wrote the wrong PACKET_FORMAT (0xc2) → MOTU silent.
+    static constexpr uint32_t kStreamCtrlInit   = 0xffc10001u; // 0x0b04 init value
+    static constexpr uint32_t kPacketFmtValue   = 0x00000002u; // 0x0b10: S400 only, NO exclude-differed (El Cap WIRE SNOOP = oracle; main MOTUAudioBackend.cpp:327. BringUp.md's 0xC2 is stale kext-disasm.)
+    static constexpr uint32_t kRoutePortConf    = 0x00000100u; // 0x0c04 value
 
     // ISOC_COMM_CONTROL bits — MOTU perspective: RX = host→MOTU (IT), TX = MOTU→host (IR)
     static constexpr uint32_t kIsocMask          = 0xFFFF0000u;
@@ -83,11 +92,6 @@ private:
     static constexpr uint32_t kChangeTxIsocState = 0x00800000u;
     static constexpr uint32_t kTxIsocActivated   = 0x00400000u;
     static constexpr uint8_t  kTxChannelShift    = 16u; // deviceToHost channel
-
-    // PACKET_FORMAT bits
-    static constexpr uint32_t kTxExcludeDiffered = 0x00000080u;
-    static constexpr uint32_t kRxExcludeDiffered = 0x00000040u;
-    static constexpr uint8_t  kSpeedS400         = 0x2u;
 
     // CLOCK_STATUS bits (MOTU V3, ref Linux motu-protocol-v3.c)
     static constexpr uint32_t kFetchPCMFrames = 0x02000000u; // write-only command bit, not status

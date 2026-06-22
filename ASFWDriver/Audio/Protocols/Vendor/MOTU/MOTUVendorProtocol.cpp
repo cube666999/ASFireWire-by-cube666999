@@ -67,12 +67,26 @@ void MOTUVendorProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
              channels_.deviceToHostIsoChannel,
              channels_.hostToDeviceIsoChannel);
 
-    // Write PACKET_FORMAT: S400 speed, exclude differed data in both directions.
-    const uint32_t pktFmt = kTxExcludeDiffered | kRxExcludeDiffered | kSpeedS400;
-    if (!WriteReg(kPacketFmtOff, pktFmt)) {
+    // Ground-truth device init (El Capitan wire snoop, mirrors working main MOTUAudioBackend):
+    // the official Apple driver writes these every init *before* stream setup. Without them a
+    // freshly power-cycled MOTU never begins IR transmission. All device-facing — no host data path.
+
+    // 0x0b04 — V3 stream control. Official driver writes 0xffc10001 each init; non-fatal.
+    if (!WriteReg(kStreamCtrlOff, kStreamCtrlInit)) {
+        ASFW_LOG_WARNING(Audio, "MOTUVendorProtocol: PrepareDuplex 0x0b04 write failed (non-fatal)");
+    }
+
+    // PACKET_FORMAT (0x0b10) = 0x00000002 — S400 only, NO exclude-differed flags.
+    // (El Cap ground-truth: 0xc2 with the exclude flags shifts the device's channel positions.)
+    if (!WriteReg(kPacketFmtOff, kPacketFmtValue)) {
         ASFW_LOG_ERROR(Audio, "MOTUVendorProtocol: PrepareDuplex PACKET_FORMAT write failed");
         callback(kIOReturnIOError, {});
         return;
+    }
+
+    // ROUTE_PORT_CONF (0x0c04) = 0x00000100 — official driver leaves this set; non-fatal.
+    if (!WriteReg(kRoutePortConfOff, kRoutePortConf)) {
+        ASFW_LOG_WARNING(Audio, "MOTUVendorProtocol: PrepareDuplex ROUTE_PORT_CONF write failed (non-fatal)");
     }
 
     const FW::Generation gen = busInfo_.GetGeneration();
@@ -86,28 +100,49 @@ void MOTUVendorProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
 }
 
 void MOTUVendorProtocol::ProgramRx(StageCallback callback) {
-    // Activate MOTU's RX side (host→MOTU = IT direction).
-    // MOTU ISOC_COMM_CONTROL: set kChangeRxIsocState | kRxIsocActivated | channel.
+    // Program ISOC_COMM_CONTROL: activate BOTH MOTU isoch directions in one transition.
+    //   RX (MOTU side) = host→MOTU = IT = hostToDevice channel
+    //   TX (MOTU side) = MOTU→host = IR = deviceToHost channel
+    //
+    // ⚠️ Two-step deactivate→activate is REQUIRED, not optional. MOTU V3 will NOT begin IR
+    // transmission from a single activate write even with the correct value — it must see the
+    // deactivate→activate transition. Confirmed on hardware in the working main driver (Fix 19):
+    // seq=0 (MOTU silent) persisted with a correct 0xC1C00000 activate alone, and only adding a
+    // prior deactivate (+settle) made IR packets flow. A power-cycle does NOT substitute for it.
+    // Device-facing protocol only — host data path (DMA) untouched.
     uint32_t ctrl = 0;
     if (!ReadReg(kIsocCtrlOff, ctrl)) {
         ASFW_LOG_ERROR(Audio, "MOTUVendorProtocol: ProgramRx read ISOC_CTRL failed");
         callback(kIOReturnIOError, {});
         return;
     }
+    const uint32_t lowerBits = ctrl & ~kIsocMask; // keep MOTU's lower-word status bits
 
-    ctrl &= ~kIsocMask;
-    ctrl |= kChangeRxIsocState | kRxIsocActivated;
-    ctrl |= static_cast<uint32_t>(channels_.hostToDeviceIsoChannel) << kRxChannelShift;
+    // Deactivate both (Change=1, Activated=0), then let the MOTU state machine settle.
+    const uint32_t deactivate = lowerBits | kChangeRxIsocState | kChangeTxIsocState;
+    if (!WriteReg(kIsocCtrlOff, deactivate)) {
+        ASFW_LOG_ERROR(Audio, "MOTUVendorProtocol: ProgramRx deactivate write failed");
+        callback(kIOReturnIOError, {});
+        return;
+    }
+    IOSleep(20);
 
-    if (!WriteReg(kIsocCtrlOff, ctrl)) {
-        ASFW_LOG_ERROR(Audio, "MOTUVendorProtocol: ProgramRx write ISOC_CTRL failed");
+    // Activate both directions with their channels.
+    const uint32_t activate = lowerBits
+        | kChangeRxIsocState | kRxIsocActivated
+        | (static_cast<uint32_t>(channels_.hostToDeviceIsoChannel) << kRxChannelShift)
+        | kChangeTxIsocState | kTxIsocActivated
+        | (static_cast<uint32_t>(channels_.deviceToHostIsoChannel) << kTxChannelShift);
+    if (!WriteReg(kIsocCtrlOff, activate)) {
+        ASFW_LOG_ERROR(Audio, "MOTUVendorProtocol: ProgramRx activate write failed");
         callback(kIOReturnIOError, {});
         return;
     }
 
     ASFW_LOG(Audio,
-             "MOTUVendorProtocol: ProgramRx itCh=%u ISOC_CTRL=0x%08x",
-             channels_.hostToDeviceIsoChannel, ctrl);
+             "MOTUVendorProtocol: ProgramRx deactivate=0x%08x activate=0x%08x (itCh=%u irCh=%u)",
+             deactivate, activate,
+             channels_.hostToDeviceIsoChannel, channels_.deviceToHostIsoChannel);
 
     const DICE::DiceDuplexStageResult result{
         .generation  = busInfo_.GetGeneration(),
@@ -119,24 +154,10 @@ void MOTUVendorProtocol::ProgramRx(StageCallback callback) {
 }
 
 void MOTUVendorProtocol::ProgramTxAndEnableDuplex(StageCallback callback) {
-    // Activate MOTU's TX side (MOTU→host = IR direction) and enable PCM fetch.
-    uint32_t ctrl = 0;
-    if (!ReadReg(kIsocCtrlOff, ctrl)) {
-        ASFW_LOG_ERROR(Audio, "MOTUVendorProtocol: ProgramTx read ISOC_CTRL failed");
-        callback(kIOReturnIOError, {});
-        return;
-    }
-
-    ctrl |= kChangeTxIsocState | kTxIsocActivated;
-    ctrl |= static_cast<uint32_t>(channels_.deviceToHostIsoChannel) << kTxChannelShift;
-
-    if (!WriteReg(kIsocCtrlOff, ctrl)) {
-        ASFW_LOG_ERROR(Audio, "MOTUVendorProtocol: ProgramTx write ISOC_CTRL failed");
-        callback(kIOReturnIOError, {});
-        return;
-    }
-
-    // Write CLOCK_STATUS: set kFetchPCMFrames to start the MOTU stream.
+    // ISOC_COMM_CONTROL (both directions) is already fully programmed in ProgramRx via the
+    // required deactivate→activate transition. Here we only set CLOCK_STATUS kFetchPCMFrames,
+    // which is the gate that triggers MOTU V3 to begin IR transmission (mirrors main step 7,
+    // FETCH_PCM before host StartTransmit).
     uint32_t clk = 0;
     if (!ReadReg(kClockStatusOff, clk)) {
         ASFW_LOG_ERROR(Audio, "MOTUVendorProtocol: ProgramTx read CLOCK_STATUS failed");
@@ -151,8 +172,8 @@ void MOTUVendorProtocol::ProgramTxAndEnableDuplex(StageCallback callback) {
     }
 
     ASFW_LOG(Audio,
-             "MOTUVendorProtocol: ProgramTx irCh=%u ISOC_CTRL=0x%08x CLK=0x%08x",
-             channels_.deviceToHostIsoChannel, ctrl, clk);
+             "MOTUVendorProtocol: ProgramTx FETCH_PCM set CLK=0x%08x (irCh=%u)",
+             clk, channels_.deviceToHostIsoChannel);
 
     const DICE::DiceDuplexStageResult result{
         .generation  = busInfo_.GetGeneration(),
