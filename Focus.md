@@ -29,47 +29,35 @@ Archiwum ukończonych sesji → `DevLog.md`
 
 ---
 
-## ⚡ AKTUALNY STAN — ROOT CAUSE ZNALEZIONY (2026-06-22): IR MOTU używa NIE-standardowego CIP
+## ⚡ AKTUALNY STAN — ✅ ZTS NAPRAWIONY (v117, 2026-06-22): MOTU startuje, StartIO OK
 
-> **Przełom przez snoop działającego El Capitan.** Pełna analiza + dowody:
-> `../ASFireWire/documentation/MOTU_V3_WIRE_GROUNDTRUTH.md` §„✅ IR ground truth — ZEBRANE".
-> Raw: `../ASFireWire/documentation/raw-captures/2026-06-22_el_capitan_snoop_IR_ch34_device-to-host.txt`.
+> **PRZEŁOM.** Po v9–v117 — `ZTS timed out` zniknął, `StartIO` przechodzi, duplex wstaje.
+> Fix `585ea7f` (dice-motu, pushnięty). Pełny opis → DevLog 2026-06-22.
 >
-> ### 🔑 Root cause „ZTS timed out 0xe00002d6"
-> Nagłówek IR (device→host) z MOTU to **stałe `0d040400 22ffffff`** — **NIE jest standardowym CIP**:
-> `Q1=0x22ffffff` ma bit31 (EOH1) = **0**. Nasz `RxAudioPacketProcessor::ProcessPacket` woła
-> `CIPHeader::Decode(q0,q1)` które **wymaga EOH1=1** → `nullopt` → `kInvalidRange` → **każdy pakiet
-> IR odrzucony** → ZTS nigdy nie publikuje → timeout.
+> ### Dowód z hardware (v117)
+> ```
+> DICE DUPLEX START ... rxFmt=2 (kMotuV3Packed)   ← nowa ścieżka aktywna
+> IR: ... Arming direct Rx ... inCh=18             ← 18 kanałów IR
+> Core audio hardware ZTS ready sampleFrame=1536   ← ZTS PUBLIKUJE
+> StartIO initial hardware ZTS ... waitMs=23       ← 23 ms (było: timeout 3000 ms)
+> StartIO super::StartIO ok / DUPLEX ready rxStarted=1 txStarted=1 hasIn=1 hasOut=1
+> streams input(active=1 channels=18 bits=24) output(active=1 channels=14 bits=32)
+> ```
+> Zero `ZTS timed out`, zero `StartIO failed`. C++ testy 1114/1114.
 >
-> Potwierdzone **3 niezależnymi stosami**: snoop El Capitan ch=34 (offset 0), nasz dice procesor
-> (offset 8, isochHeader=1), Linux ALSA tracepoint. Wszystkie widzą ten sam stały nagłówek →
-> **nasz offset `payload+8` / isochHeader=1 był poprawny cały czas** (v34 był słuszny). Bug to
-> WYŁĄCZNIE walidacja standardowego CIP na niestandardowym nagłówku IR MOTU.
+> ### Co naprawiono (root cause)
+> Nagłówek IR MOTU to stałe `0d040400 22ffffff` (EOH1=0 → NIE standardowy CIP) → `CIPHeader::Decode`
+> odrzucał każdy pakiet → ZTS nie publikował. Fix = osobna ścieżka `kMotuV3Packed`
+> (`RxAudioPacketProcessor` + `DecodeMotuV3Frame`), stały DBS=16, 18 PCM (3-bajtowe chunki, offset 10),
+> ZTS z OHCI HW timestamp (isochHeader=1). `kRxPcmChannels` 16→18. Diag v31/v35/v36 usunięte.
 >
-> 📌 Wcześniejsza hipoteza „DBC=0=idle, MOTU nie nadaje" była **BŁĘDNA** — MOTU nadaje żywe dane
-> (SPH rośnie i synca z zegarem, PCM niesie realny sygnał/szum). Nagłówek IR jest po prostu stały.
->
-> ### Struktura IR (do dekodera)
-> - DATA pakiet = **520 B** = 8 (nagłówek `0d040400 22ffffff`) + **8 bloków × 16 quadletów**
-> - Blok = 64 B = **SPH(4B) + 2 MSG chunki + 18 PCM chunków** (×3B); **DBS=16, 18 PCM** (NIE 16!)
-> - SPH bloku = MOTU timestamp (ten sam format co IT) → źródło ZTS, jest prawdziwy ✅
->
-> ### 🔧 Fix do zaimplementowania (dice)
-> 1. **IR: nie walidować standardowego CIP** — nagłówek to stałe `0d040400 22ffffff`. Albo osobna
->    ścieżka dekodowania dla MOTU V3 IR, albo rozluźnić `CIPHeader::Decode` dla wireFormat MOTU V3.
-> 2. **Stały DBS=16** (nie z nagłówka); pomiń 8B nagłówek; dekoduj 8 bloków.
-> 3. Każdy blok: SPH(4B) → pomiń 2 MSG (6B) → 18 PCM × 3B.
-> 4. SPH bloku[0] → timestamp do ZTS (jak w `ExpandReceiveTimestamp`).
-> 5. **`kRxPcmChannels` 16 → 18** w `MOTU828Mk3Profile.cpp` (potwierdzone: El Capitan = 18-kanałowy IR).
->
-> ### 🧹 Sprzątanie przed fixem
-> - Usunąć DIAG `IR DIAG poll#…` (Poll/Stop) i `IR DIAG reject#…` + skan offsetów (v35/v36) z
->   [`IsochReceiveContext.cpp`](ASFWDriver/Isoch/Receive/IsochReceiveContext.cpp) i pole `diagRejectCount_`.
-> - v34 (`kRun|kWake|kIsochHeader` w `Start()`) **zostaje** — był poprawny (offset isochHeader=1).
->
-> ### ⏮️ Snoop dext na Tahoe — przywrócić dice
-> Tahoe ma teraz wgrany **snoop-mode v115** (architektura main, do capture). Po zakończeniu analizy
-> wgrać z powrotem dice (`~/Desktop/ASFW_dice_v36.app` lub nowy build z fixem) — ten sam bundle ID.
+> ### 🔬 NASTĘPNY KROK — weryfikacja jakości audio (Ty)
+> ZTS/StartIO działa, ale trzeba potwierdzić **słyszalność i poprawność**:
+> - **Output**: czy muzyka gra czysto z MOTU Main Out? (mapa slotów IT już potwierdzona)
+> - **Input**: nagraj coś z wejścia MOTU → czy sygnał jest na właściwym kanale, bez przesteru/szumu?
+>   Jeśli kanały pomieszane / zły poziom → **mapa slotów IR** (który fizyczny wejście = który z 18
+>   slotów) — do zebrania znanym sygnałem (Virus TI → Analog In 1), patrz MOTU_V3_WIRE_GROUNDTRUTH.md.
+> - Justyfikacja PCM (right-justified sign-extended, jak AM824) — zweryfikować że nie jest cicho/głośno.
 
 ### ⚠️ origin/DICE (mrmidi) jest 28 commitów przed nami — NIE scalone
 
@@ -165,9 +153,10 @@ Pełna lista: `git log --oneline dice-motu..origin/DICE`. Branch `DICE` (lokalny
 
 - ✅ **Bug A/C (SYT, v9)** — brama SYT zabijała IT (MOTU V3 wysyła `syt=0x0000`) → fallback w `IsochReceiveContext.cpp`.
 - ✅ **Bug B (geometry, v11)** — AM824 check `16<18` odrzucał IR → `kRxPcmChannels=16` w `MOTU828Mk3Profile.cpp`.
-- ⚠️ **Bug D (kWake, v12) — NIEPEŁNY, dokończony w v34** — Bug D dodał `kWake` (IR DMA startuje) ale
-  błędnie wyrzucił `kIsochHeader` → OHCI format niespójny z procesorem. v34: `kRun|kWake|kIsochHeader`
-  (`IsochReceiveContext.cpp:108`). Patrz AKTUALNY STAN.
+- ✅ **Bug D (kWake+isochHeader, v34)** — `Start()` = `kRun|kWake|kIsochHeader` (`IsochReceiveContext.cpp`).
+- ✅ **ZTS timeout / IR CIP (v117, `585ea7f`)** — IR MOTU ma niestandardowy nagłówek `0d040400 22ffffff`
+  (EOH1=0); osobna ścieżka `kMotuV3Packed` (DBS=16, 18 PCM, 3-bajtowe chunki) → ZTS publikuje (23 ms),
+  StartIO OK, duplex wstaje. Hardware-verified. Pełny opis → DevLog 2026-06-22.
 
 ---
 

@@ -7,6 +7,21 @@ Aktywny plan → `Focus.md`
 
 ## Sesja 2026-06-22 — ROOT CAUSE ZTS: IR MOTU używa niestandardowego nagłówka (przełom)
 
+### ✅ ROZWIĄZANE i ZWERYFIKOWANE NA HARDWARE (v117, commit `585ea7f`)
+Fix wdrożony — osobna ścieżka dekodowania `kMotuV3Packed`:
+- `AudioWireFormat::kMotuV3Packed` (nowy), wybierany dla vendora MOTU w `DiceDuplexRestartCoordinator`.
+- `RxAudioPacketProcessor`: pomija standardowy CIP, DBS=16, 8 bloków SPH(4B)+2 MSG+18 PCM(3B@offset 10),
+  `hasValidCip=true` → ZTS z OHCI HW timestamp (MOTU syt=0xFFFF, więc fallback nie SYT-cadence).
+- `DecodeMotuV3Frame`: 18× 3-bajtowe BE → right-justified sign-extended int32.
+- `kRxPcmChannels` 16→18. Diag v31/v35/v36 usunięte.
+
+**Dowód z logów v117:** `rxFmt=2`, `inCh=18`, `Core audio hardware ZTS ready sampleFrame=1536`,
+`StartIO initial hardware ZTS waitMs=23` (było: timeout 3000 ms), `StartIO super::StartIO ok`,
+`DUPLEX ready rxStarted=1 txStarted=1 hasIn=1 hasOut=1`, `streams input(channels=18 bits=24)
+output(channels=14 bits=32)`. Zero `ZTS timed out`/`StartIO failed`. C++ 1114/1114.
+
+**Następne:** weryfikacja słyszalności + mapa slotów IR (znany sygnał na wejściu) — patrz Focus.md.
+
 ### Ścieżka diagnostyczna (v34→v36)
 - **v34**: `Start()` = `kRun|kWake|kIsochHeader`. Potwierdzone na HW: `ctl=0x40008451` (bit30
   isochHeader aktywny), `drainedTotal=54569` — OHCI odbiera mnóstwo pakietów IR. Ale ZTS nadal
