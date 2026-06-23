@@ -10,17 +10,19 @@ Archiwum ukończonych sesji → `DevLog.md`
 
 1. **Uruchom `claude` z `ASFireWire-dice/`** (nie z `ASFireWire/`) — wtedy ten CLAUDE.md +
    indeks CodeGraph dice ładują się automatycznie. Zatwierdź MCP „codegraph" (opcja 2) jeśli pyta.
-2. **Zainstaluj świeży dext:** uruchom `~/Desktop/ASFW_dice_v34.app` (CFBundleVersion=**34**,
-   fix isochHeader IR — patrz „AKTUALNY STAN" niżej). Stare na Desktopie możesz usunąć.
-3. **POTWIERDŹ że biegnie NOWY kod** (krytyczne — patrz lekcja version-bump w DevLog):
+2. **Gałąź robocza = `integrate-dice-c2bdf11`** (NIE `dice-motu` — to fallback v117). Sprawdź:
    ```bash
-   systemextensionsctl list   # MUSI pokazać aktualną wersję [activated enabled]
+   git branch --show-current     # ma być integrate-dice-c2bdf11
+   git log --oneline -1          # 4d7927f (lub nowszy)
    ```
-   Jeśli pokazuje niższą wersję → upgrade się nie wykonał, NIE ufaj logom.
-4. **Dopiero wtedy** wznów debug poniżej. Logi (⚠️ `--predicate senderImagePath` NIE działa dla
-   dextu — używaj `grep "ASFWDriver.dext"`):
+3. **Aktualny stan: v119** — integracja upstream + TX-exposure działa, ale **brak dźwięku**
+   (enkoder IT = AM824, MOTU chce MOTU-packed). Następny krok i pełny kontekst → sekcja
+   „🟢 INTEGRACJA OK + TX EXPOSURE NAPRAWIONY" niżej.
+4. **Build hardware-test** (gdy zmienisz kod enkodera IT): `./build.sh --derived /tmp/ASFWBuild --clean --deploy`
+   (VERSION.txt już >119; macOS przyjmie). Potwierdź `systemextensionsctl list` = nowa wersja przed testem.
+5. Logi (⚠️ `grep "ASFWDriver.dext"`, NIE `--predicate senderImagePath`):
    ```bash
-   /usr/bin/log stream --debug --info 2>/dev/null | grep "ASFWDriver.dext" | grep -E "(IR DIAG|ZTS|IR|DMA|DICE|timed out)"
+   /usr/bin/log show --last 2m --debug --info 2>/dev/null | grep "ASFWDriver.dext" | grep -E "IT WIRE|maxAbs|zeroPcm|lastQuad|StartIO|ZTS"
    ```
 
 > ℹ️ **Infrastruktura naprawiona 2026-06-15:** version-bump (build.sh→`bump.sh patch`, sync pbxproj,
@@ -63,19 +65,37 @@ Archiwum ukończonych sesji → `DevLog.md`
 > **DECYZJA użytkownika 2026-06-22:** integrować origin/DICE (TX fix). To RE-PORT na Float32, nie
 > merge — patrz sekcja „🔴 NASTĘPNY DUŻY KROK" niżej z gotowym planem.
 
-### 🟡 INTEGRACJA WYKONANA — czeka na test hardware (gałąź `integrate-dice-c2bdf11`)
+### 🟢 INTEGRACJA OK + TX EXPOSURE NAPRAWIONY — zostaje enkoder IT (gałąź `integrate-dice-c2bdf11`)
 
-**Stan 2026-06-22:** merge `c2bdf11` zrobiony, build + testy OK, **`~/Desktop/ASFW_dice_v119.app`**
-zdeployowany — czeka na test na MOTU.
-- Gałąź: `integrate-dice-c2bdf11`, merge commit `fd26d6d` (2 rodziców: `2751ecf` dice-motu + `c2bdf11`).
-- **`dice-motu` (v117, ZTS fix `585ea7f`) NIETKNIĘTE** — fallback. Powrót: `git checkout dice-motu`.
-- 4 konflikty rozwiązane (coordinator: nasz `startReceiveBeforeProgram_` + ich teardown-guard;
-  .gitignore union; CLAUDE.md ours). Float32 re-port: `DecodeMotuV3Frame`+MOTU path → `float`
-  (`Signed24ToFloat32`). Build ✅, C++ testy 1089/1089. Bity MOTU zachowane (enum/coordinator/profil=18/v34).
-- **Test:** v119, Spotify przez MOTU, log filtr `PayloadWriter|written=|withoutPkt|maxAbs|ZTS|StartIO`.
-  Sukces = `written>0` + dźwięk. Jeśli `written>0` ale cisza → enkoder IT MOTU (warstwa 2, osobny fix).
-  Jeśli regresja ZTS → wróć na dice-motu.
-- **Po sukcesie:** merge `integrate-dice-c2bdf11` → `dice-motu`, push, opcjonalnie PR MOTU do mrmidi.
+**ZACZNIJ TU w nowej sesji.** Gałąź `integrate-dice-c2bdf11` (na forku `cube666`), v119.
+
+**Stan po teście hardware (2026-06-23):**
+- ✅ Integracja `c2bdf11` (merge `fd26d6d`): build OK, C++ 1089/1089, MOTU enumeruje (po **restarcie** —
+  pierwszy start dał flaky bus/ROM-scan, NIE regresja: warstwa async/ROM identyczna z v117), ZTS publikuje, StartIO OK.
+- ✅ **TX exposure NAPRAWIONY** przez upstream `4e1dbc9`: `IT WIRE maxAbs24=5.5M` (było 0 w v117),
+  `zeroPcm`≈150, `dropouts=0` → realne PCM leci na drut. Problem `written=0/withoutPkt` ZNIKNĄŁ.
+- ❌ **Cisza + brak diod MOTU** = ostatnie ogniwo: enkoder IT wysyła **AM824** (`lastQuad=0x40000000`),
+  a MOTU V3 IT oczekuje **MOTU-packed** (jak IR): blok = SPH(4B) + 2 MSG + **14 PCM 3-bajtowe @ offset 10**,
+  DBS=13, OS-stereo na slotach 0/1 (Main Out). MOTU nie rozpoznaje AM824 → nic nie gra.
+
+**🔧 NASTĘPNY KROK — enkoder IT MOTU-packed (= dźwięk):**
+1. Zbadać **nową ścieżkę TX z integracji** (upstream przepisał: `AmdtpPayloadWriter.cpp/.hpp`,
+   `TxTimingModel`, `TxAnchorTracker` zamiast naszego `AmdtpTxPacketizer`). Znaleźć gdzie PCM→drut
+   się koduje i jak wstrzyknąć format MOTU (analogicznie do `kMotuV3Packed` po stronie RX — osobna
+   ścieżka kluczowana na vendor/format MOTU).
+2. Zaimplementować pakowanie: SPH + 2 MSG + 14 PCM (3-bajtowe BE), PCM na byte offset 10, sloty 0/1=Main Out.
+3. Ground-truth IT → `../ASFireWire/documentation/MOTU_V3_WIRE_GROUNDTRUTH.md` (mapa slotów, CIP Q0=030d04xx/Q1=8222ffff).
+4. Build → test: czy **diody MOTU zapalają się** i **słychać**.
+
+**Topologia / fallbacki (oba na forku `cube666`):**
+- `integrate-dice-c2bdf11` @ `4d7927f` (v119) — AKTYWNA, integracja + TX-exposure, brak enkodera IT.
+- `dice-motu` @ `2751ecf` (v117, ZTS fix `585ea7f`) — fallback. Powrót: `git checkout dice-motu`.
+- Po dźwięku: merge `integrate-dice-c2bdf11` → `dice-motu` + opcjonalny PR MOTU do `origin/DICE`.
+
+**Discord (kontekst zespołu, 2026-06-23):** mrmidi **wypalony** („burned out, no motivation", #coding 19.06)
+— zespół (Chris Izatt/Alesis, lychzord/Midas Venice ma dźwięk!, alicankaralar/Venice PR#32) wspiera bez
+presji. Wysłaliśmy mrmidi wiadomość (#coding) z dobrymi wieściami (jego TX fix u nas zadziałał) + ofertą
+PR MOTU bez pośpiechu. **Ton wobec mrmidi: zero presji, wsparcie.**
 
 #### (kontekst) Dlaczego integracja — TX underexposure
 

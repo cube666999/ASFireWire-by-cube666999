@@ -5,6 +5,34 @@ Aktywny plan → `Focus.md`
 
 ---
 
+## Sesja 2026-06-23 — integracja origin/DICE (c2bdf11): TX exposure naprawiony, zostaje enkoder IT
+
+**Gałąź `integrate-dice-c2bdf11`** (od `dice-motu`), merge commit `fd26d6d` (2 rodziców: `2751ecf` + `c2bdf11`).
+
+### Co zrobione
+- Zbadano 66 commitów origin/DICE: 1–28 (do `c2bdf11`) = całe audio/TX/Float32/ZTS; 29–66 = SBP2+MCP
+  (niezwiązane). **Audio bajt-identyczne c2bdf11↔tip** → bazowano na `c2bdf11` (zero SBP2/MCP).
+- Merge: 4 konflikty (coordinator ×2: nasz `startReceiveBeforeProgram_` + ich teardown-guard; .gitignore union;
+  CLAUDE.md ours). Float32 re-port: `DecodeMotuV3Frame`+MOTU path → `float` (`Detail::Signed24ToFloat32`).
+- Build OK, C++ 1089/1089. Bity MOTU zachowane (enum/coordinator/profil=18/v34 Start).
+- ⚠️ `bump.sh` (z test-only) domknął merge pod nazwą „bump 0.2.118" w trakcie — naprawione `git commit --amend`.
+
+### Wynik testu hardware (v119)
+- Pierwszy start: MOTU nie enumerował — `ROMScan/BIB read failed`, `OnTimeout AwaitingAR ackCode=0x4`,
+  `S400→S200`. **Transient bus flake** (warstwa async/ROM identyczna z v117; merge tknął tylko
+  `ControllerCoreFacades.cpp` 1+/16-). **Restart Maca** naprawił → MOTU enumeruje.
+- ✅ **TX EXPOSURE NAPRAWIONY** (upstream `4e1dbc9`): `IT WIRE maxAbs24=5.5M` (v117 było 0),
+  `dropouts=0`, realne PCM na drucie. Bug `written=0/withoutPkt` zniknął.
+- ❌ **Cisza, brak diod MOTU**: enkoder IT = AM824 (`lastQuad=0x40000000`), MOTU V3 chce MOTU-packed.
+  → następny krok: enkoder IT MOTU-packed (SPH+2 MSG+14 PCM 3B@offset 10), patrz Focus.md.
+
+### Discord (kontekst)
+mrmidi **wypalony** (#coding 19.06: „burned out, no motivation"). Zespół wspiera bez presji
+(Chris Izatt/Alesis, lychzord/Midas Venice **ma dźwięk**, alicankaralar/Venice PR#32). Wysłano mrmidi
+wiadomość (#coding): jego TX fix u nas zadziałał + oferta PR MOTU bez pośpiechu. Ton: zero presji.
+
+---
+
 ## Sesja 2026-06-22 — ROOT CAUSE ZTS: IR MOTU używa niestandardowego nagłówka (przełom)
 
 ### ✅ ROZWIĄZANE i ZWERYFIKOWANE NA HARDWARE (v117, commit `585ea7f`)
