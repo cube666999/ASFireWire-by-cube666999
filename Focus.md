@@ -63,7 +63,21 @@ Archiwum ukończonych sesji → `DevLog.md`
 > **DECYZJA użytkownika 2026-06-22:** integrować origin/DICE (TX fix). To RE-PORT na Float32, nie
 > merge — patrz sekcja „🔴 NASTĘPNY DUŻY KROK" niżej z gotowym planem.
 
-### 🔴 NASTĘPNY DUŻY KROK — integracja origin/DICE (TX exposure fix) = RE-PORT, nie merge
+### 🟡 INTEGRACJA WYKONANA — czeka na test hardware (gałąź `integrate-dice-c2bdf11`)
+
+**Stan 2026-06-22:** merge `c2bdf11` zrobiony, build + testy OK, **`~/Desktop/ASFW_dice_v119.app`**
+zdeployowany — czeka na test na MOTU.
+- Gałąź: `integrate-dice-c2bdf11`, merge commit `fd26d6d` (2 rodziców: `2751ecf` dice-motu + `c2bdf11`).
+- **`dice-motu` (v117, ZTS fix `585ea7f`) NIETKNIĘTE** — fallback. Powrót: `git checkout dice-motu`.
+- 4 konflikty rozwiązane (coordinator: nasz `startReceiveBeforeProgram_` + ich teardown-guard;
+  .gitignore union; CLAUDE.md ours). Float32 re-port: `DecodeMotuV3Frame`+MOTU path → `float`
+  (`Signed24ToFloat32`). Build ✅, C++ testy 1089/1089. Bity MOTU zachowane (enum/coordinator/profil=18/v34).
+- **Test:** v119, Spotify przez MOTU, log filtr `PayloadWriter|written=|withoutPkt|maxAbs|ZTS|StartIO`.
+  Sukces = `written>0` + dźwięk. Jeśli `written>0` ale cisza → enkoder IT MOTU (warstwa 2, osobny fix).
+  Jeśli regresja ZTS → wróć na dice-motu.
+- **Po sukcesie:** merge `integrate-dice-c2bdf11` → `dice-motu`, push, opcjonalnie PR MOTU do mrmidi.
+
+#### (kontekst) Dlaczego integracja — TX underexposure
 
 **Dlaczego:** playback (wyjście IT) NIE gra mimo działającego ZTS. `[PayloadWriter]` log:
 `written=0 withoutPkt=visited maxAbs=0.0` → callback wyjścia odwiedza ramki, ale nie znajduje
