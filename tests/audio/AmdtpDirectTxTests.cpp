@@ -1,3 +1,5 @@
+#include "Audio/Engine/Direct/Tx/DiceTxStreamEngine.hpp"
+#include "Audio/Ports/IAmdtpTxSlotProvider.hpp"
 #include "Audio/Wire/AMDTP/AmdtpPacketTimeline.hpp"
 #include "Audio/Wire/AMDTP/AmdtpPayloadWriter.hpp"
 #include "Audio/Wire/AMDTP/AmdtpTxPacketizer.hpp"
@@ -6,11 +8,45 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 
 namespace {
 
 using namespace ASFW::Protocols::Audio::AMDTP;
+using ASFW::Protocols::Audio::DICE::DiceTxStreamEngine;
+using ASFW::Protocols::Audio::DICE::TxSlotPrepareResult;
+
+class TestTxSlotProvider final : public IAmdtpTxSlotProvider {
+public:
+    bool allowAcquire{false};
+    bool allowPublish{false};
+    std::array<uint8_t, 128> bytes{};
+
+    bool AcquireWritableSlot(
+        uint32_t packetIndex,
+        TxPacketSlotView& outSlot) noexcept override {
+        if (!allowAcquire) {
+            return false;
+        }
+        outSlot = {
+            .packetIndex = packetIndex,
+            .bytes = bytes.data(),
+            .capacityBytes =
+                static_cast<uint32_t>(bytes.size()),
+        };
+        return true;
+    }
+
+    bool PublishSlot(
+        const PreparedTxPacket&) noexcept override {
+        return allowPublish;
+    }
+
+    uint32_t SlotCount() const noexcept override {
+        return 1;
+    }
+};
 
 AmdtpStreamConfig BlockingStereoConfig() {
     AmdtpStreamConfig config{};
@@ -189,6 +225,29 @@ TEST(AmdtpDirectTxTests, PayloadWriterReadsMappedInt32RingDirectly) {
     EXPECT_EQ(dataBytes[15], 0x01);
 }
 
+TEST(AmdtpDirectTxTests, PayloadWriterCountsUnderExposureAtCallBoundary) {
+    AmdtpPacketTimeline timeline{};
+    std::array<PacketTimelineSlot, 4> timelineSlots{};
+    ASSERT_TRUE(timeline.AttachSlots(
+        timelineSlots.data(), timelineSlots.size()));
+
+    AmdtpPayloadWriter writer{};
+    writer.Configure(BlockingStereoConfig(), AmdtpTxPolicy{});
+    writer.BindTimeline(&timeline);
+
+    std::array<float, 16> mappedRing{};
+    writer.WriteFloat32Interleaved(
+        {mappedRing.data(), 0, 8, 8, 2}, 0);
+
+    const auto& counters = writer.Counters();
+    EXPECT_EQ(
+        counters.underExposureCalls.load(std::memory_order_relaxed), 1U);
+    EXPECT_EQ(
+        counters.underExposureFrames.load(std::memory_order_relaxed), 8U);
+    EXPECT_EQ(
+        counters.framesWithoutPacket.load(std::memory_order_relaxed), 8U);
+}
+
 TEST(AmdtpDirectTxTests, AlignFrameCursorIsAcceptedOnlyOncePerReset) {
     AmdtpTxPacketizer packetizer{};
 
@@ -226,6 +285,26 @@ TEST(AmdtpDirectTxTests, AlignFrameCursorIsAcceptedOnlyOncePerReset) {
 
     packetizer.Reset(0, 0);
     EXPECT_TRUE(packetizer.AlignFrameCursorOnce(3000U));
+}
+
+TEST(AmdtpDirectTxTests, TxEngineReportsPreparationFailureStage) {
+    DiceTxStreamEngine engine{};
+    AmdtpTimingState timing{};
+
+    EXPECT_EQ(
+        engine.PrepareNextTransmitSlot(192, timing),
+        TxSlotPrepareResult::kSlotProviderUnavailable);
+
+    TestTxSlotProvider provider{};
+    engine.BindSlotProvider(&provider);
+    EXPECT_EQ(
+        engine.PrepareNextTransmitSlot(192, timing),
+        TxSlotPrepareResult::kSlotAcquireFailed);
+
+    provider.allowAcquire = true;
+    EXPECT_EQ(
+        engine.PrepareNextTransmitSlot(192, timing),
+        TxSlotPrepareResult::kPacketizerRejected);
 }
 
 } // namespace

@@ -85,21 +85,6 @@ void CopyParsedConfigToDeviceState(const ASFW::Isoch::Audio::ParsedAudioDriverCo
     return kIOReturnSuccess;
 }
 
-void FillPcm24Format(IOUserAudioStreamBasicDescription& fmt,
-                     double sampleRate,
-                     uint32_t channels) noexcept {
-    fmt.mSampleRate = sampleRate;
-    fmt.mFormatID = IOUserAudioFormatID::LinearPCM;
-    fmt.mFormatFlags = static_cast<IOUserAudioFormatFlags>(
-        static_cast<uint32_t>(IOUserAudioFormatFlags::FormatFlagIsSignedInteger) |
-        static_cast<uint32_t>(IOUserAudioFormatFlags::FormatFlagsNativeEndian));
-    fmt.mBytesPerPacket = sizeof(int32_t) * channels;
-    fmt.mFramesPerPacket = 1;
-    fmt.mBytesPerFrame = sizeof(int32_t) * channels;
-    fmt.mChannelsPerFrame = channels;
-    fmt.mBitsPerChannel = 24;
-}
-
 void FillFloat32Format(IOUserAudioStreamBasicDescription& fmt,
                        double sampleRate,
                        uint32_t channels) noexcept {
@@ -243,7 +228,7 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
              ? "blocking" : "non-blocking");
 
     ASFW_LOG(Audio,
-             "ASFWAudioDriver: Forcing single advertised format: input=24-bit integer output=Float32");
+             "ASFWAudioDriver: Forcing single advertised format: input=Float32 output=Float32");
     ASFW_LOG(Audio,
              "ASFWAudioDriver: Effective runtime channels: input=%u output=%u aggregate=%u",
              ivars.device.inputChannelCount,
@@ -262,10 +247,18 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
         return kIOReturnNoMemory;
     }
 
-    // The init argument is the declared zero-timestamp period: the sample grid
-    // the HAL predicts anchors on and, for ADK stream buffers, the ring wrap.
-    // The maximum individual client IO transfer remains independently bounded.
+    // The init argument is the declared zero-timestamp period. Shared stream
+    // memory is sized separately by the selected HAL buffer profile.
+    constexpr auto bufferProfile =
+        ASFW::IsochTransport::kActiveAudioHalBufferProfile;
     const uint32_t target_period = ASFW::IsochTransport::AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
+    ASFW_LOG(
+        Audio,
+        "ASFWAudioDriver: HAL buffer profile=%{public}s ring=%u ioBudget=%u zts=%u",
+        bufferProfile.name,
+        bufferProfile.frameRingFrames,
+        bufferProfile.clientIoBudgetFrames,
+        bufferProfile.zeroTimestampPeriodFrames);
     ASFW_LOG(Audio, "ASFWAudioDriver: Creating IOUserAudioDevice with ZTS period target: %u frames", target_period);
 
     ivars.audioDevice = OSSharedPtr(OSTypeAlloc(ASFWAudioDevice), OSNoRetain);
@@ -316,12 +309,12 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     IOUserAudioStreamBasicDescription outputFormats[8] = {};
     const uint32_t formatCount = ivars.device.sampleRateCount > 8 ? 8 : ivars.device.sampleRateCount;
     for (uint32_t i = 0; i < formatCount; i++) {
-        FillPcm24Format(inputFormats[i], ivars.device.sampleRates[i], ivars.device.inputChannelCount);
+        FillFloat32Format(inputFormats[i], ivars.device.sampleRates[i], ivars.device.inputChannelCount);
         FillFloat32Format(outputFormats[i], ivars.device.sampleRates[i], ivars.device.outputChannelCount);
     }
 
     ASFW_LOG(Audio,
-             "ASFWAudioDriver: Created %u stream formats input=int24/%u ch output=float32/%u ch",
+             "ASFWAudioDriver: Created %u stream formats input=float32/%u ch output=float32/%u ch",
              formatCount,
              ivars.device.inputChannelCount,
              ivars.device.outputChannelCount);
@@ -384,19 +377,22 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
                  static_cast<uint32_t>(ivars.device.currentSampleRate));
         return kIOReturnBadArgument;
     }
-    if (directOutputFrames != target_period ||
-        directInputFrames != target_period) {
+    if (directOutputFrames != bufferProfile.frameRingFrames ||
+        directInputFrames != bufferProfile.frameRingFrames) {
         ASFW_LOG(
             Audio,
-            "ADK FATAL MEM ring/ZTS mismatch outFrames=%u inFrames=%u ztsPeriod=%u",
+            "ADK FATAL MEM ring/profile mismatch profile=%{public}s outFrames=%u inFrames=%u expectedRing=%u ztsPeriod=%u",
+            bufferProfile.name,
             directOutputFrames,
             directInputFrames,
+            bufferProfile.frameRingFrames,
             target_period);
         return kIOReturnBadArgument;
     }
     ASFW_LOG(
         Audio,
-        "ADK GRAPH state=stream-ring/ZTS outFrames=%u inFrames=%u ztsPeriod=%u",
+        "ADK GRAPH state=stream-ring/ZTS profile=%{public}s outFrames=%u inFrames=%u ztsPeriod=%u",
+        bufferProfile.name,
         directOutputFrames,
         directInputFrames,
         target_period);
@@ -655,24 +651,21 @@ kern_return_t BuildAudioGraph(ASFWAudioDriver& driver,
     }
 
     constexpr uint32_t kSchedulingJitterFrames = 64;
+    // Data-visibility margin only; the IO buffer size is NOT folded in (see
+    // RequiredInputSafetyFrames). This floors the profile's per-rate value
+    // (RxSafetyOffsetFrames) at one interrupt batch + jitter, never inflates it.
     const uint32_t requiredInputSafety =
         ASFW::Audio::RequiredInputSafetyFrames(
             inSafety,
-            outSafety,
-            ASFW::IsochTransport::AudioTimingGeometry::
-                kHalIoPeriodFrames,
             ASFW::IsochTransport::AudioTimingGeometry::
                 kMaximumNominalFramesPerInterrupt,
             kSchedulingJitterFrames);
     if (inSafety != requiredInputSafety) {
         ASFW_LOG(
             Audio,
-            "ASFWAudioDriver: raising input safety %u -> %u (output=%u maxIO=%u maxIRQFrames=%u jitter=%u)",
+            "ASFWAudioDriver: input safety %u -> %u (maxIRQFrames=%u jitter=%u)",
             inSafety,
             requiredInputSafety,
-            outSafety,
-            ASFW::IsochTransport::AudioTimingGeometry::
-                kHalIoPeriodFrames,
             ASFW::IsochTransport::AudioTimingGeometry::
                 kMaximumNominalFramesPerInterrupt,
             kSchedulingJitterFrames);

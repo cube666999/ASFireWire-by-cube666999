@@ -1,5 +1,4 @@
 #include "Audio/Config/InputSafetyPolicy.hpp"
-#include "Audio/Engine/Direct/Rx/ZtsFrameProjector.hpp"
 #include "Audio/Wire/AMDTP/RxSequenceReplay.hpp"
 #include "Shared/Isoch/AudioTimingGeometry.hpp"
 
@@ -14,7 +13,6 @@ namespace {
 using ASFW::Audio::Runtime::RxSequenceEntry;
 using ASFW::Audio::Runtime::RxSequenceReplayReader;
 using ASFW::Audio::Runtime::RxSequenceReplayState;
-using ASFW::AudioEngine::Direct::Rx::ZtsFrameProjector;
 using ASFW::IsochTransport::AudioTimingGeometry;
 
 TEST(RxDrivenTimingTests, SixCycleBlockingGroupsCoverEveryCadencePhase) {
@@ -66,30 +64,28 @@ TEST(RxDrivenTimingTests, RxRingWrapPreservesCadenceAndFramePhase) {
     EXPECT_EQ(absoluteFrame, 3096U);
 }
 
-TEST(RxDrivenTimingTests, ZtsGridAdvancesByDecodedFramesNotPacketCount) {
-    ZtsFrameProjector projector{192};
-    projector.Reset(0);
+TEST(RxDrivenTimingTests, ZtsGridIsObservedAtDataPacketStartWithoutProjection) {
+    constexpr std::array<uint32_t, 4> cadence{8, 8, 8, 0};
+    constexpr uint64_t period =
+        AudioTimingGeometry::kHalZeroTimestampPeriodFrames;
+    static_assert(period % AudioTimingGeometry::kCadenceBlockFrames == 0);
 
-    constexpr std::array<uint32_t, 12> interruptFrames{
-        40, 32, 40, 32, 40, 32, 40, 32, 40, 32, 40, 32};
-    std::vector<uint64_t> crossingInterrupts;
-    std::vector<uint64_t> crossingFrames;
-    for (uint64_t interrupt = 0; interrupt < interruptFrames.size();
-         ++interrupt) {
-        projector.Advance(
-            interruptFrames[interrupt],
-            [&](uint64_t frame, uint32_t frameOffset) {
-                crossingInterrupts.push_back(interrupt + 1);
-                crossingFrames.push_back(frame);
-                EXPECT_LE(frameOffset, interruptFrames[interrupt]);
-            });
+    uint64_t absoluteFrame = 0;
+    std::vector<uint64_t> observedFrames;
+    for (uint64_t packet = 0; observedFrames.size() < 2; ++packet) {
+        const uint32_t decodedFrames =
+            cadence[packet % cadence.size()];
+        if (decodedFrames != 0 &&
+            absoluteFrame != 0 &&
+            (absoluteFrame % period) == 0) {
+            observedFrames.push_back(absoluteFrame);
+        }
+        absoluteFrame += decodedFrames;
     }
 
-    ASSERT_EQ(crossingFrames.size(), 2U);
-    EXPECT_EQ(crossingFrames[0], 192U);
-    EXPECT_EQ(crossingFrames[1], 384U);
-    EXPECT_EQ(crossingInterrupts[0], 6U);
-    EXPECT_EQ(crossingInterrupts[1], 11U);
+    ASSERT_EQ(observedFrames.size(), 2U);
+    EXPECT_EQ(observedFrames[0], period);
+    EXPECT_EQ(observedFrames[1], 2 * period);
 }
 
 TEST(RxDrivenTimingTests, SytOffsetRoundTripsAcrossDifferentTransferDelays) {
@@ -200,18 +196,29 @@ TEST(RxDrivenTimingTests, GeometryUsesSixCycleInterruptsAndCurrentTxDepths) {
     EXPECT_EQ(AudioTimingGeometry::kRxPacketsPerGroup, 6U);
     EXPECT_EQ(AudioTimingGeometry::kTxPacketsPerGroup, 6U);
     EXPECT_EQ(AudioTimingGeometry::kMaximumNominalFramesPerInterrupt, 40U);
-    EXPECT_EQ(AudioTimingGeometry::kHalZeroTimestampPeriodFrames, 1536U);
+    EXPECT_EQ(
+        AudioTimingGeometry::kHalZeroTimestampPeriodFrames,
+        ASFW::IsochTransport::kActiveAudioHalBufferProfile
+            .zeroTimestampPeriodFrames);
     EXPECT_EQ(AudioTimingGeometry::kRxDescriptorPackets, 504U);
     EXPECT_EQ(AudioTimingGeometry::kTxHardwareRingPackets, 48U);
-    EXPECT_EQ(AudioTimingGeometry::kTxPreparationSlackPackets, 36U);
-    EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 84U);
-    EXPECT_EQ(AudioTimingGeometry::kTxSharedSlotPackets, 192U);
+    EXPECT_EQ(AudioTimingGeometry::kTxPreparationSlackPackets, 96U);
+    EXPECT_EQ(AudioTimingGeometry::kTxCoverageLeadPackets, 144U);
+    EXPECT_EQ(AudioTimingGeometry::kTxFrameExposureWindowPackets, 192U);
+    EXPECT_EQ(AudioTimingGeometry::kTxPreparationLeadPackets, 336U);
+    EXPECT_EQ(AudioTimingGeometry::kTxSharedSlotPackets, 384U);
 }
 
-TEST(RxDrivenTimingTests, InputSafetyCoversClientTransferAndInterruptBatch) {
-    EXPECT_EQ(
-        ASFW::Audio::RequiredInputSafetyFrames(128, 48, 512, 40, 64),
-        624U);
+TEST(RxDrivenTimingTests, InputSafetyIsVisibilityMarginNotClientWindow) {
+    // The IO buffer window must NOT inflate the safety offset (was 624). The
+    // margin is one interrupt batch + jitter (40+64=104), floored by the
+    // profile value and aligned up to the 32-frame grid.
+    //   profile floor 128 wins over the 104 batch -> 128.
+    EXPECT_EQ(ASFW::Audio::RequiredInputSafetyFrames(128, 40, 64), 128U);
+    //   no profile floor -> interrupt batch 104 aligned up to 128.
+    EXPECT_EQ(ASFW::Audio::RequiredInputSafetyFrames(0, 40, 64), 128U);
+    //   a larger profile floor is honored, aligned: 200 -> 224.
+    EXPECT_EQ(ASFW::Audio::RequiredInputSafetyFrames(200, 40, 64), 224U);
 }
 
 } // namespace

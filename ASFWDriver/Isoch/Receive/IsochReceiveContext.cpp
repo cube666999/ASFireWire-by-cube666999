@@ -148,7 +148,6 @@ kern_return_t IsochReceiveContext::Start() {
     Transition(IRPolicy::State::Running, 0, "Start");
     rxRing_.ResetForStart();
     absoluteFrameCursor_ = 0;
-    ztsProjector_.Reset(0);
     cursorInitialized_ = false;
     dbcInitialized_ = false;
     lastDbc_ = 0;
@@ -221,7 +220,7 @@ uint32_t IsochReceiveContext::Poll() {
                     directInputView_.memory.inputBase = snapshot.inputBase;
                     directInputView_.memory.inputFrameCapacity = snapshot.inputFrames;
                     directInputView_.memory.inputChannels = snapshot.inputChannels;
-                    directInputView_.memory.storage = ASFW::Audio::Runtime::AudioSampleStorage::kInt32Native;
+                    directInputView_.memory.storage = ASFW::Audio::Runtime::AudioSampleStorage::kFloat32Native;
                     directInputView_.control = snapshot.control;
                     directInputView_.deviceToHostAm824Slots = am824Slots_ > 0 ? am824Slots_ : snapshot.inputChannels;
                     directInputView_.hostToDeviceAm824Slots = snapshot.outputChannels;
@@ -253,6 +252,12 @@ uint32_t IsochReceiveContext::Poll() {
                              snapshot.sampleRateHz);
                     directInputWriter_.Unbind();
                     clockPublisher_.Unbind();
+                    // FW-62: drop the stale view so the non-null guard in
+                    // IsReplayEstablished() is meaningful. Unbind() only detaches the
+                    // writer/publisher; .control would otherwise dangle into freed
+                    // audio-owned memory. Re-arm the one-shot replay reset on rebind.
+                    directInputView_ = {};
+                    replayResetForStart_ = false;
                 }
                 lastDirectAudioGeneration_ = snapshot.generation;
             }
@@ -261,6 +266,9 @@ uint32_t IsochReceiveContext::Poll() {
                 ASFW_LOG(Isoch, "IR: direct audio binding cleared/unavailable. Disarming.");
                 directInputWriter_.Unbind();
                 clockPublisher_.Unbind();
+                // FW-62: see above — null the view so .control can't dangle.
+                directInputView_ = {};
+                replayResetForStart_ = false;
                 lastDirectAudioGeneration_ = 0;
             }
         }
@@ -279,11 +287,13 @@ uint32_t IsochReceiveContext::Poll() {
             const Rx::IsochRxDmaRing::CompletedPacket& pkt) {
         uint64_t callbackTimestamp = 0;
         if (pkt.payload) {
+            const uint64_t packetFirstAudioFrame =
+                absoluteFrameCursor_;
             const uint32_t channels = directInputView_.memory.inputChannels;
             const uint32_t slots = directInputView_.deviceToHostAm824Slots;
             const auto result = directProcessor_.ProcessPacket(pkt.payload,
                                                                pkt.actualLength,
-                                                               absoluteFrameCursor_,
+                                                               packetFirstAudioFrame,
                                                                channels,
                                                                slots,
                                                                wireFormat_);
@@ -427,7 +437,7 @@ uint32_t IsochReceiveContext::Poll() {
 
                     ASFW::Audio::Runtime::RxSequenceEntry replayEntry{};
                     replayEntry.firstAudioFrame =
-                        absoluteFrameCursor_;
+                        packetFirstAudioFrame;
                     replayEntry.sourceCycleTimer = rxTimestamp.cycleTimer;
                     replayEntry.dataBlocks =
                         static_cast<uint16_t>(result.framesDecoded);
@@ -533,37 +543,26 @@ uint32_t IsochReceiveContext::Poll() {
                         : static_cast<uint32_t>(
                               (1000000000ULL << 8) /
                               directInputView_.sampleRateHz);
-                ztsProjector_.Advance(
-                    result.framesDecoded,
-                    [&](uint64_t gridFrame,
-                        uint32_t framesFromPacketStart) {
-                        if (!rxClockEstablished ||
-                            packetReceiveHostTicks == 0 ||
-                            !clockPublisher_.IsBound() ||
-                            hostNanosPerSampleQ8 == 0) {
-                            return;
-                        }
-
-                        const uint64_t gridDeltaNanos =
-                            (static_cast<uint64_t>(
-                                 framesFromPacketStart) *
-                             hostNanosPerSampleQ8) >>
-                            8;
-                        const uint64_t gridHostTicks =
-                            packetReceiveHostTicks +
-                            ASFW::Timing::nanosToHostTicks(
-                                gridDeltaNanos);
-
-                        const auto publishResult =
-                            clockPublisher_.Publish(
-                                gridFrame,
-                                gridHostTicks,
-                                hostNanosPerSampleQ8);
-                        if (!publishResult.accepted) {
-                            ResetReplayEpochForDiscontinuity();
-                            return;
-                        }
-
+                constexpr uint64_t kZtsPeriodFrames =
+                    ASFW::IsochTransport::AudioTimingGeometry::
+                        kHalZeroTimestampPeriodFrames;
+                const bool observedZtsBoundary =
+                    result.framesDecoded != 0 &&
+                    kZtsPeriodFrames != 0 &&
+                    (packetFirstAudioFrame % kZtsPeriodFrames) == 0;
+                if (observedZtsBoundary &&
+                    rxClockEstablished &&
+                    packetReceiveHostTicks != 0 &&
+                    clockPublisher_.IsBound() &&
+                    hostNanosPerSampleQ8 != 0) {
+                    const auto publishResult =
+                        clockPublisher_.Publish(
+                            packetFirstAudioFrame,
+                            packetReceiveHostTicks,
+                            hostNanosPerSampleQ8);
+                    if (!publishResult.accepted) {
+                        ResetReplayEpochForDiscontinuity();
+                    } else {
                         ++rxZtsPublishCount_;
                         if (publishResult.notifyConsumer &&
                             ztsAnchorReadyCallback_) {
@@ -574,8 +573,8 @@ uint32_t IsochReceiveContext::Poll() {
 
                         Rx::ZtsTelemetryRecord rec{};
                         rec.publishCount = rxZtsPublishCount_;
-                        rec.sampleFrame = gridFrame;
-                        rec.hostTicks = gridHostTicks;
+                        rec.sampleFrame = packetFirstAudioFrame;
+                        rec.hostTicks = packetReceiveHostTicks;
                         rec.rawHostTicks = packetReceiveHostTicks;
                         rec.drainHostTicks = drainHostTicks;
                         rec.ageTicks = rxTimestamp.ageTicks;
@@ -598,9 +597,10 @@ uint32_t IsochReceiveContext::Poll() {
                                 ? Rx::ZtsEventKind::kSeed
                                 : Rx::ZtsEventKind::kUpdate);
                         ztsTelemetry_.Record(rec);
-                    });
+                    }
+                }
                 absoluteFrameCursor_ =
-                    ztsProjector_.AbsoluteFrame();
+                    packetFirstAudioFrame + result.framesDecoded;
             }
         }
 
@@ -661,8 +661,12 @@ void IsochReceiveContext::SetReplayReadyCallback(
 }
 
 bool IsochReceiveContext::IsReplayEstablished() const noexcept {
-    return directInputView_.control &&
-           directInputView_.control->rxSequenceReplay.IsEstablished();
+    // FW-62: this runs on the audio queue while .control is written/nulled on the RX
+    // queue (Poll, under rxLock_). Snapshot the pointer once — reading it twice risks a
+    // null-TOCTOU (check passes, deref nulls). NOTE: this does not fix use-after-free of
+    // a non-null-but-freed control block; that lifetime ownership is FW-63.
+    const auto* control = directInputView_.control;
+    return control != nullptr && control->rxSequenceReplay.IsEstablished();
 }
 
 void IsochReceiveContext::SetCallback(IsochReceiveCallback callback) {
@@ -795,51 +799,6 @@ void IsochReceiveContext::DrainZtsTelemetry(uint32_t maxRecords) {
     }
 }
 
-void IsochReceiveContext::DrainTxSytTelemetry(uint32_t maxRecords) {
-    auto* control = directInputView_.control;
-    if (control == nullptr) {
-        return;
-    }
-
-    const uint64_t dropped = control->txSytTelemetry.Drain(
-        maxRecords, [](const ASFW::Audio::Runtime::TxSytTelemetryRecord& r) {
-            // Full servo operand set per data-packet decision. flags bits:
-            // 0x1 seeded, 0x2 forceAdjust, 0x4 reseeded, 0x8 committed(data).
-            ASFW_LOG(
-                TxSyt,
-                "pkt=%llu flags=0x%02x health=%u anchor=%lld phasePre=%lld "
-                "phasePost=%lld recPhase=%lld rxFree=%lld pErr=%lld fErr=%lld "
-                "corr=%lld lead=%lld wire=%lld rollCad=%u pend=%u ridx=%u syt=0x%04x "
-                "tgtZts=%lld tgtDev=%lld tgtDiff=%lld",
-                r.packetIndex,
-                static_cast<unsigned>(r.flags),
-                static_cast<unsigned>(r.health),
-                r.packetAnchorTicks,
-                r.phaseTicksPre,
-                r.phaseTicksPost,
-                r.recoveredPhaseTicks,
-                r.rxPhaseDelayFree,
-                r.phaseError,
-                r.frameError,
-                r.correctionTicks,
-                r.leadTicks,
-                r.wireLeadTicks,
-                r.rollingCadenceTicks,
-                static_cast<unsigned>(r.pendingCadenceTicks),
-                static_cast<unsigned>(r.cadenceReadIndex),
-                static_cast<unsigned>(r.syt),
-                r.targetFromZts,
-                r.targetFromDevice,
-                r.targetFrameDiff);
-        });
-
-    if (dropped != 0) {
-        ASFW_LOG(TxSyt,
-                 "drain overflow: dropped=%llu (capacity=%u)",
-                 dropped, ASFW::Audio::Runtime::TxSytTelemetryRing::kCapacity);
-    }
-}
-
 void IsochReceiveContext::DrainPayloadWriterTelemetry(uint32_t maxRecords) {
     auto* control = directInputView_.control;
     if (control == nullptr) {
@@ -883,8 +842,21 @@ void IsochReceiveContext::DrainPayloadWriterTelemetry(uint32_t maxRecords) {
         return;
     }
 
+    // Basic TX flow is confirmed (under-exposure / Defect B closed, see tag
+    // tx-frame-exposure-lead). Keep draining the ring every tick so it never
+    // overflows, but only LOG a record when it shows an anomaly -- the happy
+    // path stays silent. A single [PayloadWriter] line in the log now means
+    // something is actually wrong.
     const uint64_t dropped = control->payloadWriterTelemetry.Drain(
         maxRecords, [](const ASFW::Audio::Runtime::PayloadWriterTelemetryRecord& r) {
+            const bool anomaly =
+                r.exposureDeficitFrames != 0 || r.withoutPacket != 0 ||
+                r.outsidePacket != 0 || r.racedReuse != 0 ||
+                r.wroteIntoTransmitted != 0 || r.written != r.visited;
+            if (!anomaly) {
+                return;
+            }
+
             const uint32_t cipQ0 = (static_cast<uint32_t>(r.lastReadPacketBytes[0]) << 24) |
                                    (static_cast<uint32_t>(r.lastReadPacketBytes[1]) << 16) |
                                    (static_cast<uint32_t>(r.lastReadPacketBytes[2]) << 8) |
@@ -904,15 +876,18 @@ void IsochReceiveContext::DrainPayloadWriterTelemetry(uint32_t maxRecords) {
 
             ASFW_LOG(
                 DirectAudio,
-                "[PayloadWriter] sampleTime=%llu frameCount=%u frameCapacity=%u completion=%llu exposedEnd=%llu "
+                "[PayloadWriter] sampleTime=%llu writeEnd=%llu frameCount=%u frameCapacity=%u completion=%llu exposedEnd=%llu deficit=%llu "
                 "visited=%llu written=%llu withoutPkt=%llu outsidePkt=%llu raced=%llu legacyTrans=%llu nonZero=%llu maxAbs=%f "
+                "underExpCalls=%llu underExpFrames=%llu "
                 "pbRead=%llu pbWrite=%llu outBase=0x%llx capRead=%llu capWrite=%llu inBase=0x%llx "
                 "lastReadPkt=%llu cip=%08x %08x pay=%08x %08x",
                 r.sampleTime,
+                r.writeEndFrame,
                 r.frameCount,
                 r.frameCapacity,
                 r.completionCursor,
                 r.exposedFrameEnd,
+                r.exposureDeficitFrames,
                 r.visited,
                 r.written,
                 r.withoutPacket,
@@ -921,6 +896,8 @@ void IsochReceiveContext::DrainPayloadWriterTelemetry(uint32_t maxRecords) {
                 r.wroteIntoTransmitted,
                 r.nonZeroFrames,
                 r.maxAbsSample,
+                r.underExposureCalls,
+                r.underExposureFrames,
                 r.playbackRingReadFrame,
                 r.playbackRingWriteFrame,
                 r.outputBaseAddr,
@@ -939,6 +916,38 @@ void IsochReceiveContext::DrainPayloadWriterTelemetry(uint32_t maxRecords) {
                  "[PayloadWriter] drain overflow: dropped=%llu (capacity=%u)",
                  dropped, ASFW::Audio::Runtime::PayloadWriterTelemetryRing::kCapacity);
     }
+}
+
+void IsochReceiveContext::LogTxSytTrace() {
+    auto* control = directInputView_.control;
+    if (control == nullptr) {
+        return;
+    }
+
+    ASFW::Audio::Runtime::TxSytTraceSample sample{};
+    uint64_t decisions = 0;
+    if (!control->txSytTrace.ReadLatest(sample, decisions)) {
+        return;
+    }
+
+    // tx = rx + delay, re-anchored to our transmit cycle: the txSyt offset
+    // within its cycle equals (sytOffDelayFree + txDelay) % 3072, and its cycle
+    // nibble is outCyc + carry. Surfaced so the replay phase is observed, not
+    // inferred.
+    ASFW_LOG(
+        TxSyt,
+        "obsCyc=%u rxSyt=0x%04x sytOffDelayFree=%u +txDelay=%u outCyc=%u "
+        "=> txSyt=0x%04x (cyc=%u off=0x%03x) pkt=%llu decisions=%llu",
+        sample.sourceCycle,
+        sample.observedRxSyt,
+        sample.sytOffsetDelayFree,
+        sample.txDelayTicks,
+        sample.outCycle,
+        sample.txSyt,
+        (static_cast<uint32_t>(sample.txSyt) >> 12) & 0x0Fu,
+        static_cast<uint32_t>(sample.txSyt) & 0x0FFFu,
+        sample.packetIndex,
+        decisions);
 }
 
 } // namespace ASFW::Isoch

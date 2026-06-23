@@ -10,8 +10,6 @@
 #include "../Engine/Direct/FireWireAudioEngine.hpp"
 #include "../Config/AudioTxProfiles.hpp"
 #include "../Engine/Direct/Tx/DiceTxStreamEngine.hpp"
-#include "../Wire/AMDTP/TxTimingModel.hpp"
-#include "../Wire/AMDTP/TxAnchorTracker.hpp"
 #include "../../Shared/Isoch/IsochAudioTransport.hpp"
 #include "../../Common/TimingUtils.hpp"
 
@@ -58,34 +56,6 @@ struct AudioDriverDeviceState {
 class DextTxExecutionTimeline final {
 public:
     const ASFW::IsochTransport::TxStreamControl* controlBlock{nullptr};
-
-    // Returns the raw callback phase from the most recent completion stamp,
-    // without projecting forward by packet distance. Used by TxAnchorTracker
-    // for Saffire-style continuity validation.
-    [[nodiscard]] bool RawCallbackPhase(uint64_t& outCompletedPacketIndex, int64_t& outPhase) const noexcept {
-        if (!controlBlock) {
-            return false;
-        }
-        const uint64_t count =
-            controlBlock->completionStampCount.load(std::memory_order_acquire);
-        if (count == 0) {
-            return false;
-        }
-        uint64_t completedPacketIndex = 0;
-        uint32_t timestamp = 0;
-        if (!controlBlock->ReadCompletionStamp(
-                count - 1, completedPacketIndex, timestamp)) {
-            return false;
-        }
-        outCompletedPacketIndex = completedPacketIndex;
-        const auto completed = ASFW::Timing::decodeCycleTimer(timestamp);
-        outPhase = ASFW::Timing::normalizeOffsetDomain(
-            ASFW::Timing::tstampToOffsets(completed.seconds,
-                                          completed.cycle %
-                                              ASFW::Timing::kCyclesPerSecond,
-                                          completed.offset));
-        return true;
-    }
 
     [[nodiscard]] bool AnchorForPacket(uint64_t packetIndex,
                                        int64_t& outTicks) const noexcept {
@@ -134,9 +104,13 @@ public:
     uint32_t slotStrideBytes{0};
     uint8_t isoChannel{0};
 
-    bool AcquireWritableSlot(uint32_t packetIndex,
-                             ASFW::Protocols::Audio::AMDTP::TxPacketSlotView& outSlot) noexcept override {
-        if (!payloadBase) return false;
+    bool AcquireWritableSlot(
+        uint32_t packetIndex,
+        ASFW::Protocols::Audio::AMDTP::TxPacketSlotView& outSlot)
+        noexcept override {
+        if (!payloadBase || numSlots == 0 || slotStrideBytes == 0) {
+            return false;
+        }
         const uint32_t slotIdx = packetIndex % numSlots;
         outSlot.packetIndex = packetIndex;
         outSlot.bytes = payloadBase + (slotIdx * slotStrideBytes);
@@ -144,8 +118,12 @@ public:
         return true;
     }
 
-    void PublishSlot(const ASFW::Protocols::Audio::AMDTP::PreparedTxPacket& packet) noexcept override {
-        if (!metadataRing || !controlBlock) return;
+    [[nodiscard]] bool PublishSlot(
+        const ASFW::Protocols::Audio::AMDTP::PreparedTxPacket& packet)
+        noexcept override {
+        if (!metadataRing || !controlBlock || numSlots == 0) {
+            return false;
+        }
         const uint32_t slotIdx = packet.packetIndex % numSlots;
         auto& meta = metadataRing[slotIdx];
 
@@ -179,6 +157,7 @@ public:
 
         // Expose cursor progress to core
         controlBlock->exposeCursor.store(packet.packetIndex + 1, std::memory_order_release);
+        return true;
     }
 
     uint32_t SlotCount() const noexcept override {
@@ -208,8 +187,6 @@ struct AudioDriverRuntimeState {
     std::atomic<bool> txActive{false};
 
     ASFW::Protocols::Audio::DICE::DiceTxStreamEngine txStreamEngine;
-    ASFW::Driver::TxTimingModel txTimingModel;
-    ASFW::Driver::TxAnchorTracker txAnchorTracker;
     ASFW::Audio::Runtime::RxSequenceReplayReader txReplayReader;
     DextTxSlotProvider txSlotProvider;
     DextTxExecutionTimeline txExecutionTimeline;
@@ -275,20 +252,22 @@ void TearDownAudioGraph(ASFWAudioDriver& driver,
 void ResetDeviceStateFromDefaultConfig(ASFWAudioDriver_IVars& ivars) noexcept;
 
 [[nodiscard]] ASFW::Audio::Runtime::ZtsMirrorPublishResult PublishSharedZeroTimestampToHAL(ASFWAudioDriver_IVars& ivars,
-                                                                                           uint64_t throughGeneration,
                                                                                            const char* reason,
                                                                                            bool logSuccess) noexcept;
-// Prepares transmit slots [startPacketIndex, targetPacketIndex) into the shared
-// metadata ring, committing each slot's generation so the IT DMA refill never
-// observes an uncommitted slot. Returns the number of slots prepared. Shared by
-// the steady-state ZTS pump and the pre-RUN prefill; with an unseeded transmit
-// clock the normal AMDTP cadence is preserved but every packet carries NO_INFO
+// Prepares transmit slots from startPacketIndex until both producer invariants
+// are true or limitPacketIndex is reached:
+//   * requiredPacketIndex covers the core refill / commit-generation invariant.
+//   * targetFrameEnd covers the AMDTP frame-exposure invariant for WriteEnd.
+// Returns the number of slots prepared. With an unseeded transmit clock the
+// normal AMDTP cadence is preserved but every packet carries NO_INFO
 // (SYT=0xffff), matching the reference Saffire seed behavior. Set
 // allowRecoveredClock only after HAL has accepted the first real RX anchor.
 uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                               uint64_t startPacketIndex,
-                              uint64_t targetPacketIndex,
+                              uint64_t requiredPacketIndex,
+                              uint64_t limitPacketIndex,
                               uint32_t maxToPrepare,
+                              uint64_t targetFrameEnd,
                               bool allowRecoveredClock) noexcept;
 
 // Synchronously seeds the transmit ring with cadence-correct NO_INFO packets

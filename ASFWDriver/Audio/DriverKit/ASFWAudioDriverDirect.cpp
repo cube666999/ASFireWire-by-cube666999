@@ -134,8 +134,12 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
              snapshot.txPreparationWakeDispatches,
              snapshot.txPreparationWakeCoalesced,
              snapshot.txPreparationDrainPasses);
+    auto* directControl = runtime.directAudioGraph.control;
     const int64_t transferDelayTicks =
-        runtime.txTimingModel.GetConfig().xmitTransferDelayTicks;
+        directControl
+            ? static_cast<int64_t>(directControl->txTransferDelayTicks.load(
+                  std::memory_order_relaxed))
+            : 0;
     const int64_t wireLeadMinimum =
         snapshot.txMinimumLeadTicks == std::numeric_limits<int64_t>::max()
             ? std::numeric_limits<int64_t>::max()
@@ -146,15 +150,12 @@ void MaybeLogDirectAudioDebugSnapshot(AudioDriverRuntimeState& runtime) noexcept
             : snapshot.txMaximumLeadTicks + transferDelayTicks;
     ASFW_LOG(
         DirectAudio,
-        "ADK timing anchor(frame=%llu updates=%llu mirrors=%llu stale=%llu depth=%llu overflow=%llu notify=%llu coalesced=%llu) txLead(last=%lld min=%lld max=%lld) wireLead(last=%lld min=%lld max=%lld) packets(data=%llu noData=%llu postLockNoData=%llu) refillLatency(last=%llu max=%llu samples=%llu le750us=%llu ge1500us=%llu) minCommittedMargin=%llu",
+        "ADK timing anchor(generation=%llu frame=%llu updates=%llu mirrors=%llu invalid=%llu) txLead(last=%lld min=%lld max=%lld) wireLead(last=%lld min=%lld max=%lld) packets(data=%llu noData=%llu postLockNoData=%llu) refillLatency(last=%llu max=%llu samples=%llu le750us=%llu ge1500us=%llu) minCommittedMargin=%llu",
+        snapshot.hostAnchorGeneration,
         snapshot.hostAnchorFrame,
         snapshot.hostAnchorUpdates,
         snapshot.hostAnchorMirrorPublications,
-        snapshot.hostAnchorStaleUpdates,
-        snapshot.hostAnchorQueueDepth,
-        snapshot.hostAnchorQueueOverflows,
-        snapshot.hostAnchorNotificationDispatches,
-        snapshot.hostAnchorNotificationCoalesced,
+        snapshot.hostAnchorInvalidUpdates,
         snapshot.txLastLeadTicks,
         snapshot.txMinimumLeadTicks,
         snapshot.txMaximumLeadTicks,
@@ -303,7 +304,7 @@ bool BindDirectAudioSkeleton(ASFWAudioDriver_IVars& ivars) noexcept {
         .guid = ivars.device.guid,
         .sampleRateHz = static_cast<uint32_t>(ivars.device.currentSampleRate),
         .memory = ASFW::Audio::Runtime::AudioStreamMemory{
-            .inputBase = reinterpret_cast<int32_t*>(static_cast<uintptr_t>(ivars.inputMap->GetAddress())),
+            .inputBase = reinterpret_cast<float*>(static_cast<uintptr_t>(ivars.inputMap->GetAddress())),
             .outputBase = reinterpret_cast<const float*>(static_cast<uintptr_t>(ivars.outputMap->GetAddress())),
             .inputFrameCapacity = inputFrameCapacity,
             .outputFrameCapacity = outputFrameCapacity,

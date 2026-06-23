@@ -285,18 +285,13 @@ of one or more bus cycles.
 
 ## 4. Continuity & Safety Mechanisms
 
-### Dual-Layer Validation
-To prevent hardware clock drift from causing resets, but protect against severe dropouts, the timing system is separated into two layers:
+TX wire timing follows Linux-style sequence replay. RX supplies the captured
+data-block cadence and delay-free SYT offset; the latest completed TX packet
+supplies the output bus-cycle anchor. No separate callback-phase continuity
+tracker overrides or invalidates this replay timeline.
 
-1.  **Macro-Continuity (Layer 1)**: Handled by [TxAnchorTracker](file:///Volumes/SDExt/DEV/ASFireWire/ASFWDriver/Audio/Wire/AMDTP/TxAnchorTracker.hpp). Every interrupt, it observes the hardware callback arrival phase and validates it against the previous prediction. If a gross gap occurs (beyond one-cycle glitch tolerance), it triggers a timing reset.
-2.  **Micro-Slewing (Layer 2)**: Handled by [TxTimingModel](file:///Volumes/SDExt/DEV/ASFireWire/ASFWDriver/Audio/Wire/AMDTP/TxTimingModel.cpp). It runs the deadbanded software timing servo to align the outbound SYT values without resetting.
-
----
-
-### The DATA vs. NO-DATA Cadence Safety
-FireWire blocking mode uses a transmission cadence (e.g. 6 packets containing data, followed by 2 packets containing no data).
-*   **The Bug**: If the continuity tracker only counted packets containing data, the expected phase prediction would drift by 2 cycles ($6144$ ticks) every cadence group, causing false discontinuity resets.
-*   **The Solution**: The tracker relies on `completedPacketIndex`, which represents the absolute DMA ring descriptor slot. Because the DMA engine programs a descriptor for **every single isochronous cycle** (whether it contains audio data or is an empty NO-DATA packet), the packet index increments monotonically, matching the physical bus cycles.
+Actual failures remain explicit: missing execution anchor, unavailable replay
+entry, invalid SYT on a DATA packet, or packet preparation failure.
 
 ### NO-DATA, NO-INFO, and DBC Are Not Interchangeable
 
@@ -582,8 +577,8 @@ The current ZTS path is:
 ```text
 IR drain
   -> publish (sampleFrame, hostTicks) to shared memory
-  -> coalesced ZtsAnchorReady OSAction
-  -> AudioDriverKit process drains the queue
+  -> ZtsAnchorReady OSAction
+  -> AudioDriverKit process snapshots the latest generation
   -> UpdateCurrentZeroTimestamp(sampleFrame, hostTicks)
 ```
 
@@ -595,72 +590,211 @@ OSAction and call inline" was based on the false assumption that both objects
 execute in one dext task.
 
 The `OSAction` also does not add error to the timestamp value itself. The
-cycle-derived `hostTicks` is captured and queued before notification; delayed
+cycle-derived `hostTicks` is captured before notification; delayed
 delivery changes when CoreAudio receives the anchor, not the
 `(sampleFrame, hostTicks)` pair. The real costs are:
 
 *   cross-process wakeup and scheduling overhead;
 *   delayed visibility of an otherwise valid anchor;
-*   queue depth/overflow risk if the consumer stalls.
+*   intermediate observations being replaced if the consumer stalls.
 
 The required design is therefore to keep the timestamp creation entirely in
-the IR path, preserve the captured value unchanged, coalesce notifications,
-and drain every queued anchor in order. Eliminating `OSAction` would require a
-larger architectural change that moves ZTS production into the
-AudioDriverKit process or collapses the current process boundary. It is not a
-local callback optimization.
+the IR path, preserve the latest captured value unchanged, and let the
+AudioDriverKit consumer publish each generation it observes. Skipped
+generations are valid; CoreAudio's configured clock algorithm owns timestamp
+history and smoothing. Eliminating `OSAction` would require a larger
+architectural change that moves ZTS production into the AudioDriverKit process
+or collapses the current process boundary. It is not a local callback
+optimization.
 
-### Defect B: Historical Fill-in-Place Ownership Was Wrong
-The pre-FW-53 implementation exposed a 384-packet window, or 48 ms at 8000
-cycles/s, as zero-filled slots that a later CoreAudio write was expected to
-overwrite in place. That ownership model was the architectural error:
+### Defect B: TX Exposure Frontier Lags the CoreAudio Write Window (Under-Exposure)
 
-*   The driver exposes packet slots immediately with zeroed payloads, then
-    expects a later CoreAudio write to overwrite them in place.
-*   CoreAudio's write horizon is far shorter than the 48 ms exposed window, so
-    many packets exist before their audio data can exist.
-*   A late or unmapped write leaves the valid zero payload in place and the
-    packet ships silence by design.
-*   The 384-cycle bridge corresponded to roughly 2304 frames at 48 kHz. Bench
-    logs showed timing reseeds remapping the content cursor by approximately
-    2168–2432 frames, directly matching this geometry.
-*   The writer instrumentation measured thousands of frames with no packet or
-    outside the packet window while the 85/15 silence remained after the
-    ring/ZTS divisibility fix. This rules out the idea that the large lead is
-    merely unused safety margin.
+> **Correction (2026-06-15).** Earlier revisions of this section described
+> Defect B as *over-exposure* — a deep "fill-in-place" window of zeroed slots
+> exposed far ahead of the CoreAudio write horizon (`E ≫ W`), shipping silence
+> because data could not exist yet. **Direct measurement shows the opposite,
+> and the prior framing was actively misleading.** The real failure is
+> *under-exposure*: the producer's exposure frontier lags the CoreAudio write
+> window. That description applied to the dead pre-FW-53 direct path and was
+> never re-derived for the current AMDTP timeline path. The corrected analysis
+> follows.
 
-The packet-ring **capacity** may remain deep for wrap and recovery headroom.
-Capacity is not latency. The historical error was exposing mutable,
-not-yet-owned DATA slots and treating their zero contents as valid future
-audio. It was not proved merely by the number 384.
+#### The three-cursor model
 
-The FW-53 design at that time resolved this by:
+The TX path has three frame-domain cursors, all nominally 48 kHz:
 
-1.  Giving every exposed packet an explicit committed disposition and
-    generation.
-2.  Separating the 192-packet hardware ring, the 192-packet scheduling slack,
-    and the 1024-slot shared packet-ring capacity.
-3.  Preparing DATA payload only when the corresponding CoreAudio frames are
-    available. If they are unavailable, request an explicit underrun packet
-    from the device-profile packetizer. The DMA layer must not turn an
-    uncommitted DATA slot into a generic NO-DATA packet by copying the previous
-    CIP header. For Saffire, scheduled NO-DATA follows the captured repeated-DBC
-    rule; a forced fallback must use the separately defined hold/recovery
-    policy and reconcile packetizer cadence before normal DATA resumes.
-4.  Keeping startup NO-DATA prefill separate from the steady-state audio lead.
-    Startup prefill prevents an uncommitted descriptor at RUN; it does not
-    require the bus to transmit the entire prefilled duration. Its CIP/DBC
-    contents and
-    transition into the first live packet are likewise device-profile and
-    packetizer decisions.
-5.  Sizing the backing packet ring independently from the active preparation
-    lead.
+| Cursor | Meaning |
+|--------|---------|
+| **T** | hardware transmit position (what the OHCI IT DMA ships on the bus now) |
+| **W** | CoreAudio write frontier = `sampleTime + frameCount` |
+| **E** | producer exposure frontier = `AmdtpPacketTimeline::ExposedFrameEnd()` |
 
-That 384-packet preparation lead was therefore a different mechanism
-from the historical 384-packet fill-in-place bridge. It comprises the
-192-packet hardware ring plus 192 packets of DriverKit scheduling slack. Its
-correctness depends on immutable committed packet ownership, not on later
-patching of already exposed zero payload.
+A PCM frame reaches the wire intact **iff `T ≤ W ≤ E`**:
+
+* `T ≤ W` — *written-before-transmit*. **Guaranteed by construction**: CoreAudio
+  always writes ahead of the playout position, so a written packet always
+  transmits correctly.
+* `W ≤ E` — the packet exists when the writer reaches it.
+
+The **only** failure mode is **`W > E` (under-exposure)** — CoreAudio delivers a
+frame whose packet the producer has not exposed yet. This is the
+`framesWithoutPacket` counter in `AmdtpPayloadWriter`.
+
+#### Why "over-exposure" is harmless (and the old framing was wrong)
+
+Because `T < W` always holds, any packet between `W` and `E` sits **above** the
+hardware cursor. The writer (at `W`) fills it before the hardware (at `T`) ever
+transmits it. **Exposing far ahead cannot ship zeros.** The old "capacity is not
+latency / expose less" prescription solved a problem that does not exist in the
+timeline path, while missing the one that does: an exposure frontier that does
+not stay *ahead* of `W`.
+
+#### What the measurement shows
+
+`tools/analyze_payloadwriter.py` over 808 `[PayloadWriter]` records (~5.5 h):
+
+* Miss buckets **`withoutPkt : outsidePkt = 89 : 1`**, `raced = 0`. The misses are
+  overwhelmingly "writer ran ahead of exposure," not "writer arrived late."
+* Lead margin `E − W_end`: mean **−6**, median **−8**, **min −56**, **58.5 %** of
+  calls negative.
+* `E − W_start ≈ +120 frames` against a **128-frame IO window** → the tail of
+  each IO window spills ~8 frames (worst 56) past the exposure frontier. The
+  deficit is *small and structural*, driven by Default-queue scheduling jitter.
+* `W − HWcompletion ≈ 4883 frames` (~102 ms) is a **stable** pipeline offset
+  (range 70), a different anchor from `E` — **not** the dropout driver. Do not
+  conflate it with the `E − W` margin.
+
+#### Root cause: a missing TX cushion that RX already has
+
+The RX path raises its safety offset to `outputSafety + maxClientIO + jitter`
+(`RequiredInputSafetyFrames`, ≈ 624 frames at 48 kHz, visible in the HAL device
+properties) precisely to absorb scheduling jitter. **The TX exposure path had no
+equivalent cushion** — it ran with ≈ 0 lead margin. That asymmetry *is* Defect B:
+RX is protected from the same Default-queue jitter that starves TX.
+
+#### The fix
+
+> **Resolved & hardware-validated (2026-06-16, tag `tx-frame-exposure-lead`).**
+> The two options below were the diagnosis-time plan. The shipped fix is a
+> refinement of option 1 — see **Resolution** at the end of this section for
+> what was actually implemented and the wire results.
+
+The frames lost to `withoutPkt` were **already present in the host ring** when
+the producer finally exposed the packet (that is what `W > E` means). Two
+options, in order of preference:
+
+1. **Cheap push fix (recommended, magnitude-justified).** Give the producer's
+   audio-frame exposure lead a cushion symmetric to RX's:
+   `RequiredOutputExposureFrames = maxClientIO + jitter`, named
+   `AudioTimingGeometry::kTxExposureLeadFrames` (576 frames). Because `E` and `W`
+   are clock-locked (the offset is constant; see the stable `W − HWcompletion`),
+   raising the producer lead moves `E − W_start` one-for-one. Closing an 8-frame
+   median / 56-frame worst deficit needs only ≈ +64 frames (~11 packets) of
+   exposure lead — it fits the existing rings with room to spare. The producer
+   path must be changed to **enforce** `kTxExposureLeadFrames`.
+2. **Structural pull (clean, but not mandated by the data).** Have the packetizer
+   fill PCM from the host ring *at prepare time*, gated on `W`, and emit an
+   explicit cadence-correct NO-DATA/hold packet only on genuine source underrun.
+   This is the Linux `amdtp-stream.c` / Saffire `FillFirewireBuffers` model and
+   removes the producer↔writer rendezvous entirely. It is the right long-term
+   shape, but the measured deficit no longer requires it.
+
+> **Note on the simulator.** `tools/tx_payload_ownership_sim.py` initially
+> concluded push needed an infeasibly large lead (> shared ring) and favored
+> pull. That result over-modeled the cursors as independent relative to `T`;
+> measurement showed `E` and `W` are clock-locked, which is why the cheap push
+> fix works. Always calibrate the sim with `analyze_payloadwriter.py` before
+> trusting its absolute rates.
+
+#### Guardrails now in place
+
+`ASFWDriver/Shared/Isoch/AudioTimingGeometry.hpp` now **names** the previously
+implicit quantity (`kTxExposureLeadFrames`) and adds the compile-time invariant
+whose absence hid this defect:
+
+```cpp
+static_assert(kTxExposureLeadFrames >= kHalIoPeriodFrames + kSchedulingJitterFrames,
+              "TX exposure lead must cover one full IO window plus scheduling jitter");
+```
+
+The rate-dependent partner `RequiredOutputExposureFrames` lives beside
+`RequiredInputSafetyFrames` in `AudioGeometryPolicy.hpp`.
+
+#### Resolution (2026-06-16, hardware-validated)
+
+The shipped fix refines option 1. Rather than a single bumped lead, the
+producer carries **two independent budgets** and `PrepareTransmitSlots` keeps
+preparing until *both* invariants hold:
+
+```cpp
+// PrepareTransmitSlots(start, requiredPacketIndex, limitPacketIndex,
+//                      maxToPrepare, targetFrameEnd, allowRecoveredClock)
+//   requiredPacketIndex → refill-coverage sub-budget (must always be met)
+//   limitPacketIndex    → hard ceiling (coverage + frame-exposure window)
+//   targetFrameEnd      → WriteEnd + kTxExposureLeadFrames (frame invariant)
+```
+
+| Constant (`AudioTimingGeometry.hpp`) | Value | Role |
+|--------------------------------------|------:|------|
+| `kTxHardwareRingPackets`             |    48 | OHCI IT descriptor ring |
+| `kTxCoverageLeadPackets`             |   144 | refill safety (HW ring 48 + slack 96) — the `requiredPacketIndex` target |
+| `kTxFrameExposureWindowPackets`      |   192 | extra packets to cover `WriteEnd + cushion` |
+| `kTxPreparationLeadPackets`          |   336 | coverage 144 + exposure 192 — the `limitPacketIndex` target |
+| `kTxSharedSlotPackets`               |   384 | lead 336 + one HW-ring depth before slot reuse |
+| `kTxExposureLeadFrames`              |   576 | frame cushion = `kHalIoPeriodFrames (512) + kSchedulingJitterFrames (64)` |
+
+The producer always satisfies coverage (144) first — that is the refill-hole
+invariant — then continues up to the 336-packet ceiling until
+`ExposedFrameEnd() ≥ WriteEnd + 576`. `targetFrameEnd == 0` (unseeded transmit
+clock) preserves the cadence-correct NO-INFO seed without forcing exposure.
+
+**Wire validation (Saffire Pro 24 DSP, 48 kHz, continuous audio):**
+
+* **`withoutPkt = 0`, `deficit = 0`, `written == visited`** in steady state,
+  sustained 3.5 min+ into a session (`sampleTime` > 10 M frames).
+* A start-to-45 s capture dropped **zero** frames; the only exposure deficit
+  was a single record at the very first write (silent pre-RUN ramp,
+  `withoutPkt = 0`, `nonZero = 0` — harmless).
+* `[TxPrep]` heartbeat: min committed margin **138**, lead **336**,
+  `late1500 = 0`, max wake latency ≈ 550 µs.
+* The old ~1 % silence is gone. (Re-measuring on *continuous* audio — the prior
+  ~99 % silent log was the measurement caveat below — confirmed the dropouts
+  were real under-exposure, not source silence: with real audio the writer is
+  busy and the cushion holds.)
+
+This also superseded the diagnosis-time measurement caveat. The `fatal 309`
+crash from the earlier log did **not** recur in the validated runs and remains
+untriaged (tracked separately, not part of Defect B).
+
+#### Telemetry posture after resolution
+
+With the happy path confirmed, the two hot-path traces are **anomaly-only**
+(commit `739a746`): the rings are still drained every tick so they never
+overflow, but `[PayloadWriter]` logs a record only on a fault
+(`deficit`/`withoutPkt`/`outsidePkt`/`raced`/`written != visited`) and
+`[TxPrepRange]` only on `stoppedShort` (refill hole) or `frameShort` (`W > E`).
+The periodic `[TxPrep]` summary remains the lone liveness/margin heartbeat. A
+clean run prints only that heartbeat; any other line is a regression.
+
+> **Capturing the trace.** DriverKit dexts have no real os_log categories
+> (`os_log_create` is unavailable — every line is `OS_LOG_DEFAULT` from
+> `kernel`), so filter on the message-text prefix and pass `--info --debug`:
+> ```
+> log stream --info --debug \
+>   --predicate 'eventMessage CONTAINS "[PayloadWriter]" OR eventMessage CONTAINS "[TxPrep]"' \
+>   --style compact | grep -m 60 -E 'withoutPkt=[1-9]|deficit=[1-9]|\[TxPrep\]'
+> ```
+
+#### Measurement caveat (historical — superseded by the Resolution above)
+
+In the *original* diagnosis run the source was **~99 % digital silence**
+(`nonZero` = 1.0 % of `written`), so the `[Isoch] IT WIRE PCM dropout` *edge*
+counter was heavily inflated by legitimate source silence. This is why the fix
+was re-validated on continuous audio (see Resolution).
+
+Independent of all the above, the packet-ring **capacity** may remain deep for
+wrap/recovery headroom: capacity is not latency, and (per the harmless-over-
+exposure result) a deep ring never causes dropouts on its own.
 
 ### Defect C: Host-Time Seeding of Transmit Phase
 *   **The Flaw**: Seeding the initial transmit phase using `packetAnchorTicks` imports the arbitrary host scheduling start phase relative to the device's clock. This results in a random cycle-count offset modulo 16, preventing the transmit and receive SYT cycle counts from aligning.
@@ -1085,9 +1219,16 @@ grid-crossing loop remains mandatory for drift, relock, and coalesced drains.
 
 > [!CAUTION]
 > This verdict predates the adopted FW-53+ geometry in Section 13. Its findings
-> about fill-in-place ownership, host/wire clock separation, and OSAction
-> timestamp preservation remain valid. Its rejection of 32-packet groups and
-> its proposed 8–16 packet preparation window are superseded.
+> about host/wire clock separation and OSAction timestamp preservation remain
+> valid. Its rejection of 32-packet groups and its proposed 8–16 packet
+> preparation window are superseded.
+>
+> **Its "fill-in-place ownership" finding has been CORRECTED — see Section 8,
+> Defect B.** That framing (deep over-exposure of zeroed slots shipping silence,
+> `E ≫ W`) was backwards for the current timeline path. Direct measurement shows
+> the real defect is *under-exposure* (`W > E`): the exposure frontier lags the
+> CoreAudio write window. Over-exposing is harmless because `T < W`. Treat the
+> "fill-in-place" language below as historical and read Section 8 for the truth.
 
 The timing geometry under investigation at that point was not a balanced
 tradeoff or a conservative starting point. Its core ownership and clock-domain
@@ -1096,10 +1237,13 @@ couplings were architecturally wrong:
 1.  **The short-group proposal treated 32 packets as too coarse.** That
     conclusion was later superseded by the whole-cadence, fixed-advance
     geometry adopted in Section 13.
-2.  **The old 384-packet fill-in-place bridge was invalid.** It exposed 48 ms
-    of mutable zero-filled DATA slots before CoreAudio could populate them,
-    complicated frame-to-packet mapping, and produced measured approximately
-    2300-frame cursor jumps during timing reseeds.
+2.  **The old 384-packet "fill-in-place bridge" framing was wrong — see
+    Section 8, Defect B (corrected).** The deep mutable window was blamed for
+    shipping silence via over-exposure (`E ≫ W`); measurement later showed that
+    over-exposure is harmless (`T < W`) and the real dropout is *under-exposure*
+    (`W > E`). The deep window did complicate frame-to-packet mapping, but it was
+    not the silence cause. Retained here only as a record of the superseded
+    hypothesis.
 3.  **Deep packet storage was confused with latency margin.** A ring can be
     deep without committing its contents 48 ms early. Capacity and active
     lead must be independent.
@@ -1175,9 +1319,11 @@ live in `ASFWDriver/Shared/Isoch/AudioTimingGeometry.hpp`.
 | Frame alignment | 32 frames | Shared alignment contract |
 | IR descriptor ring | 504 packets | Packet-domain receive storage |
 | TX hardware ring | 48 packets | OHCI-owned transmit program |
-| TX preparation slack | 36 packets | Six additional timing groups |
-| TX preparation lead | 84 packets | Hardware ring plus scheduling slack |
-| TX shared packet ring | 192 packets | Packet-domain backing capacity |
+| TX preparation slack | 96 packets | Sixteen groups / 12 ms of producer scheduling tolerance |
+| TX coverage lead | 144 packets | Hardware ring plus scheduling slack; refill-safety sub-budget |
+| TX frame-exposure window | 192 packets | Packetized cushion for `WriteEnd + kTxExposureLeadFrames` |
+| TX preparation lead | 336 packets | Coverage lead plus frame-exposure window |
+| TX shared packet ring | 384 packets | Preparation lead plus one hardware-ring reuse guard |
 | Input safety floor | 104 frames | Maximum 40-frame group plus 64-frame jitter floor |
 
 The HAL has one frame-domain sample ring per direction. Packet-domain IR
@@ -1195,6 +1341,7 @@ frameRing == ztsPeriod
 frameRing % maxIO == 0
 frameRing % frameAlignment == 0
 txSharedSlots % timingGroupPackets == 0
+txSharedSlots % cadenceBlockPackets == 0
 txHardwarePackets % timingGroupPackets == 0
 ```
 
@@ -1206,7 +1353,8 @@ For the adopted values:
 1536       = 1536-frame ZTS period
 1536 / 512 = 3 maximum IO transfers
 1536 / 32  = 48 alignment quanta
-192 / 6    = 32 shared-ring groups
+384 / 6    = 64 shared-ring groups
+384 / 4    = 96 complete cadence blocks
 48 / 6     = 8 hardware-ring groups
 ```
 
@@ -1218,10 +1366,11 @@ independent from the frame-domain ZTS grid.
 
 Host anchors are RX-interrupt-derived ADK ZTS-grid anchors. A six-packet group
 advances by 32 or 40 decoded frames, so many receive drains occur between
-1536-frame anchors. The receive path advances by decoded data-block count and
-publishes in a grid-crossing loop. A device crystal slip, cadence relock,
-delayed drain, or multi-group drain can therefore cross zero, one, or several
-1536-frame grid points without publishing an off-grid sample time.
+1536-frame anchors. The receive path advances the absolute frame cursor by the
+decoded data-block count. It publishes only when a real DATA packet begins
+exactly on the 1536-frame grid, using that packet's hardware-derived receive
+host time unchanged. It does not synthesize a boundary timestamp by adding
+nominal frame durations to another packet observation.
 
 Each packet's eight-byte receive prefix is decoded for its own OHCI timestamp
 and isochronous header. The single cycle-timer/host-time pair captured at drain
@@ -1231,7 +1380,7 @@ packets would make older packets stale.
 
 **Verification priority: high after the first stable duplex run.** Exercise
 multi-group and wraparound drains and confirm that every published anchor uses
-the packet that actually crossed its grid point.
+the DATA packet whose first decoded frame is the grid point.
 
 ### D. NO-DATA, DBC, and Startup Prefill
 
@@ -1241,14 +1390,19 @@ must not advance merely because a NO-DATA packet occupied a bus cycle. For
 Saffire, the gap carries the cadence-appropriate already-advanced DBC and the
 following DATA packet repeats it.
 
-Before IT RUN, the packetizer seeds the entire 192-slot shared TX ring with
-committed NO-DATA packets. This is 24 ms of valid packet-domain backing. It is
-deliberately larger than the steady-state 84-packet preparation lead because
-action delivery and the startup handoff can be delayed. `TxPreparationReady`
-uses a dedicated DriverKit dispatch queue, so the synchronous `StartIO` wait
-for the first hardware ZTS does not starve the producer. Once the action runs,
-the normal producer target remains `completion + 84`; it prepares later
-generations before the consumer reaches them.
+Before IT RUN, the packetizer seeds the entire 384-slot shared TX ring with
+committed NO-DATA packets. This is 48 ms of valid packet-domain backing. It is
+deliberately larger than the 336-packet total preparation lead because action
+delivery and the startup handoff can be delayed. `TxPreparationReady` uses a
+dedicated DriverKit dispatch queue, so the synchronous `StartIO` wait for the
+first hardware ZTS does not starve the producer.
+
+Once the action runs, the producer has two targets. It must always reach the
+refill-coverage target (`completion + 144`) so the core never sees an
+uncommitted slot. It may continue up to the total preparation limit
+(`completion + 336`) until `AmdtpPacketTimeline::ExposedFrameEnd()` covers the
+latest CoreAudio `WriteEnd + kTxExposureLeadFrames`. This separates the
+packet-domain underrun budget from the audio-frame under-exposure budget.
 
 The DMA layer must not invent fallback CIP state by copying an arbitrary
 previous Q0. Forced fallback is a packetizer/profile transition and must

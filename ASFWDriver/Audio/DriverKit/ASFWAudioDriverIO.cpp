@@ -110,27 +110,30 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
             return kIOReturnNotReady;
         }
 
+        auto* graphControl = driverIvars->runtime.directAudioGraph.control;
+        auto& callbackState = graphControl
+            ? *graphControl
+            : driverIvars->runtime.directAudioControl;
+
         auto returnError = [&](kern_return_t kr) noexcept {
-            auto& diagnostics = driverIvars->runtime.directAudioControl;
-            diagnostics.ioLastError.store(
+            callbackState.ioLastError.store(
                 static_cast<uint32_t>(kr), std::memory_order_relaxed);
-            diagnostics.ioLastErrorOperation.store(
+            callbackState.ioLastErrorOperation.store(
                 static_cast<uint32_t>(operation), std::memory_order_relaxed);
-            diagnostics.ioLastErrorFrameCount.store(
+            callbackState.ioLastErrorFrameCount.store(
                 ioBufferFrameSize, std::memory_order_relaxed);
-            diagnostics.ioLastErrorObjectId.store(
+            callbackState.ioLastErrorObjectId.store(
                 objectID, std::memory_order_relaxed);
-            diagnostics.ioLastErrorSampleTime.store(
+            callbackState.ioLastErrorSampleTime.store(
                 sampleTime, std::memory_order_relaxed);
-            diagnostics.ioLastErrorHostTime.store(
+            callbackState.ioLastErrorHostTime.store(
                 hostTime, std::memory_order_relaxed);
-            diagnostics.ioCallbackErrorGeneration.fetch_add(
+            callbackState.ioCallbackErrorGeneration.fetch_add(
                 1, std::memory_order_release);
             return kr;
         };
 
         (void)driverIvars->runtime.ioDebugCallbacks.fetch_add(1, std::memory_order_relaxed);
-        auto& callbackState = driverIvars->runtime.directAudioControl;
         callbackState.ioLastOperation.store(
             static_cast<uint32_t>(operation), std::memory_order_relaxed);
         callbackState.ioLastFrameCount.store(
@@ -154,17 +157,19 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
             return kIOReturnSuccess;
         }
 
-        if (ioBufferFrameSize > ASFW::Isoch::Config::kAudioIoPeriodFrames) {
-            return returnError(kIOReturnBadArgument);
-        }
-
         if (skeletonBound) {
-            auto* control = driverIvars->runtime.directAudioGraph.control;
+            auto* control = graphControl;
             if (!control) {
                 return returnError(kIOReturnNotReady);
             }
 
             if (operation == IOUserAudioIOOperationBeginRead) {
+                // ADK permits operation spans that differ from the nominal IO
+                // size. The stream ring capacity is the actual hard bound.
+                if (ioBufferFrameSize >
+                    driverIvars->runtime.directAudioGraph.memory.inputFrameCapacity) {
+                    return returnError(kIOReturnBadArgument);
+                }
                 control->client.PublishBeginRead(sampleTime, hostTime, ioBufferFrameSize);
                 (void)PrepareCaptureRingForBeginRead(driverIvars->runtime.directAudioGraph,
                                                      *control,
@@ -172,6 +177,12 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                                                      ioBufferFrameSize);
                 control->counters.CountBeginRead();
             } else if (operation == IOUserAudioIOOperationWriteEnd) {
+                // See BeginRead above: CoreAudio may choose a larger span than
+                // kHalIoPeriodFrames while remaining within the stream ring.
+                if (ioBufferFrameSize >
+                    driverIvars->runtime.directAudioGraph.memory.outputFrameCapacity) {
+                    return returnError(kIOReturnBadArgument);
+                }
                 control->client.PublishWriteEnd(sampleTime, hostTime, ioBufferFrameSize);
                 PublishPlaybackRingWriteEnd(driverIvars->runtime.directAudioGraph, *control);
 
@@ -189,6 +200,11 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     const uint64_t completionCursor = driverIvars->runtime.txSlotProvider.controlBlock
                         ? driverIvars->runtime.txSlotProvider.controlBlock->completionCursor.load(std::memory_order_acquire)
                         : 0;
+                    const uint64_t writeEndFrame =
+                        sampleTime + ioBufferFrameSize;
+                    const uint64_t exposedFrameEnd =
+                        driverIvars->runtime.txStreamEngine.Timeline()
+                            .ExposedFrameEnd();
 
                     driverIvars->runtime.txStreamEngine.WriteHostOutputFloat32(
                         hostBuffer,
@@ -197,8 +213,13 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     const auto& cw = driverIvars->runtime.txStreamEngine.PayloadWriterCounters();
                     ASFW::Audio::Runtime::PayloadWriterTelemetryRecord rec{};
                     rec.sampleTime = sampleTime;
+                    rec.writeEndFrame = writeEndFrame;
                     rec.completionCursor = completionCursor;
-                    rec.exposedFrameEnd = driverIvars->runtime.txStreamEngine.Timeline().ExposedFrameEnd();
+                    rec.exposedFrameEnd = exposedFrameEnd;
+                    rec.exposureDeficitFrames =
+                        writeEndFrame > exposedFrameEnd
+                            ? writeEndFrame - exposedFrameEnd
+                            : 0;
                     rec.frameCount = ioBufferFrameSize;
                     rec.frameCapacity = memory.outputFrameCapacity;
                     rec.visited = cw.framesVisited.load(std::memory_order_relaxed);
@@ -208,6 +229,10 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                     rec.racedReuse = cw.framesRacedReuse.load(std::memory_order_relaxed);
                     rec.wroteIntoTransmitted = cw.framesWroteIntoTransmitted.load(std::memory_order_relaxed);
                     rec.nonZeroFrames = cw.framesNonZero.load(std::memory_order_relaxed);
+                    rec.underExposureCalls =
+                        cw.underExposureCalls.load(std::memory_order_relaxed);
+                    rec.underExposureFrames =
+                        cw.underExposureFrames.load(std::memory_order_relaxed);
                     const uint32_t bits = cw.maxAbsSampleBits.load(std::memory_order_relaxed);
                     std::memcpy(&rec.maxAbsSample, &bits, sizeof(bits));
 
@@ -235,6 +260,8 @@ kern_return_t InstallIOOperationHandler(IOUserAudioDevice& audioDevice,
                 }
 
                 control->counters.CountWriteEnd();
+            } else {
+                return returnError(kIOReturnBadArgument);
             }
         } else {
             return returnError(kIOReturnNotReady);

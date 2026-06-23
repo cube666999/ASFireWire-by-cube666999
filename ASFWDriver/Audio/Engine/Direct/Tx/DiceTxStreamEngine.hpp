@@ -5,6 +5,7 @@
 #include "../../../Wire/AMDTP/AmdtpPayloadWriter.hpp"
 #include "../../../Wire/AMDTP/AmdtpTxPacketizer.hpp"
 #include "../../../Ports/IAmdtpTxSlotProvider.hpp"
+#include "../../../../Shared/Isoch/AudioTimingGeometry.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -16,6 +17,14 @@ struct DiceTxEngineCounters final {
     std::atomic<uint64_t> dataPacketsPrepared{0};
     std::atomic<uint64_t> noDataPacketsPrepared{0};
     std::atomic<uint64_t> slotAcquireFailures{0};
+};
+
+enum class TxSlotPrepareResult : uint8_t {
+    kPrepared = 0,
+    kSlotProviderUnavailable,
+    kSlotAcquireFailed,
+    kPacketizerRejected,
+    kSlotPublishFailed,
 };
 
 class DiceStreamConfigMapper final {
@@ -38,8 +47,9 @@ public:
 
     [[nodiscard]] bool AlignFrameCursorOnce(uint64_t frameIndex) noexcept;
 
-    bool PrepareNextTransmitSlot(uint32_t packetIndex,
-                                 const AMDTP::AmdtpTimingState& timing) noexcept;
+    [[nodiscard]] TxSlotPrepareResult PrepareNextTransmitSlot(
+        uint32_t packetIndex,
+        const AMDTP::AmdtpTimingState& timing) noexcept;
     [[nodiscard]] bool NextPacketWouldCarryData() const noexcept;
 
     void WriteHostOutputFloat32(const AMDTP::HostAudioBufferView& hostBuffer,
@@ -64,7 +74,8 @@ private:
     AMDTP::AmdtpTxPacketizer packetizer_{};
     AMDTP::AmdtpPayloadWriter payloadWriter_{};
 
-    AMDTP::PacketTimelineSlot timelineSlots_[512]{};
+    AMDTP::PacketTimelineSlot
+        timelineSlots_[ASFW::IsochTransport::AudioTimingGeometry::kTimelineSlots]{};
     AMDTP::AmdtpPacketTimeline timeline_{};
 
     AMDTP::IAmdtpTxSlotProvider* slotProvider_{nullptr};
