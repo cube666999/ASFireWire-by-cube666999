@@ -22,6 +22,16 @@ output(channels=14 bits=32)`. Zero `ZTS timed out`/`StartIO failed`. C++ 1114/11
 
 **Następne:** weryfikacja słyszalności + mapa slotów IR (znany sygnał na wejściu) — patrz Focus.md.
 
+### ❌ Playback NIE gra (osobny bug — TX underexposure) + próba integracji origin/DICE
+Test v117 z Spotify: dźwięk nie wychodzi. `[PayloadWriter] written=0 withoutPkt=visited maxAbs=0.0`
+→ callback wyjścia odwiedza ramki, ale TX nie eksponuje pakietów IT (underexposure). NIE ZTS.
+mrmidi naprawił to upstream (`4e1dbc9 enforce tx frame exposure lead`, `440a297`).
+
+Próba `git merge origin/DICE` (na gałęzi `integrate-dice-upstream`, dice-motu nietknięte) — przerwana,
+bo to **RE-PORT nie merge**: origin/DICE jest 66 commitów przed nami, NIE ma plików MOTU, i przepisał
+RX na **Float32** (`fc3f46b`) → nasz `DecodeMotuV3Frame(int32_t*)` się nie skompiluje. Merge cofnięty
+(`reset --hard`), v117 zachowane jako fallback. Pełny plan re-portu → Focus.md §„🔴 NASTĘPNY DUŻY KROK".
+
 ### Ścieżka diagnostyczna (v34→v36)
 - **v34**: `Start()` = `kRun|kWake|kIsochHeader`. Potwierdzone na HW: `ctl=0x40008451` (bit30
   isochHeader aktywny), `drainedTotal=54569` — OHCI odbiera mnóstwo pakietów IR. Ale ZTS nadal

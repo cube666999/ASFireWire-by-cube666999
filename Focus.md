@@ -51,32 +51,56 @@ Archiwum ukończonych sesji → `DevLog.md`
 > (`RxAudioPacketProcessor` + `DecodeMotuV3Frame`), stały DBS=16, 18 PCM (3-bajtowe chunki, offset 10),
 > ZTS z OHCI HW timestamp (isochHeader=1). `kRxPcmChannels` 16→18. Diag v31/v35/v36 usunięte.
 >
-> ### 🔬 NASTĘPNY KROK — weryfikacja jakości audio (Ty)
-> ZTS/StartIO działa, ale trzeba potwierdzić **słyszalność i poprawność**:
-> - **Output**: czy muzyka gra czysto z MOTU Main Out? (mapa slotów IT już potwierdzona)
-> - **Input**: nagraj coś z wejścia MOTU → czy sygnał jest na właściwym kanale, bez przesteru/szumu?
->   Jeśli kanały pomieszane / zły poziom → **mapa slotów IR** (który fizyczny wejście = który z 18
->   slotów) — do zebrania znanym sygnałem (Virus TI → Analog In 1), patrz MOTU_V3_WIRE_GROUNDTRUTH.md.
-> - Justyfikacja PCM (right-justified sign-extended, jak AM824) — zweryfikować że nie jest cicho/głośno.
+> ### 🔬 STAN PO v117 (test hardware 2026-06-22)
+> - ✅ **ZTS/StartIO/duplex up** — device startuje (cel sesji osiągnięty).
+> - ❌ **Playback NIE gra** — `[PayloadWriter] written=0 withoutPkt=visited maxAbs=0.0`: callback
+>   wyjścia odwiedza ramki, ale TX nie eksponuje pakietów (**TX underexposure**). To NIE ZTS —
+>   osobny bug ścieżki wyjścia (IT). Routing OK (callback woła), CoreAudio dostarcza, ale nic nie
+>   ląduje na drucie. → naprawione upstream (`4e1dbc9`), patrz sekcja „integracja origin/DICE" niżej.
+> - ⏳ **Input quality** — niezweryfikowane (do testu po naprawie TX): czy 18 slotów IR mapuje się na
+>   właściwe wejścia (mapa slotów IR do zebrania znanym sygnałem, Virus TI → Analog In 1).
+>
+> **DECYZJA użytkownika 2026-06-22:** integrować origin/DICE (TX fix). To RE-PORT na Float32, nie
+> merge — patrz sekcja „🔴 NASTĘPNY DUŻY KROK" niżej z gotowym planem.
 
-### ⚠️ origin/DICE (mrmidi) jest 28 commitów przed nami — NIE scalone
+### 🔴 NASTĘPNY DUŻY KROK — integracja origin/DICE (TX exposure fix) = RE-PORT, nie merge
 
-`git fetch origin` (2026-06-19) pokazał: `dice-motu` rozjechał się od `origin/DICE` w `d200603`,
-mrmidi zrobił od tego momentu 28 commitów (`git log dice-motu..origin/DICE`). **Nie rozwiązują**
-naszego buga MOTU V3 CIP — `RxAudioPacketProcessor.cpp`/`kIsochHeaderSize=8` identyczne, `Poll()`'s
-ZTS-publish wciąż wymaga `framesDecoded!=0` (czyli udanego CIP decode). Żaden commit message nie
-wspomina MOTU — prawdopodobnie testowane na innym DICE-sprzęcie ze "podręcznikowym" CIP.
+**Dlaczego:** playback (wyjście IT) NIE gra mimo działającego ZTS. `[PayloadWriter]` log:
+`written=0 withoutPkt=visited maxAbs=0.0` → callback wyjścia odwiedza ramki, ale nie znajduje
+pakietu IT (TX **underexposure**). To NIE ZTS. mrmidi naprawił tę klasę upstream:
+`4e1dbc9 fix(audio): enforce tx frame exposure lead`, `440a297 surface tx underexposure telemetry`.
 
-**Warte integracji później (decyzja użytkownika 2026-06-19: dokończyć v36 najpierw):**
-- `0950319` FW-62 — use-after-free/TOCTOU guard w `Poll()` (DOKŁADNIE plik który edytujemy!)
-- `5a0b306` HAL input safety offset 624→128 frames (~10.7ms phantom latency fix)
-- `fc3f46b` RX capture path → Float32
-- `191302b` ZTS publish rework (`ztsProjector_` usunięty, periodic-boundary publish)
-- Upstream IR `Start()` używa `kRun|kIsochHeader` **bez `kWake`** — nasz "Bug D"/kWake (v12,
-  `2c17a1a`) nigdy nie istniał upstream, jest lokalnym fixem tylko w `dice-motu`.
+**Stan rozjazdu (`git fetch origin`, 2026-06-22):** merge-base `d200603`. **origin/DICE jest 66
+commitów przed nami** (rośnie — był 28), my 50 przed nim. ⚠️ **origin/DICE NIE MA ŻADNYCH plików
+MOTU** — całe wsparcie MOTU to wyłącznie nasz dodatek.
 
-Pełna lista: `git log --oneline dice-motu..origin/DICE`. Branch `DICE` (lokalny) trackuje
-`origin/DICE`, jest 28 commitów za nim.
+**❗ Próba `git merge origin/DICE` (2026-06-22) — przerwana, to RE-PORT:**
+- Konflikty tekstowe małe (4): `.gitignore`, `DiceDuplexRestartCoordinator.cpp/.hpp`, `CLAUDE.md`.
+- **ALE upstream przepisał RX na Float32** (`fc3f46b`): `DecodeDirectRxFrame(... float* out)`,
+  `writer_.Frame()` zwraca **`float*`**. Nasz `DecodeMotuV3Frame(int32_t*)` i ścieżka MOTU
+  (`int32_t* frameOut`) **nie skompilują się** — trzeba przerobić dekoder MOTU na **float**
+  (`Detail::Signed24ToFloat32` na 3-bajtowych próbkach; konwencja jest już w upstream
+  `DirectRxPacketDecoder.hpp`).
+- Auto-merge „przeszedł" w `IsochReceiveContext.cpp` ale to NIE znaczy semantycznie poprawnie —
+  trzeba zweryfikować nasz v34 `kRun|kWake|kIsochHeader` Start() vs upstream ZTS rework (`191302b`
+  usunął `ztsProjector_`).
+
+**Plan re-portu (do świeżej sesji, hardware iteration):**
+1. Gałąź integracyjna z dice-motu (v117 zostaje fallbackiem — zweryfikowane, pushnięte).
+2. `git merge origin/DICE`; rozwiąż 4 konflikty (coordinator = nasz `kMotuV3Packed` branch + ich zmiany).
+3. **Przerób ścieżkę MOTU IR na Float32**: `DecodeMotuV3Frame` → float, `RxAudioPacketProcessor`
+   MOTU path `float* frameOut`.
+4. Zweryfikuj że nasze pliki MOTU (profile/protocol — nowe, nie konfliktują) grają z API upstream
+   (sygnatura `Configure`, writer, AudioGraphBinding).
+5. Build (spodziewaj się błędów kompilacji float/API) → test hardware: czy `written>0` / playback gra.
+
+**Korzyści integracji:** TX exposure fix (playback), FW-62 use-after-free guard, HAL offset 624→128,
+RX Float32, ZTS rework — plus alignment z mrmidi (łatwiejszy PR MOTU).
+
+**Alternatywa:** oddać wsparcie MOTU mrmidiemu (origin/DICE go nie ma) — on zna swój TX rework,
+zintegruje nasz device-facing MOTU + ground-truth na swojej bazie. Nasz fork + docs już pushnięte.
+
+Pełna lista: `git log --oneline dice-motu..origin/DICE`.
 
 ### (archiwum) v15 — dwuetapowy ISOC_COMM_CONTROL + ZTS 3000ms
 
