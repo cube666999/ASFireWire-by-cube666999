@@ -155,6 +155,10 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
 
         WriteCipHeader(slot.bytes, cipBuilder_.BuildData(dbc, outPacket.syt));
         WriteDataPacketDefaults(slot.bytes, slot.capacityBytes, payloadBytes);
+        if (txPolicy_.hostToDevicePcmEncoding ==
+            PcmSlotEncoding::MotuV3Packed) {
+            WriteMotuSph(slot.bytes, frames, timing);
+        }
 
         if (!timeline_->ExposeDataPacket(outPacket, slot.bytes,
                                          slot.capacityBytes)) {
@@ -202,6 +206,15 @@ void AmdtpTxPacketizer::WriteDataPacketDefaults(uint8_t* packetBytes,
         }
     }
 
+    // MOTU V3 data blocks are not 4-byte AM824 slots: the SPH quadlet (block
+    // bytes 0-3) and the 2 MSG chunks (bytes 4-9) must stay zero here (the
+    // clearPayload pass above already zeroed them; the SPH is written by
+    // WriteMotuSph after exposure). Writing AM824 "non-audio slot" words would
+    // corrupt the MSG/PCM region, so skip it for MOTU-packed.
+    if (txPolicy_.hostToDevicePcmEncoding == PcmSlotEncoding::MotuV3Packed) {
+        return;
+    }
+
     if (txPolicy_.initializeNonAudioSlots &&
         streamConfig_.dbs > streamConfig_.pcmChannels) {
         const uint32_t frames = payloadBytes / (streamConfig_.dbs * kBytesPerSlot);
@@ -212,6 +225,42 @@ void AmdtpTxPacketizer::WriteDataPacketDefaults(uint8_t* packetBytes,
                           txPolicy_.defaultNonAudioSlotWord);
             }
         }
+    }
+}
+
+void AmdtpTxPacketizer::WriteMotuSph(uint8_t* packetBytes,
+                                    uint8_t frames,
+                                    const AmdtpTimingState& timing) noexcept {
+    // MOTU V3 source-packet-header: the first quadlet of each data block is a
+    // presentation timestamp in OHCI cycle-time form (bits[24:12]=cycle 0-7999,
+    // bits[11:0]=offset 0-3071), big-endian. Per block it advances one sample
+    // period (512 ticks @ 48 kHz) so the timestamps are monotonic in transmit
+    // order. Sourced from the per-packet presentation tick computed by the
+    // driver (AmdtpTimingState.motuSphBaseTicks); the pre-replay / prefill
+    // phase has no anchor (motuSphValid=false → SPH=0, which is enough for MOTU
+    // to start IR from DATA packets but carries no real audio yet).
+    // See main DevLog Fix 62: a stale/past SPH makes MOTU reject every frame.
+    constexpr uint64_t kTicksPerCycle = 3072;
+    constexpr uint64_t kCyclesPerSecond = 8000;
+    constexpr uint64_t kTicksPerSecond = kTicksPerCycle * kCyclesPerSecond;
+    constexpr uint64_t kTicksPerSample = 512; // 48 kHz: 3072*8000/48000
+
+    for (uint8_t f = 0; f < frames; ++f) {
+        uint32_t sph = 0;
+        if (timing.motuSphValid) {
+            const uint64_t base = static_cast<uint64_t>(timing.motuSphBaseTicks);
+            const uint64_t tick =
+                (base + static_cast<uint64_t>(f) * kTicksPerSample) %
+                kTicksPerSecond;
+            const uint32_t cyc =
+                static_cast<uint32_t>((tick / kTicksPerCycle) % kCyclesPerSecond);
+            const uint32_t off = static_cast<uint32_t>(tick % kTicksPerCycle);
+            sph = (cyc << 12) | off;
+        }
+        uint8_t* block = packetBytes + kCipHeaderBytes +
+                         static_cast<uint32_t>(f) * streamConfig_.dbs *
+                             kBytesPerSlot;
+        WriteBE32(block, sph);
     }
 }
 

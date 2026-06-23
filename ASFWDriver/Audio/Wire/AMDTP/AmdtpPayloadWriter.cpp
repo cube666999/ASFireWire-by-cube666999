@@ -50,6 +50,12 @@ namespace {
 constexpr uint32_t kCipHeaderBytes = 8;
 constexpr uint32_t kBytesPerSlot = 4;
 
+// MOTU V3 IT data block: SPH(4B) + 2 MSG chunks (6B) → PCM starts at byte 10,
+// 3 bytes per channel. SPH + MSG are owned by the packetizer; the payload
+// writer only overwrites the PCM region. See MOTU_V3_WIRE_GROUNDTRUTH.md.
+constexpr uint32_t kMotuV3PcmByteOffset = 10;
+constexpr uint32_t kMotuV3BytesPerChannel = 3;
+
 inline void WriteBE32(uint8_t* dest, uint32_t value) noexcept {
     dest[0] = static_cast<uint8_t>(value >> 24);
     dest[1] = static_cast<uint8_t>(value >> 16);
@@ -126,22 +132,57 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
         uint8_t* dest = snap.packetBytes + kCipHeaderBytes +
                         frameInPacket * snap.dbs * kBytesPerSlot;
 
-        const uint32_t pcmSlots = (streamConfig_.pcmChannels < snap.dbs)
-                                      ? streamConfig_.pcmChannels
-                                      : snap.dbs;
         bool frameNonZero = false;
-        for (uint32_t ch = 0; ch < pcmSlots; ++ch) {
-            const float sample =
-                (ch < hostBuffer.channels) ? source[ch] : 0.0f;
-            WriteBE32(dest + ch * kBytesPerSlot,
-                      PcmSlotCodec::EncodeFloat32(
-                          sample, txPolicy_.hostToDevicePcmEncoding));
-            if (sample != 0.0f) {
-                frameNonZero = true;
-                ++nonZeroSlots;
-                const float absSample = (sample >= 0.0f) ? sample : -sample;
-                if (absSample > localMaxAbs) {
-                    localMaxAbs = absSample;
+        if (txPolicy_.hostToDevicePcmEncoding ==
+            PcmSlotEncoding::MotuV3Packed) {
+            // MOTU V3: pack PCM as 3-byte big-endian chunks starting at block
+            // byte offset 10, channel ch → byte 10 + ch*3. Stereo lands on
+            // slots 0/1 (Main Out L/R). SPH (bytes 0-3) and MSG (bytes 4-9)
+            // are written by the packetizer and left untouched here.
+            const uint32_t blockBytes = snap.dbs * kBytesPerSlot;
+            const uint32_t maxPcm =
+                (blockBytes > kMotuV3PcmByteOffset)
+                    ? (blockBytes - kMotuV3PcmByteOffset) /
+                          kMotuV3BytesPerChannel
+                    : 0;
+            const uint32_t pcmSlots =
+                (streamConfig_.pcmChannels < maxPcm) ? streamConfig_.pcmChannels
+                                                     : maxPcm;
+            for (uint32_t ch = 0; ch < pcmSlots; ++ch) {
+                const float sample =
+                    (ch < hostBuffer.channels) ? source[ch] : 0.0f;
+                const int32_t s24 = PcmSlotCodec::Float32ToSigned24(sample);
+                uint8_t* dst = dest + kMotuV3PcmByteOffset +
+                               ch * kMotuV3BytesPerChannel;
+                dst[0] = static_cast<uint8_t>((s24 >> 16) & 0xFF);
+                dst[1] = static_cast<uint8_t>((s24 >> 8) & 0xFF);
+                dst[2] = static_cast<uint8_t>(s24 & 0xFF);
+                if (sample != 0.0f) {
+                    frameNonZero = true;
+                    ++nonZeroSlots;
+                    const float absSample = (sample >= 0.0f) ? sample : -sample;
+                    if (absSample > localMaxAbs) {
+                        localMaxAbs = absSample;
+                    }
+                }
+            }
+        } else {
+            const uint32_t pcmSlots = (streamConfig_.pcmChannels < snap.dbs)
+                                          ? streamConfig_.pcmChannels
+                                          : snap.dbs;
+            for (uint32_t ch = 0; ch < pcmSlots; ++ch) {
+                const float sample =
+                    (ch < hostBuffer.channels) ? source[ch] : 0.0f;
+                WriteBE32(dest + ch * kBytesPerSlot,
+                          PcmSlotCodec::EncodeFloat32(
+                              sample, txPolicy_.hostToDevicePcmEncoding));
+                if (sample != 0.0f) {
+                    frameNonZero = true;
+                    ++nonZeroSlots;
+                    const float absSample = (sample >= 0.0f) ? sample : -sample;
+                    if (absSample > localMaxAbs) {
+                        localMaxAbs = absSample;
+                    }
                 }
             }
         }

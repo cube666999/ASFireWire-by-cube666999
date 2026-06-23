@@ -44,6 +44,12 @@ private:
     void WriteCipHeader(uint8_t* packetBytes,
                         const IEC61883::CipHeaderWords& header) noexcept;
 
+    // MOTU V3 only: write the per-data-block source-packet-header timestamp
+    // (block bytes 0-3) for `frames` blocks, advancing one sample period each.
+    void WriteMotuSph(uint8_t* packetBytes,
+                      uint8_t frames,
+                      const AmdtpTimingState& timing) noexcept;
+
     [[nodiscard]] uint32_t DataPacketBytes() const noexcept;
     [[nodiscard]] uint32_t PayloadBytes() const noexcept;
 

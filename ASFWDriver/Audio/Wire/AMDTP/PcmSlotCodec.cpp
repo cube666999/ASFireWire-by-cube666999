@@ -57,6 +57,10 @@ uint32_t PcmSlotCodec::EncodeFloat32(float sample, PcmSlotEncoding encoding) noe
         return EncodeRawSigned24In32BE(sample);
     case PcmSlotEncoding::RawSigned24In32LE:
         return EncodeRawSigned24In32LE(sample);
+    case PcmSlotEncoding::MotuV3Packed:
+        // MOTU V3 is not a 4-byte slot encoding — the payload writer packs it
+        // as 3-byte chunks directly and never routes through the codec. Listed
+        // only to keep the switch exhaustive.
     case PcmSlotEncoding::Am824MBLA:
         break;
     }
@@ -77,6 +81,8 @@ uint32_t PcmSlotCodec::EncodeInt32(
         return static_cast<uint32_t>(signed24);
     case PcmSlotEncoding::RawSigned24In32LE:
         return ByteSwap32(static_cast<uint32_t>(signed24));
+    case PcmSlotEncoding::MotuV3Packed:
+        // Not a 4-byte slot encoding (see EncodeFloat32). Exhaustive-switch only.
     case PcmSlotEncoding::Am824MBLA:
         break;
     }

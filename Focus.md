@@ -65,27 +65,37 @@ Archiwum ukończonych sesji → `DevLog.md`
 > **DECYZJA użytkownika 2026-06-22:** integrować origin/DICE (TX fix). To RE-PORT na Float32, nie
 > merge — patrz sekcja „🔴 NASTĘPNY DUŻY KROK" niżej z gotowym planem.
 
-### 🟢 INTEGRACJA OK + TX EXPOSURE NAPRAWIONY — zostaje enkoder IT (gałąź `integrate-dice-c2bdf11`)
+### 🟢 ENKODER IT MOTU-PACKED ZAIMPLEMENTOWANY (v121) — DO TESTU HARDWARE
 
-**ZACZNIJ TU w nowej sesji.** Gałąź `integrate-dice-c2bdf11` (na forku `cube666`), v119.
+**ZACZNIJ TU w nowej sesji.** Gałąź `integrate-dice-c2bdf11` (fork `cube666`), **v121** — enkoder IT
+MOTU-packed napisany, build OK, C++ 1089/1089. **Czeka na test hardware: czy MOTU gra + diody.**
 
-**Stan po teście hardware (2026-06-23):**
-- ✅ Integracja `c2bdf11` (merge `fd26d6d`): build OK, C++ 1089/1089, MOTU enumeruje (po **restarcie** —
-  pierwszy start dał flaky bus/ROM-scan, NIE regresja: warstwa async/ROM identyczna z v117), ZTS publikuje, StartIO OK.
-- ✅ **TX exposure NAPRAWIONY** przez upstream `4e1dbc9`: `IT WIRE maxAbs24=5.5M` (było 0 w v117),
-  `zeroPcm`≈150, `dropouts=0` → realne PCM leci na drut. Problem `written=0/withoutPkt` ZNIKNĄŁ.
-- ❌ **Cisza + brak diod MOTU** = ostatnie ogniwo: enkoder IT wysyła **AM824** (`lastQuad=0x40000000`),
-  a MOTU V3 IT oczekuje **MOTU-packed** (jak IR): blok = SPH(4B) + 2 MSG + **14 PCM 3-bajtowe @ offset 10**,
-  DBS=13, OS-stereo na slotach 0/1 (Main Out). MOTU nie rozpoznaje AM824 → nic nie gra.
+**Stan bazowy (v119, hardware 2026-06-23):**
+- ✅ Integracja `c2bdf11`: ZTS publikuje, StartIO OK, duplex up.
+- ✅ TX exposure (upstream `4e1dbc9`): `IT WIRE maxAbs24=5.5M` → realne PCM leci na drut.
+- ❌ Cisza: enkoder IT wysyłał **AM824** (`lastQuad=0x40000000`), MOTU V3 chce MOTU-packed.
 
-**🔧 NASTĘPNY KROK — enkoder IT MOTU-packed (= dźwięk):**
-1. Zbadać **nową ścieżkę TX z integracji** (upstream przepisał: `AmdtpPayloadWriter.cpp/.hpp`,
-   `TxTimingModel`, `TxAnchorTracker` zamiast naszego `AmdtpTxPacketizer`). Znaleźć gdzie PCM→drut
-   się koduje i jak wstrzyknąć format MOTU (analogicznie do `kMotuV3Packed` po stronie RX — osobna
-   ścieżka kluczowana na vendor/format MOTU).
-2. Zaimplementować pakowanie: SPH + 2 MSG + 14 PCM (3-bajtowe BE), PCM na byte offset 10, sloty 0/1=Main Out.
-3. Ground-truth IT → `../ASFireWire/documentation/MOTU_V3_WIRE_GROUNDTRUTH.md` (mapa slotów, CIP Q0=030d04xx/Q1=8222ffff).
-4. Build → test: czy **diody MOTU zapalają się** i **słychać**.
+**🔧 Fix v121 — enkoder IT MOTU-packed (7 plików, decyzja użytkownika: ground-truth z kabla):**
+Wartości z kabla (El Cap + Linux), NIE z kodu main (main miał DBS=16/FMT=0x10/slot10 — niezsynced
+z własnym ground-truthem). Profil MOTU już miał `dbs=13/pcm=14/fmt=0x02/fdf=0x22/sph=true`; dodano:
+1. `AmdtpTypes.hpp` — `PcmSlotEncoding::MotuV3Packed`; pola `motuSphBaseTicks/motuSphValid` w `AmdtpTimingState`.
+2. `PcmSlotCodec.cpp` — case MotuV3Packed (exhaustive switch).
+3. `AmdtpPayloadWriter.cpp` — branch MOTU: PCM 3-bajtowe BE @ byte `10+ch*3` (`Float32ToSigned24`), SPH/MSG nietknięte.
+4. `AmdtpTxPacketizer.{hpp,cpp}` — `WriteMotuSph` (SPH = `outputPresentationTicks`+512/ramkę, cyc<<12|off), pomija AM824 non-audio sloty dla MOTU.
+5. `DiceTxStreamEngine.cpp` (Direct/Tx) — `BuildTxPolicy`: `kMotuV3Packed → MotuV3Packed`.
+6. `MOTU828Mk3Profile.cpp` — `quirks.tx.hostToDevicePcmEncoding = kMotuV3Packed`.
+7. `ASFWAudioDriverZts.cpp` — `timing.motuSphBaseTicks = outputPresentationTicks` (replay path).
+
+**SPH = mirror intencji main Fix 62** (stale SPH → MOTU odrzuca ramki), ale z dice tick-anchorem
+(`outputPresentationTicks` = packetAnchor + sytOffset + txDelay) zamiast free-running cursora main.
+
+**🔬 TEST v121:** zainstaluj `~/Desktop/ASFW_dice_v121.app`, `systemextensionsctl list`=121, zagraj
+przez MOTU. Oczekiwane: **diody ANALOG OUT/Main się zapalają + słychać** na Main Out 1/2. Logi:
+```bash
+/usr/bin/log show --last 2m --debug --info 2>/dev/null | grep "ASFWDriver.dext" | grep -E "IT WIRE|maxAbs|StartIO|TxPrep|sph"
+```
+Jeśli cisza mimo `maxAbs>0`: podejrzenie SPH (sprawdź czy `motuSphValid` ustawiane — replay path) lub
+slot map (slot 0/1 vs main twierdzi 10/11 — wtedy zmień `kMotuV3OutputSlotBase` analogicznie do main Fix 74).
 
 **Topologia / fallbacki (oba na forku `cube666`):**
 - `integrate-dice-c2bdf11` @ `4d7927f` (v119) — AKTYWNA, integracja + TX-exposure, brak enkodera IT.

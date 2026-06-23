@@ -350,6 +350,13 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                         directControl
                             ->txTransferDelayTicks.load(
                                 std::memory_order_relaxed));
+                // MOTU V3 SPH: the per-block source-packet-header timestamp the
+                // packetizer writes is this packet's presentation tick (cycle
+                // time the device should play the first frame). Advances 512
+                // ticks/frame inside the packetizer. Without it MOTU rejects
+                // audio frames (main DevLog Fix 62). No-op for non-MOTU TX.
+                timing.motuSphBaseTicks = outputPresentationTicks;
+                timing.motuSphValid = true;
                 const int64_t presentationDeltaTicks =
                     ASFW::Timing::extOffsetDiff(
                         outputPresentationTicks,

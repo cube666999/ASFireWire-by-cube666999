@@ -80,7 +80,12 @@ bool MOTU828Mk3Profile::Matches(const DiceDeviceIdentity& identity) const noexce
 
 DiceDeviceQuirks MOTU828Mk3Profile::Quirks() const noexcept {
     DiceDeviceQuirks quirks{};
-    quirks.tx.hostToDevicePcmEncoding = Encoding::AudioWireFormat::kAM824;
+    // MOTU V3 IT is NOT standard AM824: each DBS=13 data block is SPH(4B) +
+    // 2 MSG chunks + 14 PCM chunks (3-byte big-endian @ block byte offset 10),
+    // stereo on slots 0/1 (Main Out). Encoded via the kMotuV3Packed TX path
+    // (AmdtpPayloadWriter 3-byte packing + AmdtpTxPacketizer SPH), mirroring the
+    // RX MOTU-packed decode. See MOTU_V3_WIRE_GROUNDTRUTH.md.
+    quirks.tx.hostToDevicePcmEncoding = Encoding::AudioWireFormat::kMotuV3Packed;
     quirks.tx.dbsPolicy = DbsPolicy::Constant;
     // MOTU V3 emits IR only after it receives IT. Start IT immediately rather
     // than deferring it behind IR replay (which would deadlock). See
