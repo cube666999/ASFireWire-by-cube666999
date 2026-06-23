@@ -216,40 +216,63 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
         // the per-data-block source-packet-header (SPH), NOT the CIP SYT (which
         // MOTU leaves 0xFFFF). MOTU's IR carries no valid SYT either, so the
         // replay/SYT machinery never establishes for it — the SPH must come from
-        // a real OHCI transmit anchor, independent of replay. AnchorForPacket
-        // projects the packet's transmit cycle from OHCI completion stamps (no
-        // SYT needed); the packetizer seeds its free-running SPH cursor from this
-        // once, then advances 512 ticks/frame. Available only once TX completions
-        // flow (startup packets get SPH=0, which still starts MOTU's IR).
-        {
-            int64_t motuSphAnchorTicks = 0;
-            if (ivars.runtime.txExecutionTimeline.AnchorForPacket(
-                    nextPacketToPrepare, motuSphAnchorTicks)) {
+        // the live OHCI cycle timer, independent of replay.
+        //
+        // The core publishes a fresh CYCLE_TIMER snapshot every refill in
+        // TxStreamControl::clockPair (IsochTxDmaRing::Refill) — the dice analog of
+        // main's currentCycleTime_. Reconstruct THIS packet's transmit cycle:
+        //   transmit ≈ clock cycle + (packetIndex - completionCursor) cycles ahead
+        // (completionCursor is the live retirement point), + a small presentation
+        // lead. The packetizer seeds its free-running SPH cursor from this ONCE
+        // then advances 512 ticks/frame (= the data-packet cadence, so the lead
+        // holds). NOTE: AnchorForPacket's completion-stamp ring proved stale on
+        // hardware (frozen packetIndex → garbage projection), so clockPair +
+        // completionCursor are used directly instead.
+        if (auto* motuTxCtl = ivars.runtime.txSlotProvider.controlBlock) {
+            ASFW::IsochTransport::ClockPairSample motuClk{};
+            if (motuTxCtl->clockPair.TryRead(motuClk) &&
+                motuClk.cycleTimer32 != 0) {
+                constexpr int64_t kTicksPerCycle = 3072;
+                constexpr int64_t kCyclesPerSecond = 8000;
                 constexpr int64_t kMotuSphPresentationLeadTicks =
-                    2 * static_cast<int64_t>(ASFW::Timing::kTicksPerCycle);
-                timing.motuSphBaseTicks = ASFW::Timing::normalizeOffsetDomain(
-                    motuSphAnchorTicks + kMotuSphPresentationLeadTicks);
+                    2 * kTicksPerCycle; // tunable on hardware
+                const uint32_t ct = motuClk.cycleTimer32;
+                const int64_t clockTicks =
+                    static_cast<int64_t>(((ct >> 12) & 0x1FFF) %
+                                         kCyclesPerSecond) *
+                        kTicksPerCycle +
+                    static_cast<int64_t>(ct & 0x0FFF);
+                const uint64_t completion =
+                    motuTxCtl->completionCursor.load(std::memory_order_acquire);
+                const int64_t packetsAhead =
+                    static_cast<int64_t>(nextPacketToPrepare) -
+                    static_cast<int64_t>(completion);
+                timing.motuSphBaseTicks = clockTicks +
+                                          packetsAhead * kTicksPerCycle +
+                                          kMotuSphPresentationLeadTicks;
                 timing.motuSphValid = true;
 
-                // One-shot-ish diagnostic (~1/s): confirm SPH is a rising
-                // cycle-time value (Δ≈512), not 0 — answers "does our SPH match
-                // El Cap?" on hardware without guessing.
+                // Diagnostic (~throttled): confirms SPH derives from a live,
+                // rising cycle timer — answers "does our SPH match El Cap?" on
+                // hardware without guessing. Tune kMotuSphPresentationLeadTicks
+                // if MOTU still rejects (SPH ahead/behind live ct).
                 static uint32_t sphDbgCount = 0;
-                if ((sphDbgCount++ % 6000u) == 0u) {
-                    const uint64_t t = static_cast<uint64_t>(
-                        timing.motuSphBaseTicks) % ASFW::Timing::kTicksPerSecond;
-                    const uint32_t cyc = static_cast<uint32_t>(
-                        (t / ASFW::Timing::kTicksPerCycle) %
-                        ASFW::Timing::kCyclesPerSecond);
-                    const uint32_t off = static_cast<uint32_t>(
-                        t % ASFW::Timing::kTicksPerCycle);
+                if ((sphDbgCount++ % 2000u) == 0u) {
+                    const uint64_t domain = static_cast<uint64_t>(kTicksPerCycle) *
+                                            kCyclesPerSecond;
+                    const uint64_t t =
+                        static_cast<uint64_t>(timing.motuSphBaseTicks) % domain;
+                    const uint32_t seedCyc = static_cast<uint32_t>(
+                        (t / kTicksPerCycle) % kCyclesPerSecond);
+                    const uint32_t seedOff =
+                        static_cast<uint32_t>(t % kTicksPerCycle);
                     ASFW_LOG(DirectAudio,
-                             "[MotuSph] pkt=%llu anchorTicks=%lld baseTicks=%lld "
-                             "sph=0x%07x (cyc=%u off=%u)",
-                             nextPacketToPrepare,
-                             static_cast<long long>(motuSphAnchorTicks),
-                             static_cast<long long>(timing.motuSphBaseTicks),
-                             (cyc << 12) | off, cyc, off);
+                             "[MotuSph] pkt=%llu compl=%llu ahead=%lld "
+                             "ct=0x%08x(cyc=%u off=%u) seedSph=0x%07x(cyc=%u off=%u)",
+                             nextPacketToPrepare, completion,
+                             static_cast<long long>(packetsAhead), ct,
+                             (ct >> 12) & 0x1FFF, ct & 0x0FFF,
+                             (seedCyc << 12) | seedOff, seedCyc, seedOff);
                 }
             }
         }
