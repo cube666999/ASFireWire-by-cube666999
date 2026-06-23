@@ -212,6 +212,48 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
             ASFW::Protocols::Audio::AMDTP::
                 AmdtpPacketDisposition::Data;
 
+        // MOTU V3 SPH seed: unlike SYT-driven devices, MOTU times playback from
+        // the per-data-block source-packet-header (SPH), NOT the CIP SYT (which
+        // MOTU leaves 0xFFFF). MOTU's IR carries no valid SYT either, so the
+        // replay/SYT machinery never establishes for it — the SPH must come from
+        // a real OHCI transmit anchor, independent of replay. AnchorForPacket
+        // projects the packet's transmit cycle from OHCI completion stamps (no
+        // SYT needed); the packetizer seeds its free-running SPH cursor from this
+        // once, then advances 512 ticks/frame. Available only once TX completions
+        // flow (startup packets get SPH=0, which still starts MOTU's IR).
+        {
+            int64_t motuSphAnchorTicks = 0;
+            if (ivars.runtime.txExecutionTimeline.AnchorForPacket(
+                    nextPacketToPrepare, motuSphAnchorTicks)) {
+                constexpr int64_t kMotuSphPresentationLeadTicks =
+                    2 * static_cast<int64_t>(ASFW::Timing::kTicksPerCycle);
+                timing.motuSphBaseTicks = ASFW::Timing::normalizeOffsetDomain(
+                    motuSphAnchorTicks + kMotuSphPresentationLeadTicks);
+                timing.motuSphValid = true;
+
+                // One-shot-ish diagnostic (~1/s): confirm SPH is a rising
+                // cycle-time value (Δ≈512), not 0 — answers "does our SPH match
+                // El Cap?" on hardware without guessing.
+                static uint32_t sphDbgCount = 0;
+                if ((sphDbgCount++ % 6000u) == 0u) {
+                    const uint64_t t = static_cast<uint64_t>(
+                        timing.motuSphBaseTicks) % ASFW::Timing::kTicksPerSecond;
+                    const uint32_t cyc = static_cast<uint32_t>(
+                        (t / ASFW::Timing::kTicksPerCycle) %
+                        ASFW::Timing::kCyclesPerSecond);
+                    const uint32_t off = static_cast<uint32_t>(
+                        t % ASFW::Timing::kTicksPerCycle);
+                    ASFW_LOG(DirectAudio,
+                             "[MotuSph] pkt=%llu anchorTicks=%lld baseTicks=%lld "
+                             "sph=0x%07x (cyc=%u off=%u)",
+                             nextPacketToPrepare,
+                             static_cast<long long>(motuSphAnchorTicks),
+                             static_cast<long long>(timing.motuSphBaseTicks),
+                             (cyc << 12) | off, cyc, off);
+                }
+            }
+        }
+
         if (allowRecoveredClock) {
             // Replay path overrides the pre-replay defaults set above:
             // replayValid=true so replayDataBlocks drives frame count, and
@@ -350,13 +392,6 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                         directControl
                             ->txTransferDelayTicks.load(
                                 std::memory_order_relaxed));
-                // MOTU V3 SPH: the per-block source-packet-header timestamp the
-                // packetizer writes is this packet's presentation tick (cycle
-                // time the device should play the first frame). Advances 512
-                // ticks/frame inside the packetizer. Without it MOTU rejects
-                // audio frames (main DevLog Fix 62). No-op for non-MOTU TX.
-                timing.motuSphBaseTicks = outputPresentationTicks;
-                timing.motuSphValid = true;
                 const int64_t presentationDeltaTicks =
                     ASFW::Timing::extOffsetDiff(
                         outputPresentationTicks,

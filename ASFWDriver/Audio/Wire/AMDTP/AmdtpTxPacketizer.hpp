@@ -67,6 +67,10 @@ private:
 
     uint64_t nextAudioFrame_{0};
     bool frameCursorAligned_{false};
+
+    // MOTU V3 SPH cursor (free-running, seeded once). See WriteMotuSph.
+    int64_t motuSphTickCursor_{0};
+    bool motuSphSeeded_{false};
 };
 
 } // namespace ASFW::Protocols::Audio::AMDTP

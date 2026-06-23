@@ -91,6 +91,8 @@ void AmdtpTxPacketizer::Reset(uint8_t initialDbc,
     dbcCounter_.Reset(initialDbc);
     nextAudioFrame_ = initialAudioFrame;
     frameCursorAligned_ = false;
+    motuSphTickCursor_ = 0;
+    motuSphSeeded_ = false;
     if (cadence_ != nullptr) {
         cadence_->Reset();
     }
@@ -149,9 +151,15 @@ bool AmdtpTxPacketizer::PrepareNextPacket(TxPacketSlotView slot,
     outPacket.framesInPacket = isData ? frames : 0;
 
     if (isData) {
-        outPacket.syt = timing.txClockValid
-                            ? timing.nextDataSyt
-                            : IEC61883::SytFormatter::kNoInfo;
+        // MOTU V3 always carries SYT=0xFFFF (NO_INFO) — it times playback from
+        // the per-block SPH, not the CIP SYT (El Cap wire: Q1=0x8222ffff always).
+        // For SYT-driven devices, use the replay-recovered SYT when the clock is
+        // valid, else NO_INFO.
+        outPacket.syt =
+            (txPolicy_.hostToDevicePcmEncoding == PcmSlotEncoding::MotuV3Packed)
+                ? IEC61883::SytFormatter::kNoInfo
+                : (timing.txClockValid ? timing.nextDataSyt
+                                       : IEC61883::SytFormatter::kNoInfo);
 
         WriteCipHeader(slot.bytes, cipBuilder_.BuildData(dbc, outPacket.syt));
         WriteDataPacketDefaults(slot.bytes, slot.capacityBytes, payloadBytes);
@@ -233,29 +241,48 @@ void AmdtpTxPacketizer::WriteMotuSph(uint8_t* packetBytes,
                                     const AmdtpTimingState& timing) noexcept {
     // MOTU V3 source-packet-header: the first quadlet of each data block is a
     // presentation timestamp in OHCI cycle-time form (bits[24:12]=cycle 0-7999,
-    // bits[11:0]=offset 0-3071), big-endian. Per block it advances one sample
-    // period (512 ticks @ 48 kHz) so the timestamps are monotonic in transmit
-    // order. Sourced from the per-packet presentation tick computed by the
-    // driver (AmdtpTimingState.motuSphBaseTicks); the pre-replay / prefill
-    // phase has no anchor (motuSphValid=false → SPH=0, which is enough for MOTU
-    // to start IR from DATA packets but carries no real audio yet).
-    // See main DevLog Fix 62: a stale/past SPH makes MOTU reject every frame.
+    // bits[11:0]=offset 0-3071), big-endian, advancing one sample period
+    // (512 ticks @ 48 kHz) per block. El Cap wire shows a smooth rising SPH
+    // (Δ≈512), NOT re-anchored per packet.
+    //
+    // Seed-once-free-run (mirrors main PacketAssembler::writeMotuV3SphAndAdvance):
+    // seed the cursor ONCE from the first available hardware transmit anchor
+    // (AmdtpTimingState.motuSphBaseTicks, derived from OHCI completion stamps —
+    // see ASFWAudioDriverZts), then free-run +512/frame. MOTU does NOT use the
+    // CIP SYT (always 0xFFFF); it times playback from this SPH. A stale/past or
+    // zero SPH makes MOTU reject every frame (main DevLog Fix 62) — which is why
+    // a real, monotonic cycle-time seed is required, not the SYT/replay path
+    // (MOTU's IR has no valid SYT so replay never establishes for it).
+    //
+    // Re-anchoring per packet would make the SPH track the cycle cadence
+    // (3072 ticks/packet-index) instead of the sample cadence, breaking
+    // monotonicity between data packets. Free-running at 512/frame exactly
+    // matches the data-packet spacing (8×512=4096 ticks = the real gap between
+    // data packets at 6000 pkt/s), keeping a constant lead over transmit.
+    //
+    // Before the first anchor is available (startup, no TX completions yet) the
+    // cursor stays unseeded and SPH=0 — acceptable: these packets only need to
+    // start MOTU's IR, same as the v119 AM824 path did.
     constexpr uint64_t kTicksPerCycle = 3072;
     constexpr uint64_t kCyclesPerSecond = 8000;
     constexpr uint64_t kTicksPerSecond = kTicksPerCycle * kCyclesPerSecond;
     constexpr uint64_t kTicksPerSample = 512; // 48 kHz: 3072*8000/48000
 
+    if (!motuSphSeeded_ && timing.motuSphValid) {
+        motuSphTickCursor_ = timing.motuSphBaseTicks;
+        motuSphSeeded_ = true;
+    }
+
     for (uint8_t f = 0; f < frames; ++f) {
         uint32_t sph = 0;
-        if (timing.motuSphValid) {
-            const uint64_t base = static_cast<uint64_t>(timing.motuSphBaseTicks);
+        if (motuSphSeeded_) {
             const uint64_t tick =
-                (base + static_cast<uint64_t>(f) * kTicksPerSample) %
-                kTicksPerSecond;
+                static_cast<uint64_t>(motuSphTickCursor_) % kTicksPerSecond;
             const uint32_t cyc =
                 static_cast<uint32_t>((tick / kTicksPerCycle) % kCyclesPerSecond);
             const uint32_t off = static_cast<uint32_t>(tick % kTicksPerCycle);
             sph = (cyc << 12) | off;
+            motuSphTickCursor_ += static_cast<int64_t>(kTicksPerSample);
         }
         uint8_t* block = packetBytes + kCipHeaderBytes +
                          static_cast<uint32_t>(f) * streamConfig_.dbs *

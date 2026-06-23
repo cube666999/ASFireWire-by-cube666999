@@ -89,13 +89,31 @@ z własnym ground-truthem). Profil MOTU już miał `dbs=13/pcm=14/fmt=0x02/fdf=0
 **SPH = mirror intencji main Fix 62** (stale SPH → MOTU odrzuca ramki), ale z dice tick-anchorem
 (`outputPresentationTicks` = packetAnchor + sytOffset + txDelay) zamiast free-running cursora main.
 
-**🔬 TEST v121:** zainstaluj `~/Desktop/ASFW_dice_v121.app`, `systemextensionsctl list`=121, zagraj
-przez MOTU. Oczekiwane: **diody ANALOG OUT/Main się zapalają + słychać** na Main Out 1/2. Logi:
+**🔬 TEST v121 (2026-06-23): cisza, ZERO diod MOTU → MOTU ODRZUCA pakiety.** Logi: dext OK, duplex
+zdrowy, zero fatal, `IT WIRE maxAbs24=6.4M` (realne PCM na drucie!), `lastQuad` zmienny (ścieżka
+MOTU-packed aktywna). Brak diod = odrzucenie, nie zły slot. **Root cause: SPH=0.**
+
+**🔧 Fix v124 — SPH free-run z zegara OHCI (NIE z replay/SYT):**
+v121 brał SPH z `outputPresentationTicks` w ścieżce replay, a `motuSphValid` ustawiał tylko gdy
+replay ustanowiony. Ale `ComputeReplaySytOffset` zwraca `kNoInfo` dla `syt==0xffff`, a **MOTU IR ma
+SYT=0xffff** → replay nigdy się nie ustanawia dla MOTU → `motuSphValid=false` → **SPH=0** → MOTU
+odrzuca (main Fix 62: stale SPH → reject). Porównanie z El Cap: wszystko zgadza się bajt-w-bajt
+(CIP Q0=030d04xx, Q1=8222ffff, blok) PRÓCZ SPH (El Cap: rosnący Δ=512, my: 0).
+Fix (2 pliki, MOTU-only):
+- `AmdtpTxPacketizer` — kursor SPH **seed-once-free-run** (mirror main): seed RAZ z anchora, potem
+  +512/ramkę (8×512=4096=odstęp data-pakietów → stały lead). Wymusza SYT=0xffff dla MOTU.
+- `ASFWAudioDriverZts` — seed z `txExecutionTimeline.AnchorForPacket` (anchor z completion-stampów
+  OHCI, **niezależny od SYT/replay**) + lead 2 cykle. Diag `[MotuSph]` loguje SPH ~1/s.
+
+**🔬 TEST v124:** zainstaluj `~/Desktop/ASFW_dice_v124.app`, `systemextensionsctl list`=124, zagraj
+przez MOTU (Spotify). Logi:
 ```bash
-/usr/bin/log show --last 2m --debug --info 2>/dev/null | grep "ASFWDriver.dext" | grep -E "IT WIRE|maxAbs|StartIO|TxPrep|sph"
+/usr/bin/log show --last 2m --debug --info 2>/dev/null | grep "ASFWDriver.dext" | grep -E "IT WIRE|maxAbs|MotuSph"
 ```
-Jeśli cisza mimo `maxAbs>0`: podejrzenie SPH (sprawdź czy `motuSphValid` ustawiane — replay path) lub
-slot map (slot 0/1 vs main twierdzi 10/11 — wtedy zmień `kMotuV3OutputSlotBase` analogicznie do main Fix 74).
+Oczekiwane: `[MotuSph] sph=0x...` **rosnący, niezerowy** (cyc/off rosną); **diody MOTU się świecą + słychać** na Main Out 1/2.
+- Diody świecą ale cisza na Main → root-cause=slot; przenieś stereo na slot 10/11 (main Fix 74, `kMotuV3PcmByteOffset`+slot).
+- Nadal zero diod ale SPH rośnie → stroić lead (`kMotuSphPresentationLeadTicks`) lub domenę anchora.
+- `[MotuSph]` nie pojawia się → anchor niedostępny (brak completion-stampów); sprawdzić `txExecutionTimeline.controlBlock`.
 
 **Topologia / fallbacki (oba na forku `cube666`):**
 - `integrate-dice-c2bdf11` @ `4d7927f` (v119) — AKTYWNA, integracja + TX-exposure, brak enkodera IT.
