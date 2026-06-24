@@ -36,13 +36,13 @@ Nie wracaj do prób "zmuśmy Linux żeby zagrał" — to króliczą norą, spraw
 
 ```bash
 # Przez alias (skonfigurowany w ~/.ssh/config na M3):
-ssh cube666@macbook2009        # hasło: 72044277
+ssh cube666@macbook2009        # hasło: <REDACTED — patrz menedżer haseł>
 
 # Bezpośrednio przez IP:
-ssh cube666@192.168.0.38       # hasło: 72044277
+ssh cube666@192.168.0.38       # hasło: <REDACTED — patrz menedżer haseł>
 
 # Przez mDNS (fallback):
-ssh cube666@macbook2009.local  # hasło: 72044277
+ssh cube666@macbook2009.local  # hasło: <REDACTED — patrz menedżer haseł>
 ```
 
 ⚠️ **Klucz `~/.ssh/mbp2009` NIE istnieje na M3** — był z poprzedniej sesji, nie przeżył.
@@ -60,9 +60,9 @@ Host macbook2009
 **Wzorzec `expect` do użycia w skryptach (gdy trzeba sudo na MB2009):**
 ```bash
 expect -c '
-spawn ssh -t cube666@macbook2009 "echo 72044277 | sudo -S <KOMENDA>"
+spawn ssh -t cube666@macbook2009 "echo <REDACTED — patrz menedżer haseł> | sudo -S <KOMENDA>"
 expect "password:"
-send "72044277\r"
+send "<REDACTED — patrz menedżer haseł>\r"
 expect eof
 '
 ```
