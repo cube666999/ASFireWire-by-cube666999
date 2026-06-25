@@ -36,6 +36,13 @@ public:
     [[nodiscard]] const AmdtpTxPolicy& TxPolicy() const noexcept;
     [[nodiscard]] bool NextPacketWouldCarryData() const noexcept;
 
+    // Diagnostics: live free-running MOTU V3 SPH cursor (absolute tick count) and
+    // whether it has been seeded. The drift-watch compares this against the live
+    // cycle timer over time — if (cursor - ct) walks away from the seed lead, the
+    // frame-production clock has drifted from the FireWire bus clock.
+    [[nodiscard]] int64_t MotuSphCursorTicks() const noexcept { return motuSphTickCursor_; }
+    [[nodiscard]] bool MotuSphSeeded() const noexcept { return motuSphSeeded_; }
+
 private:
     void WriteDataPacketDefaults(uint8_t* packetBytes,
                                  uint32_t packetCapacityBytes,

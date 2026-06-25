@@ -46,15 +46,37 @@ void IsochTxDmaRing::GaugeWirePayload(uint64_t fillAbsIdx,
 
     const uint64_t dataPackets =
         counters_.wireDataPackets.fetch_add(1, std::memory_order_relaxed) + 1;
+
+    // DBC continuity (every data packet). NO-DATA packets returned above, so two
+    // calls here are consecutive DATA packets — DBC (CIP Q0 low byte) must advance
+    // by the frame count (8). A break means MOTU loses block sequence → block-phase
+    // rotation (wandering output channels + squeal) even though our PCM is clean.
+    const uint8_t dbc = packetBytes[3];
+    if (wireLastDbc_ != 0xFFFFu) {
+        const uint8_t expected = static_cast<uint8_t>(wireLastDbc_ + 8u);
+        if (dbc != expected) {
+            const uint64_t n = ++wireDbcDiscontinuities_;
+            if (n <= 16 || (n % 512) == 0) {
+                ASFW_LOG(Isoch,
+                         "[WIRE-DBC] discontinuity #%llu dbc=0x%02x expected=0x%02x "
+                         "prev=0x%02x dataPkt=%llu",
+                         n, dbc, expected,
+                         static_cast<uint8_t>(wireLastDbc_), dataPackets);
+            }
+        }
+    }
+    wireLastDbc_ = dbc;
+
     if ((dataPackets % 8192) == 0) {
         ASFW_LOG(Isoch,
-                 "IT WIRE gauge data=%llu zeroPcm=%llu infoQuads=%llu dropouts=%llu maxAbs24=%u lastQuad=0x%08x",
+                 "IT WIRE gauge data=%llu zeroPcm=%llu infoQuads=%llu dropouts=%llu maxAbs24=%u lastQuad=0x%08x dbcDisc=%llu",
                  dataPackets,
                  counters_.wireZeroPcmPackets.load(std::memory_order_relaxed),
                  counters_.wireInfoQuads.load(std::memory_order_relaxed),
                  counters_.wirePcmDropouts.load(std::memory_order_relaxed),
                  counters_.wireMaxAbs24.load(std::memory_order_relaxed),
-                 counters_.wireLastInfoQuad.load(std::memory_order_relaxed));
+                 counters_.wireLastInfoQuad.load(std::memory_order_relaxed),
+                 wireDbcDiscontinuities_);
 
         // [WIRE16]: dump the first 6 quadlets of the ACTUAL transmitted packet
         // (CIP Q0/Q1 + block0 SPH + start of block) in bus/big-endian order, so an
@@ -74,6 +96,26 @@ void IsochTxDmaRing::GaugeWirePayload(uint64_t fillAbsIdx,
         ASFW_LOG(Isoch,
                  "[WIRE16] ch1 len=%u q0=%08x q1=%08x sph=%08x q3=%08x q4=%08x q5=%08x",
                  payloadLength, w[0], w[1], w[2], w[3], w[4], w[5]);
+
+        // [WIRE16-PCM]: dump all 14 PCM slots of block0 (MOTU-packed: 3-byte BE at
+        // block byte 10 + ch*3 = packet byte 18 + ch*3) so we see which physical
+        // outputs carry energy ON THE WIRE. Slots: 0=MainL 1=MainR 2-9=Analog1-8
+        // 10-11=Phones1-2 12-13=S/PDIF1-2. Answers "does our PCM leak past 0/1, or
+        // does MOTU misread a clean 0/1 block?" (LEDs show Analog7/SPDIF/MainR).
+        if (payloadLength >= 18u + 14u * 3u) {
+            uint32_t s[14] = {0};
+            for (uint32_t ch = 0; ch < 14u; ++ch) {
+                const uint8_t* p = packetBytes + 18u + ch * 3u;
+                s[ch] = (static_cast<uint32_t>(p[0]) << 16) |
+                        (static_cast<uint32_t>(p[1]) << 8) |
+                        static_cast<uint32_t>(p[2]);
+            }
+            ASFW_LOG(Isoch,
+                     "[WIRE16-PCM] s0=%06x s1=%06x s2=%06x s3=%06x s4=%06x s5=%06x "
+                     "s6=%06x s7=%06x s8=%06x s9=%06x s10=%06x s11=%06x s12=%06x s13=%06x",
+                     s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7],
+                     s[8], s[9], s[10], s[11], s[12], s[13]);
+        }
     }
 
     const uint32_t quadCount = (payloadLength - kCipHeaderBytes) / 4;

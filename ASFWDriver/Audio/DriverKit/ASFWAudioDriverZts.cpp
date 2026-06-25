@@ -275,13 +275,40 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                         (t / kTicksPerCycle) % kCyclesPerSecond);
                     const uint32_t seedOff =
                         static_cast<uint32_t>(t % kTicksPerCycle);
+
+                    // Drift-watch: the LIVE free-running packetizer SPH cursor vs
+                    // the live cycle timer. After seeding, cursor advances +512/frame
+                    // (frame-production clock) while ct advances with the bus clock.
+                    // driftCyc should stay ≈ the seed lead (+2). If it walks away
+                    // second-by-second, the frame clock has drifted from the bus
+                    // clock → MOTU PLL chases → squeal + wandering block phase.
+                    const int64_t cursor =
+                        ivars.runtime.txStreamEngine.MotuSphCursorTicks();
+                    const bool seeded =
+                        ivars.runtime.txStreamEngine.MotuSphSeeded();
+                    const int64_t cursorMod = static_cast<int64_t>(
+                        static_cast<uint64_t>(cursor) % domain);
+                    int64_t driftTicks = cursorMod - clockTicks;
+                    const int64_t half = static_cast<int64_t>(domain / 2);
+                    if (driftTicks > half) {
+                        driftTicks -= static_cast<int64_t>(domain);
+                    } else if (driftTicks < -half) {
+                        driftTicks += static_cast<int64_t>(domain);
+                    }
+
                     ASFW_LOG(DirectAudio,
                              "[MotuSph] pkt=%llu compl=%llu ahead=%lld "
-                             "ct=0x%08x(cyc=%u off=%u) seedSph=0x%07x(cyc=%u off=%u)",
+                             "ct=0x%08x(cyc=%u off=%u) seedSph=0x%07x(cyc=%u off=%u) "
+                             "seeded=%d curCyc=%lld driftCyc=%lld driftTicks=%lld",
                              nextPacketToPrepare, completion,
                              static_cast<long long>(packetsAhead), ct,
                              (ct >> 12) & 0x1FFF, ct & 0x0FFF,
-                             (seedCyc << 12) | seedOff, seedCyc, seedOff);
+                             (seedCyc << 12) | seedOff, seedCyc, seedOff,
+                             seeded ? 1 : 0,
+                             static_cast<long long>(
+                                 (cursorMod / kTicksPerCycle) % kCyclesPerSecond),
+                             static_cast<long long>(driftTicks / kTicksPerCycle),
+                             static_cast<long long>(driftTicks));
                 }
             }
         }

@@ -31,56 +31,54 @@ Archiwum ukończonych sesji → `DevLog.md`
 
 ---
 
-## 🔴 AKTUALNY STAN (2026-06-25) — HIPOTEZA: dryf domeny zegarowej SPH (NIE statyczna liczba)
+## 🔴 AKTUALNY STAN (2026-06-25 wieczór) — DRUT BAJT-W-BAJT POPRAWNY, pisk = poziom zegara/szyny
 
-> **PRZEŁOM #2 — strumień zaakceptowany.** Po fixie kanału (ch0→ch1) + leadzie SPH przestawionym
-> na −5 cykli, poranny test najnowszego dextu: **diody MOTU mrugają po różnych kanałach (szybko),
-> sporadycznie świeci prawy Main Out — i piszczy.** Diody = MOTU zalockowało się na pakiet isoch
-> na właściwym kanale (fix kanału ZWERYFIKOWANY, → Ukończone). Pisk + wędrujące kanały = strumień
-> płynie, ale wyrównanie bloków dryfuje.
+> **Kanał naprawiony, MOTU gra (diody) — ale piszczy + diody wędrują** (Analog 7 / S/PDIF / Main R).
+> Dziś wieczorem **wyczerpaliśmy zawartość pakietu** — snoop z kabla pokazał, że wszystko jest poprawne.
 >
-> ### Hipoteza (na podstawie audytu kodu 2026-06-25, bez maszyny)
-> Objaw „diody wędrują po kanałach + okresowy pisk" to **podpis powolnego DRYFU zegara**, nie błędu
-> stałej. Audyt kodu wykluczył trzech wcześniejszych podejrzanych — wszystkie statyczne wartości są
-> już poprawne:
-> - **DBC poprawny** ([`AmdtpTxPacketizer.cpp:176`](ASFWDriver/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp:176)) — rośnie o `frames` na data-pakiet, zamrożony na no-data. Regułowo OK.
-> - **Nachylenie SPH poprawne** ([`:285`](ASFWDriver/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp:285)) — +512 ticków/ramkę = 24.576 MHz = dokładnie zegar FireWire. Δ=512 zgodne z El Cap.
-> - **Lead już = −5** ([`ASFWAudioDriverZts.cpp:243`](ASFWDriver/Audio/DriverKit/ASFWAudioDriverZts.cpp:243)) — przestawiony z +2 na groundtruth El Cap (`aheadHw=-5`).
+> ### ⭐ Dowód z kabla (MB2009 snoop ch1, 23:10) — NASZ DRUT JEST IDEALNY
+> Pasywny snoop naszego IT na ch1 = struktura **textbook + identyczna z El Cap**:
+> - `ch=1 tag=1 sy=0`, DBS=13, CIP `000d04xx/8222ffff` ✓
+> - **DBC +8/data, zamrożony na no-data** (f8→00→[08 N]→08→10→18…) — `dbcDisc=0` ✓
+> - **SPH +512/blok, gładki i ciągły** przez pakiety i no-data (008541be→43be→…→55be w kolejnym pkt) ✓
+> - **PCM czyste stereo TYLKO na slotach 0/1 (Main L/R), reszta `000000`** — snoop = WIRE16 1:1 ✓
+> - Kadencja D,D,N,D = 75% data ✓
 >
-> **Mechanizm:** SPH jest „seed-once-free-run" ([`:271-274`](ASFWDriver/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp:271))
-> — seedowany RAZ, potem leci czystą projekcją frame-count i **nigdy nie re-synchronizuje się z żywym
-> `ct`**. Działa tylko jeśli tempo produkcji ramek (CoreAudio) jest perfekcyjnie zaryglowane do zegara
-> magistrali FireWire. Każdy rozjazd domen → SPH dryfuje względem realnego czasu transmisji → bufor
-> MOTU się ślizga → okresowy resync (pisk) + obrót fazy bloków (wędrujące diody). Seed-once-free-run
-> **z definicji nie koryguje dryfu** — błąd narasta bez ograniczenia.
+> Jedyna różnica od El Cap: **SID=0** (vs El Cap SID=3) — ale to nasz poprawny node id (jesteśmy węzeł 0).
+> **MOTU dostawało IDENTYCZNY strumień od El Cap i grało czysto → pisk NIE jest w naszych pakietach.**
 >
-> ### ⚠️ Luka diagnostyczna do zasypania NAJPIERW
-> Obecny log `[MotuSph]` ([`:266`](ASFWDriver/Audio/DriverKit/ASFWAudioDriverZts.cpp:266)) loguje
-> **przeliczany seed** (`motuSphBaseTicks`), ale po pierwszym seedzie packetizer używa własnego kursora.
-> Czyli pokazuje „jaki byłby seed", **NIE realny SPH na drucie** → dryfu z niego nie widać. Trzeba
-> logować **żywy kursor packetizera vs żywy `ct`** w czasie.
+> ### Co wykluczone dziś TWARDO (nie hipotezy — pomiar/kabel)
+> - **DBC** — `[WIRE-DBC]` watch (v136) + snoop: ciągły, zero złamań.
+> - **Slope SPH + sloty PCM** — `[WIRE16-PCM]` (v135) + snoop: idealne.
+> - **Dryf SPH (slope)** — `[MotuSph]` drift-watch (v134, żywy kursor vs ct): `driftCyc` oscyluje ±40, ale
+>   to **jitter `ahead` w punkcie prepare** (koreluje z ahead), znosi się przy transmisji → at-transmit +2.
+>   Brak rosnącego trendu. Hipoteza „dryf slope" **OBALONA**.
+> - **Lead/projekcja** — zmieniony −5→**+2** (v133, mirror main `writeMotuV3SphAndAdvance`; usunięto też
+>   projekcję `packetsAhead*3072`, bo `clockPair` ct ≈ czas transmisji). Pisk został → to nie lead.
 >
-> ### ➡️ PLAN NA WIECZÓR (test hardware)
-> 1. **Dodać „drift-watch"** — log kursora SPH vs `ct` co ~sekundę. Jeśli rozjeżdżają się sekunda po
->    sekundzie → dryf POTWIERDZONY (fix = re-anchor/rate-lock, NIE strojenie liczby).
-> 2. **Sygnał zdegenerowany** — ton na JEDNYM kanale, cisza na reszcie. Wtedy: (a) tempo wędrowania
->    świecącej diody = wielkość dryfu (diody MOTU jako oscyloskop), (b) który fizyczny output → mapa slotów.
-> 3. **Porównać z main** — `writeMotuV3SphAndAdvance` (nasz to rzekomy mirror): czy main KIEDYKOLWIEK
->    re-anchoruje SPH do żywego ct, czy działa bo domena zegarowa jest zaryglowana inaczej
->    (np. MOTU jako cycle-master magistrali). To rozstrzyga: „dodać re-sync" vs „zaryglować zegar".
+> ### ➡️ ZOSTAJĄ TYLKO rzeczy POZA pakietem — następne kroki (NOWA SESJA)
+> 1. **KONTROLNY TEST NAJPIERW: odłącz Linux/MB2009 od FireWire, zagraj, posłuchaj.** Sporo testów
+>    (w tym pisk) było z **Linuksem na szynie (4 węzły)** — niekontrolowana zmienna. Obce węzły mogą
+>    psuć cycle-master/clock MOTU. Pisk **znika bez Linuksa** → to perturbacja szyny, nie nasz bug.
+> 2. **Discord do mrmidi** (draft w historii czatu 2026-06-25) — żelazny dowód „wire byte-perfect, MOTU
+>    squeals". To jego znany bug main *„PCM byte position / MOTU Main Out"* + warstwa zegara. Zero presji
+>    (wypalony). Pytanie: jak MOTU rygluje fazę bloków, czy slavuje do naszego SPH czy gra na internal.
+> 3. **Absolutny SPH vs zegar MOTU** — slope OK, ale czy absolutna wartość/relacja do zegara MOTU jest
+>    OK; czy MOTU slavuje do SPH (CLOCK_STATUS 0x0b14) czy gra na internal a my musimy się ryglować do IR.
 >
-> **Kolejność napraw (nie testować iloczynu kombinacji — sekwencja 1D):** najpierw STABILNOŚĆ
-> (zatrzymać wędrowanie = problem zegara/kadencji), POTEM MAPOWANIE (właściwy slot — trywialne gdy faza stoi),
-> NA KOŃCU JAKOŚĆ (czysty ton/poziom). Slot-sweep teraz jest bez sensu — maskowany przez nienaprawiony dryf.
+> **Sekwencja napraw:** STABILNOŚĆ (zatrzymać pisk/wędrowanie) → MAPOWANIE (slot) → JAKOŚĆ. Slot-sweep
+> nie ma sensu dopóki faza wędruje.
 >
-> ### Narzędzia diagnostyczne dodane w tej sesji (zostają)
-> - `[WIRE16]` (`IsochTxDmaRing::GaugeWirePayload`, v128) — 6 quadletów realnie nadanego pakietu IT.
-> - `[TxPump]` (`ASFWAudioDriverZts` `PrepareTransmitSlots`, v126) — data/noData ratio + budżet ekspozycji.
-> - `[MotuSph]` — seedSph vs ct; lead = `-5*kTicksPerCycle` (v127, do rewizji — SPH exonerowany).
-> - **MB2009 snoop:** `tools/fw_isoch_snoop.c` (z main repo) → `sudo /tmp/fw_isoch_snoop /dev/fw0 <ch> N`.
->   SSH: wymuś `-o PreferredAuthentications=password -o PubkeyAuthentication=no` (klucz z passphrase
->   wiesza połączenie). FW na MB2009 wymaga `modprobe firewire_ohci quirks=0x10`; przed snoopem
->   `modprobe -r snd_firewire_motu snd_firewire_lib`, by Linux nie walczył o MOTU.
+> ### Narzędzia diagnostyczne (zostają, scommitowane)
+> - `[WIRE16]`+`[WIRE16-PCM]` (`IsochTxDmaRing::GaugeWirePayload`) — 6 quad + 14 slotów PCM nadanego IT.
+> - `[WIRE-DBC]` + `dbcDisc=N` — ciągłość DBC per data-pakiet.
+> - `[MotuSph]` (drift-watch: curCyc/driftCyc) + `[TxPump]` (`ASFWAudioDriverZts`) — kursor vs ct + ekspozycja.
+> - **MB2009 snoop:** `tools/fw_isoch_snoop.c` → `sudo /tmp/fw_isoch_snoop /dev/fw0 1 N`. ⚠️ **Pułapki:**
+>   (a) SSH wymuś `-o PreferredAuthentications=password -o PubkeyAuthentication=no` (klucz z passphrase wiesza);
+>   (b) FW wymaga `modprobe firewire_ohci quirks=0x10`; (c) **`modprobe -r snd_firewire_motu snd_firewire_lib`**
+>   — inaczej Linux AKTYWNIE przejmuje MOTU i gasi diody; (d) Linux na szynie = obcy IRM → StartAudioStreaming
+>   pada loteryjnie. Działa sekwencja: **najpierw stream up bez Linuksa, potem podepnij Linux** (był na szynie
+>   podczas udanego snoopa 23:10 i grało).
 
 ---
 

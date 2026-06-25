@@ -410,3 +410,42 @@ uruchom `sudo /tmp/fw_isoch_snoop /dev/fw0 <kanał> <N>`.
 
 **Lekcja:** przy „idealne bajty + zero reakcji urządzenia" sprawdzaj adresowanie (kanał/plug) ZANIM
 iterujesz timing. Jeden pasywny snoop z kabla rozstrzygnął to, czego 4 buildy SPH nie tknęły.
+
+---
+
+## 2026-06-25 (wieczór) — po fixie kanału: pisk + wędrujące diody; DRUT bajt-w-bajt poprawny
+
+**Stan po fixie kanału (v132):** MOTU gra (diody świecą = lock na strumień), ale **piszczy, a diody
+wędrują** po Analog 7 / S/PDIF / Main R. Sesja v133→v136 + snoop = systematyczne wykluczanie.
+
+**Wykluczone (twardo, pomiar/kabel — NIE hipotezy):**
+- **Projekcja SPH (v133):** nasz seed miał `clockTicks + packetsAhead*3072 + lead` (projekcja ~300 cykli).
+  Main `PacketAssembler::writeMotuV3SphAndAdvance` NIE projektuje — `clockTicks + 2*3072`. clockPair ct
+  odświeżany co Refill ≈ czas transmisji. Usunięto projekcję, lead −5→+2 (mirror main). Pisk został.
+- **Dryf SPH slope (v134 drift-watch):** wystawiono żywy kursor packetizera (`MotuSphCursorTicks()`) i
+  porównano z żywym ct w `[MotuSph]` (`curCyc`/`driftCyc`). `driftCyc` oscyluje ±40, ale **koreluje z
+  `ahead`** (jitter w punkcie *prepare*, znosi się przy transmisji → at-transmit +2). Brak rosnącego
+  trendu → hipoteza „powolny dryf slope" OBALONA. SPH slope idealny (+512/ramkę).
+- **DBC (v136 DBC-watch):** `[WIRE-DBC]` sprawdza +8/data-pakiet per pakiet → `dbcDisc=0`. Ciągły.
+- **Sloty PCM (v135 WIRE16-PCM):** rozszerzony zrzut wszystkich 14 slotów → PCM **tylko na s0/s1**
+  (Main L/R), reszta `000000`. Enkoder czysty.
+
+**⭐ Dowód z kabla (MB2009 snoop ch1, 23:10) — strumień textbook + == El Cap:**
+`ch=1 tag=1 sy=0`, DBS=13, CIP `000d04xx/8222ffff`, DBC +8/data zamrożony na no-data, SPH +512/blok
+gładki i ciągły (008541be→43be→…→55be w kolejnym pkt), PCM czyste stereo na s0/s1 reszta zero,
+kadencja D,D,N,D. Snoop = WIRE16 1:1 (DMA nic nie psuje). **Jedyna różnica od El Cap: SID=0 vs 3**
+(nasz poprawny node id). MOTU grało identyczny strumień od El Cap → **pisk NIE jest w naszych pakietach.**
+
+**Wniosek:** problem jest POZA zawartością pakietu → (a) **Linux/MB2009 na szynie** podczas testów
+(4 węzły, obcy IRM — niekontrolowana zmienna, może psuć cycle-master/clock MOTU); (b) **absolutny SPH
+vs zegar MOTU / clock-domain** (slope OK, ale czy MOTU slavuje do SPH czy gra na internal); (c) SID=0.
+
+**Następne kroki (nowa sesja):** 1) kontrolny test z **Linuksem ODŁĄCZONYM** (czy pisk znika); 2) Discord
+do mrmidi (draft w czacie) — żelazny dowód „wire byte-perfect, MOTU squeals", jego znany bug main
+„PCM byte position / MOTU Main Out" + warstwa zegara; 3) zbadać CLOCK_STATUS (0x0b14) / clock-source MOTU.
+
+**Pułapki snoop MB2009 (potwierdzone tej nocy):** (a) `snd_firewire_motu` auto-ładuje się po reboocie
+i AKTYWNIE przejmuje MOTU → gasi diody → `modprobe -r snd_firewire_motu snd_firewire_lib`; (b) Linux na
+szynie = obcy IRM → M3 `StartAudioStreaming` pada loteryjnie (0xe00002d7); działa sekwencja „najpierw
+stream up bez Linuksa, potem podepnij Linux"; (c) SSH wymusza `PreferredAuthentications=password
+PubkeyAuthentication=no` (klucz id_rsa z passphrase wiesza). Diagnostyki v134-v136 scommitowane.
