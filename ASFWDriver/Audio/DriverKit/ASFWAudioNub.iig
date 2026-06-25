@@ -76,6 +76,15 @@ public:
     virtual kern_return_t FreeTxIsochResources();
 
     /**
+     * @brief Query the IRM-reserved host->device (IT) isoch channel.
+     * Valid only AFTER StartAudioStreaming has reserved it (returns 0xFF before).
+     * The ADK transmit path stamps this into the isoch packet header so output
+     * goes out on the channel the device listens on, not the CIP source id.
+     * @param outIsoChannel Reserved IT channel, or 0xFF if not yet reserved.
+     */
+    virtual kern_return_t GetTxIsochChannel(uint32_t* outIsoChannel);
+
+    /**
      * @brief Query the current host time and FireWire cycle timer snapshot.
      * Captures a synchronized pair from the hardware for clock seeding.
      * @param outHostTimeMid Monotonic host system time in ticks.

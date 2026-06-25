@@ -127,6 +127,13 @@ public:
     ASFW::Isoch::IsochReceiveContext* ReceiveContext() const { return isochReceiveContext_.get(); }
     ASFW::Isoch::IsochTransmitContext* TransmitContext() const { return isochTransmitContext_.get(); }
 
+    // IRM-reserved host->device (playback / IT) isoch channel, or 0xFF if not yet
+    // reserved. This is the channel the device was told to receive on (e.g. MOTU
+    // ISOC_COMM_CONTROL via the vendor protocol); the TX wire MUST be transmitted
+    // on it. The ADK transmit path reads this through the nub so its isoch packet
+    // header carries the right channel instead of defaulting to the source id.
+    [[nodiscard]] uint8_t PlaybackChannel() const noexcept { return reserved_.playbackChannel; }
+
 private:
     kern_return_t ClaimDuplexGuid(uint64_t guid);
     void RefreshReceiveTimingLossCallback() noexcept;

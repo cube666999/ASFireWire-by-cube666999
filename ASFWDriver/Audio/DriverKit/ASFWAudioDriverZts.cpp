@@ -234,8 +234,18 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 motuClk.cycleTimer32 != 0) {
                 constexpr int64_t kTicksPerCycle = 3072;
                 constexpr int64_t kCyclesPerSecond = 8000;
+                // Match main's working MOTU V3 SPH seed
+                // (PacketAssembler::writeMotuV3SphAndAdvance): seed = live
+                // cycle-timer ticks + a small +2-cycle presentation lead, then
+                // free-run +512/frame. NO packetsAhead projection: clockPair ct is
+                // refreshed each IsochTxDmaRing::Refill (≈ transmit time, like
+                // main's currentCycleTime_), so projecting ~300 cycles forward put
+                // SPH ~37 ms into MOTU's future → it over-buffered then resynced
+                // (squeal + wandering block phase). main uses +2 (not the -5 El Cap
+                // IR value: that is device->host, and was set while the TX channel
+                // was still wrong so it was never tested against a receiving MOTU).
                 constexpr int64_t kMotuSphPresentationLeadTicks =
-                    2 * kTicksPerCycle; // tunable on hardware
+                    2 * kTicksPerCycle; // mirror main; tunable on hardware
                 const uint32_t ct = motuClk.cycleTimer32;
                 const int64_t clockTicks =
                     static_cast<int64_t>(((ct >> 12) & 0x1FFF) %
@@ -247,9 +257,8 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 const int64_t packetsAhead =
                     static_cast<int64_t>(nextPacketToPrepare) -
                     static_cast<int64_t>(completion);
-                timing.motuSphBaseTicks = clockTicks +
-                                          packetsAhead * kTicksPerCycle +
-                                          kMotuSphPresentationLeadTicks;
+                timing.motuSphBaseTicks =
+                    clockTicks + kMotuSphPresentationLeadTicks;
                 timing.motuSphValid = true;
 
                 // Diagnostic (~throttled): confirms SPH derives from a live,
@@ -516,6 +525,38 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
 
         ++nextPacketToPrepare;
         ++preparedCount;
+    }
+
+    // [TxPump] diagnostic (~1/s, throttled on cumulative txPackets). Resolves TX
+    // under-exposure (exposedFrameEnd lagging CoreAudio → frames land without a
+    // packet, written frozen) by separating the two possible causes:
+    //   • cadence side: data/(data+noData) should be ~0.75 (blocking N,D,D,D).
+    //     A low fraction means the cadence/disposition is emitting mostly NoData.
+    //   • pump side: prepared==max → budget-bound (can't expose fast enough);
+    //     prepared<max → broke on frameTargetSatisfied, so targetFrameEnd is the
+    //     limiter (not tracking CoreAudio's real write frontier).
+    {
+        static uint64_t lastLoggedTxPackets = 0;
+        const uint64_t txPackets =
+            directControl->counters.txPackets.load(std::memory_order_relaxed);
+        if (txPackets - lastLoggedTxPackets >= 8000) {
+            lastLoggedTxPackets = txPackets;
+            const uint64_t dataPkts = directControl->counters.txDataPackets.load(
+                std::memory_order_relaxed);
+            const uint64_t noDataPkts =
+                directControl->counters.txNoDataPackets.load(
+                    std::memory_order_relaxed);
+            const uint64_t exposedEnd =
+                ivars.runtime.txStreamEngine.Timeline().ExposedFrameEnd();
+            ASFW_LOG(DirectAudio,
+                     "[TxPump] prepared=%u max=%u recovered=%d "
+                     "range=[%llu,%llu) required=%llu targetFrame=%llu "
+                     "exposedEnd=%llu txPkts=%llu data=%llu noData=%llu",
+                     preparedCount, maxToPrepare,
+                     allowRecoveredClock ? 1 : 0, startPacketIndex,
+                     limitPacketIndex, requiredPacketIndex, targetFrameEnd,
+                     exposedEnd, txPackets, dataPkts, noDataPkts);
+        }
     }
 
     return preparedCount;

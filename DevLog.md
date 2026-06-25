@@ -336,7 +336,7 @@ Push: `git push cube666 dice-motu`.
 | ZTS | Symulowany przez timer | Hardware (IR DMA → UpdateCurrentZeroTimestamp) |
 | Encoder | PacketAssembler.hpp (MOTU V3 native) | AM824 (TODO: wymienić na MOTU V3) |
 | Geometry | kRxPcmChannels=18, bypassed check | kRxPcmChannels=16 (quick fix), 18 cel |
-| Model danych | Ring-buffer indirect copy | IOBufferMemoryDescriptor (cel po ZTS) |
+| Model danych | Ring-buffer indirect copy | IOBufferMemoryDescriptor — **zaimplementowane** (jeden bufor/kierunek współdzielony nub ↔ driver ↔ `IOUserAudioStream` ↔ isoch DMA; `AudioEndpointRuntime` + `CopyDirectAudioMemory`) |
 
 ---
 
@@ -349,3 +349,64 @@ Push: `git push cube666 dice-motu`.
 | `ASFWDriver/Isoch/Receive/IsochReceiveContext.cpp` | IR DMA, `DrainCompleted()`, `Poll()` |
 | `ASFWDriver/Audio/Engine/Direct/Rx/RxAudioPacketProcessor.cpp` linia ~68 | AM824 geometry check |
 | `ASFWDriver/Audio/Protocols/Vendor/MOTU/MOTUVendorProtocol.hpp` | `kHostInputPcm` (nieistotny dla geometrii) |
+
+---
+
+## 2026-06-24 — ROOT CAUSE ciszy MOTU: IT nadaje na złym kanale (ch0 zamiast ch1)
+
+**Objaw:** od v117 (ZTS/duplex up) MOTU we WSZYSTKICH wersjach milczy i nie mruga na wyjściu, mimo
+że IR działa (ZTS żyje). Sesja: v124→v128.
+
+**Droga diagnostyczna (co wykluczyliśmy — wszystko fałszywe tropy):**
+1. **v124/v125 — SPH seed.** Hipoteza: MOTU odrzuca przez stale/zerowy SPH. v124 seed-once-free-run,
+   v125 seed z żywego `clockPair`. Log `[MotuSph]`: ct rośnie, seedSph rośnie, format OK. Cisza.
+2. **v125 — exposure stall.** `[PayloadWriter]`: `written` zamrożone, `withoutPkt` rośnie, deficit
+   rośnie → wyglądało na under-exposure. Dodano `[TxPump]` (`ASFWAudioDriverZts::PrepareTransmitSlots`).
+   v126 hardware: **exposure ZDROWA** (data/noData=0.75, realtime, demand-bound) — stall z v125 był
+   stanem przejściowym starej sesji, NIE blockerem.
+3. **v127 — lead SPH +2→−5** (El Cap `aheadHw=-5`). Cisza → lead to nie problem.
+4. **v128 — `[WIRE16]`** (`IsochTxDmaRing::GaugeWirePayload`, zrzut 6 quadletów nadanego pakietu).
+   Bajty zgodne z El Cap: q0=`000d04xx` (DBS=13, SID=0), q1=`8222ffff`, SPH free-run seconds=0,
+   PCM na block byte 10 (slot 0 = Main L). Nagłówek isoch builder: tag=1/sy=0/S400 — też OK.
+   **Wszystkie bajty poprawne, a cisza** → blocker o warstwę niżej.
+
+**ROOT CAUSE (dowód z kabla, MB2009 Linux Mint `fw_isoch_snoop`, 2026-06-24):**
+Snoop ch1 = **0 pakietów**. Snoop ch0 = nasz IT (DBS=13, `000d04xx 8222ffff`) **razem z** IR MOTU
+(DBS=16, `0d040400`). **Nasz IT leci na ch0, MOTU słucha wejścia na ch1** → nigdy nie odbiera.
+
+Kod: [`ASFWAudioDevice.cpp:205`](ASFWDriver/Audio/DriverKit/ASFWAudioDevice.cpp:205)
+`txSlotProvider.isoChannel = txConfig.sid;` — kanał IT ustawiony na **sid (0)** zamiast przydzielonego
+**hostToDeviceIsoChannel (1)**. `isoChannel` → nagłówek isoch (`ASFWAudioDriverPrivate.hpp:142`).
+Pułapka: `IsochService::PrepareTransmit(channel=1)` → `IsochTransmitContext::SetChannel(1)` ustawia
+`channel_` ringu, które **nie jest czytane nigdzie** — realny drut buduje ścieżka ADK `txSlotProvider`.
+Stąd „Prepared IT on channel 1" w logach, a na drucie ch0.
+
+**Fix — ZWERYFIKOWANY (v132, 2026-06-25):** kanał IT jest rezerwowany dopiero w `StartAudioStreaming`
+(po `AllocateTxIsochResources`+prefill), więc czytanie przy alokacji daje 0xFF. Rozwiązanie: nowy getter
+`ASFWAudioNub::GetTxIsochChannel` → `IsochService::PlaybackChannel()` (`reserved_.playbackChannel`),
+wołany **po** `StartAudioStreaming`, stempluje `txSlotProvider.isoChannel` na steady-state pakiety
+(prefill zostaje na placeholderze=sid, nieszkodliwy cichy lap). MOTU używa `AVCAudioBackend`
+(`kDefaultItChannel=1`). **Dowód z hardware:** po włączeniu muzyki MOTU **zapala diody** (lock na
+strumień na właściwym kanale) — root cause ciszy potwierdzony i naprawiony. Pliki: `IsochService.hpp`
+(getter), `ASFWAudioNub.iig`+`.cpp` (GetTxIsochChannel), `ASFWAudioDevice.cpp` (stempel po starcie).
+
+**Problem wtórny (po fixie kanału): pisk + wędrujące diody (Analog7/Digital/MainR).** Strumień płynie,
+WIRE16 potwierdza PCM na slotach 0/1 (Main L/R) i SPH free-run poprawne — czyli bufor OK, problem to
+timing odbioru. **Ustalenie z porównania z main (v133):** nasz seed SPH miał `clockTicks +
+packetsAhead*3072 + lead` — projekcję **~300 cykli do przodu**. Main `PacketAssembler::
+writeMotuV3SphAndAdvance` **NIE projektuje** — seeduje `clockTicks + 2*3072` (clockPair ct jest
+odświeżany co Refill ≈ czas transmisji, jak main `currentCycleTime_`). Projekcja +300 wpychała SPH
+~37 ms w przyszłość MOTU → przebuforowanie → resync (pisk) + obrót fazy bloków (wędrujące diody).
+v133: usunięto projekcję, lead −5→+2 (mirror main; −5 było z El Cap **IR**, zły kierunek, ustawione
+gdy kanał był zepsuty → nietestowane). **Status: v133 do testu hardware.**
+
+**Metoda snoop MB2009 (do powtórzenia):** `tools/fw_isoch_snoop.c` (main repo) na MacBook 2009.
+SSH wymaga `-o PreferredAuthentications=password -o PubkeyAuthentication=no` (klucz id_rsa ma passphrase
+→ inaczej wisi). FW: `sudo modprobe firewire_ohci quirks=0x10` (LSI FW643 + MSI). Przed snoopem
+`sudo modprobe -r snd_firewire_motu snd_firewire_lib`. Topologia: M3 ↔ LaCie ↔ MOTU ↔ MB2009 (jedna
+szyna — MB2009 widzi fw1=M3/Apple, fw2=MOTU, fw3=LaCie). ⚠️ załadowanie modułu robi bus reset → M3
+re-inicjalizuje duplex (przeżywa). Build snoopa: `gcc -O2 -o /tmp/fw_isoch_snoop /tmp/fw_isoch_snoop.c`,
+uruchom `sudo /tmp/fw_isoch_snoop /dev/fw0 <kanał> <N>`.
+
+**Lekcja:** przy „idealne bajty + zero reakcji urządzenia" sprawdzaj adresowanie (kanał/plug) ZANIM
+iterujesz timing. Jeden pasywny snoop z kabla rozstrzygnął to, czego 4 buildy SPH nie tknęły.

@@ -55,6 +55,25 @@ void IsochTxDmaRing::GaugeWirePayload(uint64_t fillAbsIdx,
                  counters_.wirePcmDropouts.load(std::memory_order_relaxed),
                  counters_.wireMaxAbs24.load(std::memory_order_relaxed),
                  counters_.wireLastInfoQuad.load(std::memory_order_relaxed));
+
+        // [WIRE16]: dump the first 6 quadlets of the ACTUAL transmitted packet
+        // (CIP Q0/Q1 + block0 SPH + start of block) in bus/big-endian order, so an
+        // external passive snoop (tools/fw_isoch_snoop on ch1) lines up 1:1 with
+        // what we believe we sent. El Cap reference DATA packet on the wire:
+        //   030d04xx 8222ffff 00d3xxxx ...  (CIP Q0/Q1, then block SPH = 00d3xxxx)
+        // payloadLength includes the 8-byte CIP header; block0 SPH is at byte 8.
+        uint32_t w[6] = {0, 0, 0, 0, 0, 0};
+        const uint32_t availQuads = payloadLength / 4;
+        for (uint32_t i = 0; i < 6 && i < availQuads; ++i) {
+            const uint8_t* p = packetBytes + (i * 4);
+            w[i] = (static_cast<uint32_t>(p[0]) << 24) |
+                   (static_cast<uint32_t>(p[1]) << 16) |
+                   (static_cast<uint32_t>(p[2]) << 8) |
+                   static_cast<uint32_t>(p[3]);
+        }
+        ASFW_LOG(Isoch,
+                 "[WIRE16] ch1 len=%u q0=%08x q1=%08x sph=%08x q3=%08x q4=%08x q5=%08x",
+                 payloadLength, w[0], w[1], w[2], w[3], w[4], w[5]);
     }
 
     const uint32_t quadCount = (payloadLength - kCipHeaderBytes) / 4;

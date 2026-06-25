@@ -202,7 +202,14 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
             ivars.runtime.txSlotProvider.controlBlock = controlBlock;
             ivars.runtime.txSlotProvider.numSlots = numSlots;
             ivars.runtime.txSlotProvider.slotStrideBytes = maxPacketBytes;
-            ivars.runtime.txSlotProvider.isoChannel = txConfig.sid;
+            // Prefill placeholder only. The real IRM-reserved host->device channel
+            // is not reserved until StartAudioStreaming (below), so we cannot read
+            // it here. Stamp a benign value now (the prefill lap is silence the
+            // device ignores) and re-stamp the reserved channel after the stream
+            // starts. Transmitting on the wrong channel was the MOTU-silence bug
+            // (IT went out on sid=0 while the device listened on the reserved ch).
+            ivars.runtime.txSlotProvider.isoChannel =
+                static_cast<uint8_t>(txConfig.sid);
 
             ivars.runtime.txExecutionTimeline.controlBlock = controlBlock;
 
@@ -227,7 +234,7 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                 std::memory_order_relaxed);
 
             ASFW_LOG(Audio,
-                     "ASFWAudioDevice: Allocated & configured TX isoch resources channel=%u rxTransferDelay=%u txTransferDelay=%u (rate=%u)",
+                     "ASFWAudioDevice: Allocated TX isoch resources (prefill channel placeholder=%u, real ch resolved post-start) rxTransferDelay=%u txTransferDelay=%u (rate=%u)",
                      txConfig.sid,
                      control->rxTransferDelayTicks.load(std::memory_order_relaxed),
                      control->txTransferDelayTicks.load(std::memory_order_relaxed),
@@ -269,6 +276,27 @@ kern_return_t ASFWAudioDevice::StartIO(IOUserAudioStartStopFlags in_flags) {
                      startKr);
             kr = failStart(startKr, "StartAudioStreaming");
             return;
+        }
+
+        // The host->device isoch channel is reserved during StartAudioStreaming.
+        // Re-stamp the slot provider so steady-state IT packets transmit on the
+        // channel the device listens on (the prefill placeholder above only
+        // affects the initial silence lap, which the device ignores). Without
+        // this, output went out on the CIP source id (ch0) and MOTU — listening
+        // on the reserved channel — never received it (no LEDs / no sound).
+        uint32_t txIsoChannel = 0xFFu;
+        if (ivars.device.audioNub->GetTxIsochChannel(&txIsoChannel) ==
+                kIOReturnSuccess &&
+            txIsoChannel <= 63) {
+            ivars.runtime.txSlotProvider.isoChannel =
+                static_cast<uint8_t>(txIsoChannel);
+            ASFW_LOG(Audio,
+                     "ASFWAudioDevice: TX iso channel resolved to %u after StartAudioStreaming",
+                     txIsoChannel);
+        } else {
+            ASFW_LOG(Audio,
+                     "ASFWAudioDevice: WARNING TX iso channel still unreserved (0x%x) after StartAudioStreaming - output may transmit on wrong channel",
+                     txIsoChannel);
         }
 
         // StartAudioStreaming initializes the shared transport control block.

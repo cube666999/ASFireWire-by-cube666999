@@ -547,6 +547,25 @@ kern_return_t IMPL(ASFWAudioNub, AllocateTxIsochResources)
         outPayloadSlab, outMetadataRing, outControlBlock);
 }
 
+// Returns the IRM-reserved host->device (IT) isoch channel the ADK transmit
+// path must stamp into the isoch packet header. Reservation happens during
+// StartAudioStreaming, so this is only valid after that; before then the
+// core reports 0xFF and the ADK side keeps the prefill default.
+kern_return_t IMPL(ASFWAudioNub, GetTxIsochChannel)
+{
+    if (!ivars || !outIsoChannel) {
+        return kIOReturnBadArgument;
+    }
+    ASFWDriver* parent = GetParentASFWDriver(ivars);
+    auto* ctx = parent ? static_cast<ServiceContext*>(parent->GetServiceContext()) : nullptr;
+    if (!ctx) {
+        return kIOReturnNotReady;
+    }
+
+    *outIsoChannel = ctx->isoch.PlaybackChannel();
+    return kIOReturnSuccess;
+}
+
 // Releases all allocated shared transmit resources.
 kern_return_t IMPL(ASFWAudioNub, FreeTxIsochResources)
 {

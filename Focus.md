@@ -31,7 +31,60 @@ Archiwum ukończonych sesji → `DevLog.md`
 
 ---
 
-## ⚡ AKTUALNY STAN — ✅ ZTS NAPRAWIONY (v117, 2026-06-22): MOTU startuje, StartIO OK
+## 🔴 AKTUALNY STAN (2026-06-25) — HIPOTEZA: dryf domeny zegarowej SPH (NIE statyczna liczba)
+
+> **PRZEŁOM #2 — strumień zaakceptowany.** Po fixie kanału (ch0→ch1) + leadzie SPH przestawionym
+> na −5 cykli, poranny test najnowszego dextu: **diody MOTU mrugają po różnych kanałach (szybko),
+> sporadycznie świeci prawy Main Out — i piszczy.** Diody = MOTU zalockowało się na pakiet isoch
+> na właściwym kanale (fix kanału ZWERYFIKOWANY, → Ukończone). Pisk + wędrujące kanały = strumień
+> płynie, ale wyrównanie bloków dryfuje.
+>
+> ### Hipoteza (na podstawie audytu kodu 2026-06-25, bez maszyny)
+> Objaw „diody wędrują po kanałach + okresowy pisk" to **podpis powolnego DRYFU zegara**, nie błędu
+> stałej. Audyt kodu wykluczył trzech wcześniejszych podejrzanych — wszystkie statyczne wartości są
+> już poprawne:
+> - **DBC poprawny** ([`AmdtpTxPacketizer.cpp:176`](ASFWDriver/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp:176)) — rośnie o `frames` na data-pakiet, zamrożony na no-data. Regułowo OK.
+> - **Nachylenie SPH poprawne** ([`:285`](ASFWDriver/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp:285)) — +512 ticków/ramkę = 24.576 MHz = dokładnie zegar FireWire. Δ=512 zgodne z El Cap.
+> - **Lead już = −5** ([`ASFWAudioDriverZts.cpp:243`](ASFWDriver/Audio/DriverKit/ASFWAudioDriverZts.cpp:243)) — przestawiony z +2 na groundtruth El Cap (`aheadHw=-5`).
+>
+> **Mechanizm:** SPH jest „seed-once-free-run" ([`:271-274`](ASFWDriver/Audio/Wire/AMDTP/AmdtpTxPacketizer.cpp:271))
+> — seedowany RAZ, potem leci czystą projekcją frame-count i **nigdy nie re-synchronizuje się z żywym
+> `ct`**. Działa tylko jeśli tempo produkcji ramek (CoreAudio) jest perfekcyjnie zaryglowane do zegara
+> magistrali FireWire. Każdy rozjazd domen → SPH dryfuje względem realnego czasu transmisji → bufor
+> MOTU się ślizga → okresowy resync (pisk) + obrót fazy bloków (wędrujące diody). Seed-once-free-run
+> **z definicji nie koryguje dryfu** — błąd narasta bez ograniczenia.
+>
+> ### ⚠️ Luka diagnostyczna do zasypania NAJPIERW
+> Obecny log `[MotuSph]` ([`:266`](ASFWDriver/Audio/DriverKit/ASFWAudioDriverZts.cpp:266)) loguje
+> **przeliczany seed** (`motuSphBaseTicks`), ale po pierwszym seedzie packetizer używa własnego kursora.
+> Czyli pokazuje „jaki byłby seed", **NIE realny SPH na drucie** → dryfu z niego nie widać. Trzeba
+> logować **żywy kursor packetizera vs żywy `ct`** w czasie.
+>
+> ### ➡️ PLAN NA WIECZÓR (test hardware)
+> 1. **Dodać „drift-watch"** — log kursora SPH vs `ct` co ~sekundę. Jeśli rozjeżdżają się sekunda po
+>    sekundzie → dryf POTWIERDZONY (fix = re-anchor/rate-lock, NIE strojenie liczby).
+> 2. **Sygnał zdegenerowany** — ton na JEDNYM kanale, cisza na reszcie. Wtedy: (a) tempo wędrowania
+>    świecącej diody = wielkość dryfu (diody MOTU jako oscyloskop), (b) który fizyczny output → mapa slotów.
+> 3. **Porównać z main** — `writeMotuV3SphAndAdvance` (nasz to rzekomy mirror): czy main KIEDYKOLWIEK
+>    re-anchoruje SPH do żywego ct, czy działa bo domena zegarowa jest zaryglowana inaczej
+>    (np. MOTU jako cycle-master magistrali). To rozstrzyga: „dodać re-sync" vs „zaryglować zegar".
+>
+> **Kolejność napraw (nie testować iloczynu kombinacji — sekwencja 1D):** najpierw STABILNOŚĆ
+> (zatrzymać wędrowanie = problem zegara/kadencji), POTEM MAPOWANIE (właściwy slot — trywialne gdy faza stoi),
+> NA KOŃCU JAKOŚĆ (czysty ton/poziom). Slot-sweep teraz jest bez sensu — maskowany przez nienaprawiony dryf.
+>
+> ### Narzędzia diagnostyczne dodane w tej sesji (zostają)
+> - `[WIRE16]` (`IsochTxDmaRing::GaugeWirePayload`, v128) — 6 quadletów realnie nadanego pakietu IT.
+> - `[TxPump]` (`ASFWAudioDriverZts` `PrepareTransmitSlots`, v126) — data/noData ratio + budżet ekspozycji.
+> - `[MotuSph]` — seedSph vs ct; lead = `-5*kTicksPerCycle` (v127, do rewizji — SPH exonerowany).
+> - **MB2009 snoop:** `tools/fw_isoch_snoop.c` (z main repo) → `sudo /tmp/fw_isoch_snoop /dev/fw0 <ch> N`.
+>   SSH: wymuś `-o PreferredAuthentications=password -o PubkeyAuthentication=no` (klucz z passphrase
+>   wiesza połączenie). FW na MB2009 wymaga `modprobe firewire_ohci quirks=0x10`; przed snoopem
+>   `modprobe -r snd_firewire_motu snd_firewire_lib`, by Linux nie walczył o MOTU.
+
+---
+
+## ⚡ (archiwum) ZTS NAPRAWIONY (v117, 2026-06-22): MOTU startuje, StartIO OK
 
 > **PRZEŁOM.** Po v9–v117 — `ZTS timed out` zniknął, `StartIO` przechodzi, duplex wstaje.
 > Fix `585ea7f` (dice-motu, pushnięty). Pełny opis → DevLog 2026-06-22.
@@ -114,6 +167,42 @@ Oczekiwane: `[MotuSph] sph=0x...` **rosnący, niezerowy** (cyc/off rosną); **di
 - Diody świecą ale cisza na Main → root-cause=slot; przenieś stereo na slot 10/11 (main Fix 74, `kMotuV3PcmByteOffset`+slot).
 - Nadal zero diod ale SPH rośnie → stroić lead (`kMotuSphPresentationLeadTicks`) lub domenę anchora.
 - `[MotuSph]` nie pojawia się → anchor niedostępny (brak completion-stampów); sprawdzić `txExecutionTimeline.controlBlock`.
+
+**📐 Dwie dźwignie ground-truth do audytu SPH (analiza na sucho PRZED testem w domu):**
+Blocker = SPH (MOTU odrzuca ramki ze stale/zerowym SPH). Zanim odpalisz hardware, zestaw nasz
+`WriteMotuSph` (`AmdtpTxPacketizer`) + seed w `ASFWAudioDriverZts` z **realnie grającymi** źródłami:
+1. **`MOTU_KEXT_GHIDRA.md`** (`../ASFireWire/documentation/`) — disasm działającego kekstu: **SPH bit =
+   0x400 (bit 10)** w CIP Q0, DBC, encoding → potwierdza GDZIE SPH siedzi w nagłówku.
+2. **`MOTU_V3_WIRE_GROUNDTRUTH.md`** (kanon) — **SPH rośnie Δ=512** → potwierdza JAK ma rosnąć (kadencja/lead).
+Cel: sprawdzić czy nasza domena ticków + lead + `cyc<<12|off` zgadzają się z El Cap. (Pełna tabela
+źródeł + poziom zaufania: `CLAUDE.md` → „Źródła ground-truth MOTU".)
+
+**✅ WYNIK AUDYTU SPH na sucho (2026-06-24) — format OK, problem = wartość seeda (lead):**
+Zestawiono `AmdtpTxPacketizer::WriteMotuSph` + seed w `ASFWAudioDriverZts` z El Cap wire + Ghidra.
+
+**Zgadza się z kablem — NIE RUSZAĆ:** SPH=1. quadlet bloku, `(cyc<<12)|off` (cyc bits[24:12], off
+[11:0]) `:284`; Δ=512/ramkę free-run `:285`; CIP Q0 bajt2=**0x04**; SYT=0xFFFF.
+> ⚠️ **Fałszywy alarm — nie ścigać znowu:** `cipConfig.qpc=0` + `sph=true` (`AmdtpTxPacketizer.cpp:69-70`)
+> *wyglądają* odwrotnie do GT, ale builder mapuje nasze `sph`→**bit 10** (`CipHeader.cpp:39` `sph?1u<<10`)
+> = to co GT zwie QPC=1 → na drucie wychodzi poprawne 0x04. Mylące nazewnictwo, NIE bug.
+
+**Podejrzani (priorytet) — to stroić w domu, NIE przepisywać formatu:**
+1. **LEAD (HIGH)** — `kMotuSphPresentationLeadTicks = 2*3072` (`ASFWAudioDriverZts.cpp:237`) = zgadywane.
+   IR GT pokazał SPH **~5 cykli ZA** ct (`aheadHw=-5`), my dajemy **+2 PRZED** → spróbuj 0, potem ujemny.
+   Plus: seed dodaje `packetsAhead*3072` (`:247-251`) ale pakiety DATA są co **4096** ticków (6000/s) —
+   sprawdź czy `nextPacketToPrepare`/`completionCursor` liczą tylko DATA (wtedy projekcja myli się ~1024/pkt).
+2. **SECONDS=0 (MEDIUM)** — GT ma seconds w bits[27:25], my nigdy ich nie ustawiamy (kursor zawija co 1 s,
+   seed gubi seconds z CYCLE_TIMER `:240-244`). Całkowita cisza wskazuje raczej na lead niż seconds
+   (seconds dałby periodyczny ~1/s glitch). Jak lead nie pomoże a seedSph ładnie śledzi ct → dołóż seconds.
+3. **Świeżość seeda (LOW)** — zweryfikuj że `clockPair.TryRead` daje **rosnący** ct (nie 0/frozen),
+   inaczej `motuSphValid=false`→SPH=0→reject (awaria v121).
+
+**🔬 RECEPTA (test w domu):** `log show --last 2m --debug --info | grep ASFWDriver.dext | grep MotuSph`,
+czytaj `[MotuSph] ct=0x..(cyc off) seedSph=0x..(cyc off)`:
+- ct rośnie, seedSph rośnie i blisko ct, MOTU dalej odrzuca → **strój lead** (0 → ujemny).
+- seedSph mocno ≠ ct → bug kadencji projekcji (pkt 1, `packetsAhead`).
+- brak `[MotuSph]` / ct=0 → seed nie wstaje (pkt 3), `clockPair` pusty.
+Bottom line: problem to JEDNA liczba (lead/seed), nie format. Nie ruszaj Δ=512 ani CIP.
 
 **Topologia / fallbacki (oba na forku `cube666`):**
 - `integrate-dice-c2bdf11` @ `4d7927f` (v119) — AKTYWNA, integracja + TX-exposure, brak enkodera IT.
@@ -229,6 +318,18 @@ Pełna lista: `git log --oneline dice-motu..origin/DICE`.
 | Bug 1 (MOTU V3 decoder) | `kRxPcmChannels` powinien =18, wymaga `DecodeMOTUV3Frame` | ⏳ Post-ZTS |
 | Bug 2 (IT encoder) | `Quirks()` zwraca `kAM824` zamiast MOTU V3 dla TX | ⏳ Post-ZTS |
 
+**Zakładka Isoch (Metrics) — świadomie martwa w DICE, NIE regresja.** `GetIsochRxMetrics`
+zwraca same zera (`IsochHandler.cpp:342`, „zeroes out due to direct-only architecture”), reset to
+no-op (`:385`), a metryki TX nie istnieją (tylko selektory RX 34/35; „Isoch Transmit” w
+`MetricsView.swift:104` to martwy placeholder). Powód: w main isoch pędził UI→UserClient (właściciel
+liczników), w DICE pędzi go AudioDriverKit ścieżką Direct, której UserClient nie widzi — hydraulika
+telemetrii nie została przepięta. **Decyzja: odłożone, nie warto teraz** — duplikuje logi
+(`drainedTotal`, `rxZtsPublishCount_`, CIP DBS/SYT/DBC są w `log stream`), a TX byłby budowany wokół
+enkodera, który i tak wymieniamy (Bug 2). **Wrócić gdy:** (a) wielokrotnie grepujesz logi po tych
+samych licznikach w iteracji hardware → tani RX (żywe liczniki z `IsochReceiveContext` już istnieją,
+trzeba tylko akcesory + mapowanie na `IsochRxSnapshot`); (b) TX dopiero PO ustabilizowaniu MOTU V3
+enkodera.
+
 ---
 
 ## ✅ Ukończone (archiwum — szczegóły w DevLog.md)
@@ -243,6 +344,9 @@ Pełna lista: `git log --oneline dice-motu..origin/DICE`.
 - ✅ **ZTS timeout / IR CIP (v117, `585ea7f`)** — IR MOTU ma niestandardowy nagłówek `0d040400 22ffffff`
   (EOH1=0); osobna ścieżka `kMotuV3Packed` (DBS=16, 18 PCM, 3-bajtowe chunki) → ZTS publikuje (23 ms),
   StartIO OK, duplex wstaje. Hardware-verified. Pełny opis → DevLog 2026-06-22.
+- ✅ **IT na właściwym kanale (2026-06-25)** — `isoChannel` = `hostToDeviceIsoChannel` (ch1) zamiast `sid`
+  (ch0), [`ASFWAudioDevice.cpp:205`](ASFWDriver/Audio/DriverKit/ASFWAudioDevice.cpp:205). Hardware-verified:
+  MOTU mruga diodami (lock na strumień). Pozostaje dryf SPH → patrz „AKTUALNY STAN".
 
 ---
 
