@@ -1,0 +1,143 @@
+START 15:53:26
+=== cap_run3 deref START 2026 Jun 27 15:53:27 ===
+[D] 2026 Jun 27 15:53:32 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:32 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:32 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:32 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:32 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:32 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:32 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:32 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:32 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:32 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:32 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:32 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:32 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:32 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:32 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:32 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:32 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:32 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:32 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:32 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:32 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:32 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:32 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:32 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:32 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:32 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:32 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:32 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:32 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:32 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:32 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:32 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:32 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:32 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:32 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:35 off=0x0b38 size=8 len=8 DATA=0xffffffff swap=0xffffffff
+[D] 2026 Jun 27 15:53:37 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:37 off=0x0b38 size=8 len=8 DATA=0x0200c2ff swap=0xffc20002
+[D] 2026 Jun 27 15:53:37 off=0x0b08 size=4 len=32 DATA=0xffffffff swap=0xffffffff
+[D] 2026 Jun 27 15:53:37 off=0x0b08 size=4 len=32 DATA=0xffffffff swap=0xffffffff
+[D] 2026 Jun 27 15:53:37 off=0x0b04 size=4 len=32 DATA=0x0100c2ff swap=0xffc20001
+[D] 2026 Jun 27 15:53:37 off=0x0b08 size=4 len=32 DATA=0x00000000 swap=0x00000000
+[ISOCH 2026 Jun 27 15:53:37] talking=1
+[ISOCH 2026 Jun 27 15:53:38] talking=0
+[D] 2026 Jun 27 15:53:38 off=0x0b10 size=4 len=32 DATA=0x02000000 swap=0x00000002
+[D] 2026 Jun 27 15:53:38 off=0x0b00 size=4 len=32 DATA=0x0000e2e1 swap=0xe1e20000
+[D] 2026 Jun 27 15:53:38 off=0x0b1c size=4 len=32 DATA=0x000a0000 swap=0x00000a00
+[D] 2026 Jun 27 15:53:38 off=0x0b1c size=4 len=32 DATA=0x00001200 swap=0x00120000
+[D] 2026 Jun 27 15:53:38 off=0x0b14 size=4 len=32 DATA=0x0001000a swap=0x0a000100
+[D] 2026 Jun 27 15:53:38 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:38 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:38 off=0x0b14 size=4 len=32 DATA=0x0001000a swap=0x0a000100
+[D] 2026 Jun 27 15:53:38 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[ISOCH 2026 Jun 27 15:53:38] talking=1
+[ISOCH 2026 Jun 27 15:53:38] talking=0
+[D] 2026 Jun 27 15:53:38 off=0x0b10 size=4 len=32 DATA=0x02000000 swap=0x00000002
+[D] 2026 Jun 27 15:53:38 off=0x0b00 size=4 len=32 DATA=0x0000e2e1 swap=0xe1e20000
+[D] 2026 Jun 27 15:53:39 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:39 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:39 off=0x0b08 size=4 len=32 DATA=0xffffffff swap=0xffffffff
+[D] 2026 Jun 27 15:53:39 off=0x0b04 size=4 len=32 DATA=0x0100c2ff swap=0xffc20001
+[D] 2026 Jun 27 15:53:39 off=0x0b08 size=4 len=32 DATA=0x00000000 swap=0x00000000
+[D] 2026 Jun 27 15:53:39 off=0x0b38 size=8 len=8 DATA=0x0200c2ff swap=0xffc20002
+[ISOCH 2026 Jun 27 15:53:39] talking=1
+[ISOCH 2026 Jun 27 15:53:40] talking=0
+[D] 2026 Jun 27 15:53:40 off=0x0b10 size=4 len=32 DATA=0x02000000 swap=0x00000002
+[D] 2026 Jun 27 15:53:40 off=0x0b00 size=4 len=32 DATA=0x0000e2e1 swap=0xe1e20000
+[D] 2026 Jun 27 15:53:40 off=0x0b1c size=4 len=32 DATA=0x00001200 swap=0x00120000
+[D] 2026 Jun 27 15:53:40 off=0x0b14 size=4 len=32 DATA=0x0001000a swap=0x0a000100
+[D] 2026 Jun 27 15:53:40 off=0x0b14 size=4 len=32 DATA=0x0001000a swap=0x0a000100
+[D] 2026 Jun 27 15:53:53 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:53 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:53 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:53 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:53 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:53 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:53 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:53 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:53 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:53 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:53 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:53 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:53 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:53 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:53 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:53 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:53 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:53 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:53 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:53 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:53 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:53 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:53 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:53 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:53 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:53 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:53 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:53 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:53 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:53 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:53 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:53 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:53 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:53 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:53 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:56 off=0x0b38 size=8 len=8 DATA=0xffffffff swap=0xffffffff
+[D] 2026 Jun 27 15:53:57 off=0x0b38 size=8 len=8 DATA=0x0200c2ff swap=0xffc20002
+[D] 2026 Jun 27 15:53:57 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:58 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:58 off=0x0b08 size=4 len=32 DATA=0xffffffff swap=0xffffffff
+[D] 2026 Jun 27 15:53:58 off=0x0b04 size=4 len=32 DATA=0x0100c2ff swap=0xffc20001
+[D] 2026 Jun 27 15:53:58 off=0x0b08 size=4 len=32 DATA=0x00000000 swap=0x00000000
+[ISOCH 2026 Jun 27 15:53:58] talking=1
+[ISOCH 2026 Jun 27 15:53:58] talking=0
+[D] 2026 Jun 27 15:53:58 off=0x0b10 size=4 len=32 DATA=0x02000000 swap=0x00000002
+[D] 2026 Jun 27 15:53:58 off=0x0b00 size=4 len=32 DATA=0x0000e2e1 swap=0xe1e20000
+[D] 2026 Jun 27 15:53:58 off=0x0b1c size=4 len=32 DATA=0x000a0000 swap=0x00000a00
+[D] 2026 Jun 27 15:53:59 off=0x0b1c size=4 len=32 DATA=0x00001200 swap=0x00120000
+[D] 2026 Jun 27 15:53:59 off=0x0b14 size=4 len=32 DATA=0x0001000a swap=0x0a000100
+[D] 2026 Jun 27 15:53:59 off=0x0b14 size=4 len=32 DATA=0x00010008 swap=0x08000100
+[D] 2026 Jun 27 15:53:59 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[ISOCH 2026 Jun 27 15:53:59] talking=1
+[ISOCH 2026 Jun 27 15:53:59] talking=0
+[D] 2026 Jun 27 15:53:59 off=0x0b10 size=4 len=32 DATA=0x02000000 swap=0x00000002
+[D] 2026 Jun 27 15:53:59 off=0x0b00 size=4 len=32 DATA=0x0000e2e1 swap=0xe1e20000
+[D] 2026 Jun 27 15:53:59 off=0x0b14 size=4 len=32 DATA=0x0001000a swap=0x0a000100
+[D] 2026 Jun 27 15:53:59 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:59 off=0x0b00 size=4 len=32 DATA=0x0000a2a1 swap=0xa1a20000
+[D] 2026 Jun 27 15:53:59 off=0x0b08 size=4 len=32 DATA=0xffffffff swap=0xffffffff
+[D] 2026 Jun 27 15:53:59 off=0x0b04 size=4 len=32 DATA=0x0100c2ff swap=0xffc20001
+[D] 2026 Jun 27 15:53:59 off=0x0b08 size=4 len=32 DATA=0x00000000 swap=0x00000000
+[D] 2026 Jun 27 15:53:59 off=0x0b38 size=8 len=8 DATA=0x0200c2ff swap=0xffc20002
+[ISOCH 2026 Jun 27 15:53:59] talking=1
+[ISOCH 2026 Jun 27 15:54:00] talking=0
+[D] 2026 Jun 27 15:54:00 off=0x0b10 size=4 len=32 DATA=0x02000000 swap=0x00000002
+[D] 2026 Jun 27 15:54:00 off=0x0b00 size=4 len=32 DATA=0x0000e2e1 swap=0xe1e20000
+[D] 2026 Jun 27 15:54:01 off=0x0b1c size=4 len=32 DATA=0x00001200 swap=0x00120000
+[D] 2026 Jun 27 15:54:01 off=0x0b14 size=4 len=32 DATA=0x0001000a swap=0x0a000100
+[D] 2026 Jun 27 15:54:01 off=0x0b14 size=4 len=32 DATA=0x0001000a swap=0x0a000100
+
+KONIEC 15:55:27

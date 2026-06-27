@@ -236,16 +236,32 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
                 constexpr int64_t kCyclesPerSecond = 8000;
                 // Match main's working MOTU V3 SPH seed
                 // (PacketAssembler::writeMotuV3SphAndAdvance): seed = live
-                // cycle-timer ticks + a small +2-cycle presentation lead, then
-                // free-run +512/frame. NO packetsAhead projection: clockPair ct is
+                // cycle-timer ticks + a small presentation lead, then free-run
+                // +512/frame. NO packetsAhead projection: clockPair ct is
                 // refreshed each IsochTxDmaRing::Refill (≈ transmit time, like
                 // main's currentCycleTime_), so projecting ~300 cycles forward put
                 // SPH ~37 ms into MOTU's future → it over-buffered then resynced
-                // (squeal + wandering block phase). main uses +2 (not the -5 El Cap
-                // IR value: that is device->host, and was set while the TX channel
-                // was still wrong so it was never tested against a receiving MOTU).
+                // (squeal + wandering block phase). The lead was guessed at +2
+                // (mirroring main); a wire measurement of the official driver
+                // (SEQUOIA_SNOOP_RESULT.md) pinned it at +3 exactly — see below.
+                // Official driver: SPH is +3 cycles ahead of TRANSMIT (wire-measured).
+                // BUT we seed from `clockTicks` (= ct at PREPARE time), and a packet
+                // transmits ~261 cycles AFTER it is prepared (we prepare ~330 packets
+                // ahead). So a bare +3 lead lands the on-wire SPH at -258 cycles (32 ms
+                // in the PAST) → MOTU can't present past-stamped frames → misframe.
+                // PROVEN by snooping our OWN stream: median on-wire lead = -258 (n=192,
+                // zero spread) vs official +3 (2026-06-28_our_v141_it_lead.txt). Fix:
+                // add the prepare-ahead (~261 cycles) so the on-wire lead lands at +3.
+                // (261 is empirical/stable for this TX exposure config; TODO make it
+                // dynamic from packetsAhead once confirmed on the wire.)
+                // Empirically tuned against the on-wire lead (snoop, zero spread/run):
+                //   lead=  3 → -258 ;  lead=264 → -63 ;  lead=352 → +79
+                // Wire structure is byte-identical to the official driver (PCM on slot
+                // 12/13, same packing) — the ONLY remaining difference is the on-wire
+                // lead VALUE. Official = +3 (stable). Testing the exact +3 window:
+                // interpolating (264,-63)&(352,+79) → lead=305 ≈ +3. (v144)
                 constexpr int64_t kMotuSphPresentationLeadTicks =
-                    2 * kTicksPerCycle; // mirror main; tunable on hardware
+                    305 * kTicksPerCycle;
                 const uint32_t ct = motuClk.cycleTimer32;
                 const int64_t clockTicks =
                     static_cast<int64_t>(((ct >> 12) & 0x1FFF) %

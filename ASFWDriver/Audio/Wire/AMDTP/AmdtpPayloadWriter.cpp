@@ -50,11 +50,19 @@ namespace {
 constexpr uint32_t kCipHeaderBytes = 8;
 constexpr uint32_t kBytesPerSlot = 4;
 
-// MOTU V3 IT data block: SPH(4B) + 2 MSG chunks (6B) → PCM starts at byte 10,
-// 3 bytes per channel. SPH + MSG are owned by the packetizer; the payload
-// writer only overwrites the PCM region. See MOTU_V3_WIRE_GROUNDTRUTH.md.
-constexpr uint32_t kMotuV3PcmByteOffset = 10;
+// MOTU V3 IT data block (measured: documentation/SEQUOIA_SNOOP_RESULT.md —
+// 14-channel FFT sweep of the official driver, 2026-06-26): SPH(4B) + 16 wire
+// slots × 3B BE. Wire slot s lives at block byte 4 + s*3. Slots 0,1 are padding
+// (empty on the official wire — the packetizer leaves bytes 4-9 zero); the 14
+// PCM outputs occupy slots 2-15. CoreAudio output channel → wire slot is FIXED
+// and NON-linear (Main L/R = ch 0/1 → slot 12/13). A linear ch→slot map put
+// Main on the wrong physical outputs (Main silent + wandering LEDs). SPH
+// (bytes 0-3) is owned by the packetizer; untouched here.
+constexpr uint32_t kMotuV3SlotBase = 4;        // block byte of wire slot 0 (after SPH)
 constexpr uint32_t kMotuV3BytesPerChannel = 3;
+constexpr uint32_t kMotuV3CoreToWireSlot[14] = {
+    12, 13, 4, 5, 6, 7, 8, 9, 10, 11, 2, 3, 14, 15,
+};
 
 inline void WriteBE32(uint8_t* dest, uint32_t value) noexcept {
     dest[0] = static_cast<uint8_t>(value >> 24);
@@ -135,25 +143,33 @@ void AmdtpPayloadWriter::WriteFloat32Interleaved(
         bool frameNonZero = false;
         if (txPolicy_.hostToDevicePcmEncoding ==
             PcmSlotEncoding::MotuV3Packed) {
-            // MOTU V3: pack PCM as 3-byte big-endian chunks starting at block
-            // byte offset 10, channel ch → byte 10 + ch*3. Stereo lands on
-            // slots 0/1 (Main Out L/R). SPH (bytes 0-3) and MSG (bytes 4-9)
-            // are written by the packetizer and left untouched here.
+            // MOTU V3: pack each CoreAudio output channel as a 3-byte big-endian
+            // sample into its FIXED wire slot (kMotuV3CoreToWireSlot), at block
+            // byte kMotuV3SlotBase + slot*3. The 14 channels partition wire slots
+            // 2-15 exactly, so every PCM slot is written each frame; slots 0,1
+            // stay packetizer padding. SPH (bytes 0-3) untouched here.
+            // (NOTE: the map is for 1×/2× rate families = 14 PCM. At 4× MOTU
+            // reduces channels — the availSlots guard keeps writes in-bounds.)
             const uint32_t blockBytes = snap.dbs * kBytesPerSlot;
-            const uint32_t maxPcm =
-                (blockBytes > kMotuV3PcmByteOffset)
-                    ? (blockBytes - kMotuV3PcmByteOffset) /
-                          kMotuV3BytesPerChannel
+            const uint32_t availSlots =
+                (blockBytes > kMotuV3SlotBase)
+                    ? (blockBytes - kMotuV3SlotBase) / kMotuV3BytesPerChannel
                     : 0;
+            constexpr uint32_t kMapLen =
+                sizeof(kMotuV3CoreToWireSlot) / sizeof(kMotuV3CoreToWireSlot[0]);
             const uint32_t pcmSlots =
-                (streamConfig_.pcmChannels < maxPcm) ? streamConfig_.pcmChannels
-                                                     : maxPcm;
+                (streamConfig_.pcmChannels < kMapLen) ? streamConfig_.pcmChannels
+                                                      : kMapLen;
             for (uint32_t ch = 0; ch < pcmSlots; ++ch) {
+                const uint32_t wireSlot = kMotuV3CoreToWireSlot[ch];
+                if (wireSlot >= availSlots) {
+                    continue; // reduced geometry (e.g. 4× rates): slot absent
+                }
                 const float sample =
                     (ch < hostBuffer.channels) ? source[ch] : 0.0f;
                 const int32_t s24 = PcmSlotCodec::Float32ToSigned24(sample);
-                uint8_t* dst = dest + kMotuV3PcmByteOffset +
-                               ch * kMotuV3BytesPerChannel;
+                uint8_t* dst = dest + kMotuV3SlotBase +
+                               wireSlot * kMotuV3BytesPerChannel;
                 dst[0] = static_cast<uint8_t>((s24 >> 16) & 0xFF);
                 dst[1] = static_cast<uint8_t>((s24 >> 8) & 0xFF);
                 dst[2] = static_cast<uint8_t>(s24 & 0xFF);

@@ -43,7 +43,15 @@ void FillDefaultStreamConfig(DiceStreamConfig& outConfig,
     outConfig.direction = direction;
     outConfig.sampleRate = 48000;
     outConfig.streamMode = Encoding::StreamMode::kBlocking;
-    outConfig.sid = 0;
+    // CIP SID = source node id of the transmitter. The official driver (El Cap +
+    // Sequoia wire) sends SID = its OWN node id; ASFW Tahoe diagnostics show we are
+    // node 1 / 0xFFC1 (root, S800 vs MOTU S400) so the correct SID here is 1, not 0.
+    // We were hardcoding 0 (the El Cap "we're node 0" assumption, disproven by the
+    // Tahoe report). Low-probability squeal suspect but a confirmed wire deviation.
+    // TODO: plumb the live OHCI NodeID physical_id here instead of a constant —
+    // this is wrong if a bus reset makes MOTU root (then we become node 0). Stable
+    // for the current 2-node bench where the M3 always wins root.
+    outConfig.sid = 1;
     outConfig.midiSlots = 0;
     outConfig.framesPerDataPacket = 8;
     outConfig.fdf = 0x02;

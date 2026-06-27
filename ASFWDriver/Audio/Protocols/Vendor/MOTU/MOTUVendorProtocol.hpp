@@ -84,6 +84,24 @@ private:
     static constexpr uint32_t kPacketFmtValue   = 0x00000002u; // 0x0b10: S400 only, NO exclude-differed (El Cap WIRE SNOOP = oracle; main MOTUAudioBackend.cpp:327. BringUp.md's 0xC2 is stale kext-disasm.)
     static constexpr uint32_t kRoutePortConf    = 0x00000100u; // 0x0c04 value
 
+    // --- Missing init writes the official driver does and we didn't (added 2026-06-27).
+    // Values from El Capitan DTrace deref of the official driver's async write payload
+    // (both registers are WRITE-ONLY — blind to read-back). Full provenance + trace
+    // order: documentation/SEQUOIA_REGREAD_RESULT.md. Hypothesis: their absence is why
+    // MOTU misframes our (byte-perfect) wire. (0x0b38, size=8, deferred — 2nd quadlet
+    // not yet measured.)
+    static constexpr uint32_t kStreamCfgOff   = 0x0b1cu;     // V3 stream-format config (rate-correlated)
+    static constexpr uint32_t kStreamCfg48k   = 0x00120000u; // 0x0b1c value @ 48 kHz
+    static constexpr uint32_t kDoorbellOff    = 0x0b08u;     // command/doorbell, brackets 0x0b04
+    static constexpr uint32_t kDoorbellArm    = 0xffffffffu; // 0x0b08 set ...
+    static constexpr uint32_t kDoorbellClear  = 0x00000000u; // ... then clear (read-back always 0)
+    // 0x0b38 — V3 stream-control stream-2 (parallel to 0x0b04 stream-1), 8-byte BLOCK write.
+    // Both quadlets measured via El Cap DTrace deref (cap_run4, cold-start replug 2026-06-27):
+    // {0xffc20002, 0x00000000}. Write-only command; fired only at cold start. SEQUOIA_REGREAD_RESULT.md.
+    static constexpr uint32_t kStream2CtrlOff = 0x0b38u;
+    static constexpr uint32_t kStream2CtrlQ0  = 0xffc20002u; // 1st quadlet (host-order)
+    static constexpr uint32_t kStream2CtrlQ1  = 0x00000000u; // 2nd quadlet (measured = 0)
+
     // ISOC_COMM_CONTROL bits — MOTU perspective: RX = host→MOTU (IT), TX = MOTU→host (IR)
     static constexpr uint32_t kIsocMask          = 0xFFFF0000u;
     static constexpr uint32_t kChangeRxIsocState = 0x80000000u;
@@ -132,6 +150,8 @@ private:
 
     [[nodiscard]] Async::FWAddress MakeAddr(uint32_t offset) const noexcept;
     [[nodiscard]] bool WriteReg(uint32_t offset, uint32_t value) noexcept;
+    // 8-byte block write (two big-endian quadlets) — for 0x0b38 (size=8 on the wire).
+    [[nodiscard]] bool WriteRegBlock8(uint32_t offset, uint32_t q0, uint32_t q1) noexcept;
     [[nodiscard]] bool ReadReg(uint32_t offset, uint32_t& outValue) noexcept;
 
     AudioDuplexChannels BuildDuplexChannels() const noexcept;

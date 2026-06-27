@@ -71,9 +71,24 @@ void MOTUVendorProtocol::PrepareDuplex(const AudioDuplexChannels& channels,
     // the official Apple driver writes these every init *before* stream setup. Without them a
     // freshly power-cycled MOTU never begins IR transmission. All device-facing — no host data path.
 
+    // --- COMPLETE missing init (v141): the 3 registers the official driver writes that
+    // we didn't — 0x0b38 (8-byte block), 0x0b08 (doorbell), 0x0b1c (in ProgramTx). Real
+    // values from El Cap DTrace deref (SEQUOIA_REGREAD_RESULT.md). v139 had only 0b08+0b1c
+    // → no effect; this adds the last one, 0x0b38 (V3 stream-2 control). Order mirrors the
+    // official cold-start cluster: 0b38 first, then 0b08-bracketed 0b04. All non-fatal.
+    // If the full set still doesn't stop the misframe, init is exhausted → timing/SPH-echo.
+    if (!WriteRegBlock8(kStream2CtrlOff, kStream2CtrlQ0, kStream2CtrlQ1)) {
+        ASFW_LOG_WARNING(Audio, "MOTUVendorProtocol: PrepareDuplex 0x0b38 block write failed (non-fatal)");
+    }
+    if (!WriteReg(kDoorbellOff, kDoorbellArm)) {
+        ASFW_LOG_WARNING(Audio, "MOTUVendorProtocol: PrepareDuplex 0x0b08 arm failed (non-fatal)");
+    }
     // 0x0b04 — V3 stream control. Official driver writes 0xffc10001 each init; non-fatal.
     if (!WriteReg(kStreamCtrlOff, kStreamCtrlInit)) {
         ASFW_LOG_WARNING(Audio, "MOTUVendorProtocol: PrepareDuplex 0x0b04 write failed (non-fatal)");
+    }
+    if (!WriteReg(kDoorbellOff, kDoorbellClear)) {
+        ASFW_LOG_WARNING(Audio, "MOTUVendorProtocol: PrepareDuplex 0x0b08 clear failed (non-fatal)");
     }
 
     // PACKET_FORMAT (0x0b10) = 0x00000002 — S400 only, NO exclude-differed flags.
@@ -155,9 +170,19 @@ void MOTUVendorProtocol::ProgramRx(StageCallback callback) {
 
 void MOTUVendorProtocol::ProgramTxAndEnableDuplex(StageCallback callback) {
     // ISOC_COMM_CONTROL (both directions) is already fully programmed in ProgramRx via the
-    // required deactivate→activate transition. Here we only set CLOCK_STATUS kFetchPCMFrames,
-    // which is the gate that triggers MOTU V3 to begin IR transmission (mirrors main step 7,
-    // FETCH_PCM before host StartTransmit).
+    // required deactivate→activate transition. Here we set the missing 0x0b1c stream-format
+    // config, then CLOCK_STATUS kFetchPCMFrames.
+    //
+    // 0x0b1c — official driver writes this in the createDCLProgram cluster, AFTER ISOC
+    // activate (0x0b00, our ProgramRx) and BEFORE FETCH (0x0b14, below): order 0b10→0b00→
+    // 0b1c→0b14. Value 0x00120000 @ 48 kHz (rate-correlated). Write-only (blind to read-
+    // back) — value from El Cap DTrace deref. One of the missing init writes; best timing
+    // match for the misframe (fires at stream restart, like our duplex start).
+    // See SEQUOIA_REGREAD_RESULT.md. Non-fatal.
+    if (!WriteReg(kStreamCfgOff, kStreamCfg48k)) {
+        ASFW_LOG_WARNING(Audio, "MOTUVendorProtocol: ProgramTx 0x0b1c write failed (non-fatal)");
+    }
+
     uint32_t clk = 0;
     if (!ReadReg(kClockStatusOff, clk)) {
         ASFW_LOG_ERROR(Audio, "MOTUVendorProtocol: ProgramTx read CLOCK_STATUS failed");
@@ -312,6 +337,39 @@ bool MOTUVendorProtocol::WriteReg(uint32_t offset, uint32_t value) noexcept {
         FW::NodeId{static_cast<uint8_t>(nodeId_)},
         MakeAddr(offset),
         value,
+        FW::FwSpeed::S400,
+        [state](Async::AsyncStatus s, std::span<const uint8_t>) {
+            state->status = (s == Async::AsyncStatus::kSuccess)
+                                ? kIOReturnSuccess
+                                : kIOReturnIOError;
+            state->done.store(true, std::memory_order_release);
+        });
+
+    for (uint32_t ms = 0; ms < kRegTimeoutMs; ++ms) {
+        if (state->done.load(std::memory_order_acquire)) {
+            break;
+        }
+        IOSleep(1);
+    }
+    return state->done.load() && state->status == kIOReturnSuccess;
+}
+
+bool MOTUVendorProtocol::WriteRegBlock8(uint32_t offset, uint32_t q0, uint32_t q1) noexcept {
+    struct State { std::atomic<bool> done{false}; IOReturn status{kIOReturnTimeout}; };
+    auto state = std::make_shared<State>();
+
+    // Two big-endian quadlets (same serialization as WriteQuad), 8-byte block payload.
+    const std::array<uint8_t, 8> data = {
+        static_cast<uint8_t>(q0 >> 24), static_cast<uint8_t>(q0 >> 16),
+        static_cast<uint8_t>(q0 >> 8),  static_cast<uint8_t>(q0),
+        static_cast<uint8_t>(q1 >> 24), static_cast<uint8_t>(q1 >> 16),
+        static_cast<uint8_t>(q1 >> 8),  static_cast<uint8_t>(q1),
+    };
+    busOps_.WriteBlock(
+        busInfo_.GetGeneration(),
+        FW::NodeId{static_cast<uint8_t>(nodeId_)},
+        MakeAddr(offset),
+        std::span<const uint8_t>{data},
         FW::FwSpeed::S400,
         [state](Async::AsyncStatus s, std::span<const uint8_t>) {
             state->status = (s == Async::AsyncStatus::kSuccess)
