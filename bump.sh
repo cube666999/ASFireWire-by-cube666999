@@ -262,8 +262,29 @@ main() {
 
     if [[ ${#changed[@]} -gt 0 ]]; then
       git -C "$PROJECT_ROOT" add "${changed[@]}"
-      git -C "$PROJECT_ROOT" commit -m "chore: bump version to ${current_version}" \
-        && ok "Version files committed to git (prevents iCloud revert)"
+
+      # Amend-into-previous-bump: if HEAD is already a bump commit, amend it
+      # instead of piling on another. Keeps history readable across many
+      # hardware iterations while still committing (iCloud protection).
+      # Skipped if the previous bump is already pushed to any remote (safe:
+      # never rewrites shared history).
+      local prev_msg
+      prev_msg=$(git -C "$PROJECT_ROOT" log -1 --pretty=%s 2>/dev/null || echo "")
+      local prev_sha
+      prev_sha=$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo "")
+      local prev_pushed=0
+      if [[ -n "$prev_sha" ]]; then
+        git -C "$PROJECT_ROOT" branch -r --contains "$prev_sha" 2>/dev/null | grep -q . && prev_pushed=1
+      fi
+
+      if [[ "$prev_msg" =~ ^chore:\ bump\ version\ to && $prev_pushed -eq 0 ]]; then
+        git -C "$PROJECT_ROOT" commit --amend --no-edit \
+          -m "chore: bump version to ${current_version}" \
+          && ok "Version bump amended into previous commit (kept history clean)"
+      else
+        git -C "$PROJECT_ROOT" commit -m "chore: bump version to ${current_version}" \
+          && ok "Version files committed to git (prevents iCloud revert)"
+      fi
     else
       warn "Version files unchanged — was this a duplicate bump?"
     fi
