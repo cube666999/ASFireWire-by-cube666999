@@ -28,9 +28,9 @@ Archiwum ukończonych sesji → `DevLog.md`
 >
 > **Build: v144** (`kMotuSphPresentationLeadTicks=305` → on-wire +26). Lead MOOT (wykluczony), init writes ZOSTAJĄ (wierne).
 > **Setup:** MOTU na M3 (⚠️ luźny kabel FW dawał „nie widać MOTU" — sprawdź wpięcie). MBP2009=Linux PASYWNY (`snd_firewire_motu`
-> wyładowany, quirks=0x10, `/dev/fw0`+fw1=MOTU, tool `/tmp/fw_isoch_snoop_cyc` ch1). SSH `cube666@192.168.0.38` klucz
-> `~/.ssh/mb2009_nopass`, sudo `72044277`. Pętla leadu: zmień lead→build→graj→snoop ch1→parse. Pełne szczegóły → pamięć
-> `project-current-branch-and-state`. (Stare handoffy 0b38/regread = ZROBIONE, archiwalne.)
+> wyładowany, quirks=0x10, `/dev/fw0`+fw1=MOTU, tool w `/tmp/` ch1). SSH + sudo → pełne dane w lokalnej pamięci
+> `project-mb2009-snoop-access` (poza repo). Pętla leadu: zmień lead→build→graj→snoop ch1→parse.
+> (Stare handoffy 0b38/regread = ZROBIONE, archiwalne.)
 
 ---
 
