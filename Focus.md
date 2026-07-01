@@ -116,8 +116,8 @@ Archive of completed sessions → `DevLog.md`
 >
 > ### ✅ MEASUREMENT DONE (2026-06-26, Sequoia session) → **[`documentation/SEQUOIA_SNOOP_RESULT.md`](documentation/SEQUOIA_SNOOP_RESULT.md)**
 > Measured the official MOTU driver on Sequoia (snoop via MBP2009/Linux, both streams + sweep +
-> multi-rate). **Full numbers + evidence in RESULT.md — this section only lists actions. Read
-> RESULT.md before coding.**
+> multi-rate). **Full numbers + evidence in [`SEQUOIA_SNOOP_RESULT.md`](documentation/SEQUOIA_SNOOP_RESULT.md)
+> — this section only lists actions. Read it before coding.**
 >
 > **TWO HARD FIXES (both measured, not guessed) — ✅ IMPLEMENTED IN CODE 2026-06-27, awaiting hardware test:**
 > 1. **LEAD:** `kMotuSphPresentationLeadTicks` = `2*3072` (6144) → **`3*3072` (9216)**. The official
@@ -164,7 +164,7 @@ Archive of completed sessions → `DevLog.md`
 >   TODO: plumb runtime node-id).
 >
 > **➡️ NEXT STEP (updated 2026-06-27 after REGREAD):** read-back of 0x0b1c/0x0b38 is **EXHAUSTED** —
-> both are **write-only** (`SEQUOIA_REGREAD_RESULT.md`), can't be read back. 0b08 read-back=0
+> both are **write-only** ([`SEQUOIA_REGREAD_RESULT.md`](documentation/SEQUOIA_REGREAD_RESULT.md)), can't be read back. 0b08 read-back=0
 > (command/doorbell). To get the init values: **snoop the write payload** (fix the tracer to deref
 > the `buf=` DMA buffer — `dataBE=0x80a5211c` from trace v2 is an artifact, NOT a value). Only once
 > we have real data does Tahoe add writes to `MOTUVendorProtocol::PrepareDuplex`. If init doesn't
@@ -172,7 +172,7 @@ Archive of completed sessions → `DevLog.md`
 >
 > ### 🔬 ROUND 1 init — v139 TO TEST (2026-06-27, values OBTAINED via DTrace-deref)
 > The above "read-back exhausted" was only true briefly; **then an El Cap DTrace deref OBTAINED the
-> values** at the source (`SEQUOIA_REGREAD_RESULT.md`, top). **v139** adds 2 of 3 missing MOTU init
+> values** at the source ([`SEQUOIA_REGREAD_RESULT.md`](documentation/SEQUOIA_REGREAD_RESULT.md), top). **v139** adds 2 of 3 missing MOTU init
 > writes (`MOTUVendorProtocol`):
 > - **0x0b1c = 0x00120000** (@48k) — in `ProgramTxAndEnableDuplex` BEFORE FETCH 0x0b14 (trace order:
 >   0b10→0b00→0b1c→0b14).
