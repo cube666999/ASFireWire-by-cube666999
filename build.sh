@@ -34,6 +34,10 @@ VERBOSE=false
 NO_BUMP=false
 RUN_TESTS=false
 TEST_ONLY=false
+# When true, delete DerivedData before building (forces full rebuild)
+CLEAN=false
+# When true, sign app+dext and copy to ~/Desktop/ASFW_dice_vNN.app after build
+DEPLOY=false
 # When true, generate `compile_commands.json` by piping xcodebuild to xcpretty
 GENERATE_COMMANDS=false
 # Path to write compile_commands.json (relative to script working dir)
@@ -52,9 +56,11 @@ SWIFT_COVERAGE_LCOV="${BUILD_DIR}/swift_coverage.lcov"
 
 usage() {
   cat <<EOF
-Usage: $0 [--verbose] [--no-bump] [--scheme NAME] [--config CONFIG] [--arch ARCH] [--derived PATH]
+Usage: $0 [--verbose] [--no-bump] [--clean] [--deploy] [--scheme NAME] [--config CONFIG] [--arch ARCH] [--derived PATH]
   --verbose          Show full xcodebuild output (disables quiet filtering)
   --no-bump          Skip ./bump.sh
+  --clean            Delete DerivedData before build (forces full rebuild)
+  --deploy           After build: sign app+dext and copy to ~/Desktop/ASFW_dice_vNN.app
   --test             Run C++ tests before building
   --test-only        Run C++ tests only (skip xcodebuild)
   --swift-test-only  Run Swift/XCTest tests only (skip main build)
@@ -72,6 +78,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --verbose) VERBOSE=true; shift;;
     --no-bump) NO_BUMP=true; shift;;
+    --clean) CLEAN=true; shift;;
+    --deploy) DEPLOY=true; shift;;
     --test) RUN_TESTS=true; shift;;
     --test-only) TEST_ONLY=true; shift;;
     --swift-test-only) SWIFT_TEST_ONLY=true; shift;;
@@ -264,7 +272,7 @@ bump_version() {
   $NO_BUMP && { warn "Skipping version bump (--no-bump)"; return; }
   if [[ -x "./bump.sh" ]]; then
     log "Bumping version…"
-    ./bump.sh >/dev/null && ok "Version bumped"
+    ./bump.sh patch >/dev/null && ok "Version bumped"
   else
     warn "bump.sh missing or not executable – skipping"
   fi
@@ -404,6 +412,62 @@ run_static_analysis() {
   fi
 }
 
+# Sign app+dext and copy to ~/Desktop/ASFW_dice_vNN.app.
+# Requires valid Apple Development certificate in the keychain.
+deploy_app() {
+  local src_app="${DERIVED}/Build/Products/${CONFIGURATION}/ASFW.app"
+  if [[ ! -d "$src_app" ]]; then
+    err "--deploy: app not found at ${src_app}"; return 1
+  fi
+
+  # Read the version from the freshly-built dext
+  local ver
+  ver=$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" \
+    "${src_app}/Contents/Library/SystemExtensions/net.mrmidi.ASFW.ASFWDriver.dext/Info.plist" 2>/dev/null)
+  local dest_app="${HOME}/Desktop/ASFW_dice_v${ver}.app"
+
+  log "Deploying v${ver} → ${dest_app}..."
+
+  # Find signing identity automatically
+  local identity
+  identity=$(security find-identity -v -p codesigning \
+    | grep -m1 "Apple Development:" | sed -E 's/.*"(Apple Development:[^"]+)".*/\1/')
+  if [[ -z "$identity" ]]; then
+    err "--deploy: No 'Apple Development' certificate found in keychain"; return 1
+  fi
+
+  # Work from /tmp to avoid iCloud Drive xattr issues
+  local tmp_app="/tmp/ASFW_dice_deploy_v${ver}.app"
+  rm -rf "$tmp_app"
+  cp -R "$src_app" "$tmp_app"
+  find "$tmp_app" -exec xattr -c {} \; 2>/dev/null || true
+
+  # Sign dext first, then app with --deep
+  codesign --force --options runtime \
+    --sign "$identity" \
+    --entitlements "ASFWDriver/ASFWDriver.entitlements" \
+    --timestamp=none \
+    "${tmp_app}/Contents/Library/SystemExtensions/net.mrmidi.ASFW.ASFWDriver.dext" 2>&1
+
+  codesign --force --options runtime \
+    --sign "$identity" \
+    --entitlements "ASFW/App.entitlements" \
+    --timestamp=none \
+    --deep \
+    "${tmp_app}" 2>&1
+
+  if ! codesign --verify --deep --strict "$tmp_app" 2>&1; then
+    err "--deploy: Signature verification failed"; rm -rf "$tmp_app"; return 1
+  fi
+
+  # Copy to Desktop (replace previous same-version app)
+  rm -rf "$dest_app"
+  cp -R "$tmp_app" "$dest_app"
+  rm -rf "$tmp_app"
+
+  ok "Deployed: ${dest_app} (v${ver}, signed as '${identity}')"
+}
+
 main() {
   echo "==============================="
   echo "  ASFireWire – Quiet Build"
@@ -411,6 +475,12 @@ main() {
 
   preflight
   bump_version
+
+  # If --clean was requested, delete DerivedData before building (full rebuild).
+  if $CLEAN; then
+    log "Cleaning DerivedData at ${DERIVED}..."
+    rm -rf "${DERIVED}"
+  fi
 
   # If --commands was requested, generate compile_commands.json and exit.
   if $GENERATE_COMMANDS; then
@@ -496,7 +566,12 @@ main() {
         exit 1
       fi
     fi
-    
+
+    # If --deploy was requested, sign + copy to Desktop after a successful build.
+    if $DEPLOY; then
+      deploy_app || { err "Deploy failed"; exit 1; }
+    fi
+
     exit 0
   else
     summarize

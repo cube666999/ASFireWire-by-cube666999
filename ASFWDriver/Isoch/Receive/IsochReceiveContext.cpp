@@ -105,12 +105,42 @@ kern_return_t IsochReceiveContext::Start() {
     hardware_->Write(registers_.CommandPtr, cmdPtr);
 
     hardware_->Write(registers_.ContextControlClear, 0xFFFFFFFFu);
-    const uint32_t ctlValue = Driver::ContextControl::kRun | Driver::ContextControl::kIsochHeader;
+    // kRun (bit 15) | kWake (bit 12) | kIsochHeader (bit 30).
+    //   - kWake is what makes the context actually fetch from CommandPtr — without it the
+    //     context arms but the IR DMA never runs and DrainCompleted() returns 0 forever
+    //     (→ ZTS timeout 0xe00002d6). This was the "Bug D" symptom.
+    //   - kIsochHeader (OHCI 1.1 §10.6.2.1, Figure 10-5 bit 30; bit 29 is cycleMatchEnable)
+    //     selects the packet-per-buffer WITH header/trailer format. OHCI then writes, before
+    //     the isochronous data, an 8-byte prefix per packet:
+    //         quadlet 0: [xferStatus(invalid):16][timeStamp:16]   ← per-packet HW cycle stamp
+    //         quadlet 1: [dataLength:16][tag][chanNum][tcode][sy]  ← isoch packet header
+    //     RxAudioPacketProcessor is built for exactly this layout (kIsochHeaderSize=8: CIP at
+    //     payload+8, receive timestamp from payload[0..3]). Without isochHeader the buffer is
+    //     data-only (CIP at offset 0) and the processor reads garbage → CIP decode fails →
+    //     packetAccepted=false → ZTS never publishes. The "Bug D" fix added kWake but wrongly
+    //     dropped isochHeader, leaving OHCI format and processor offset inconsistent.
+    //   NOTE: this is intentionally different from main, which uses isochHeader=0 +
+    //   kIsochHeaderSize=0 and derives timing from CIP SYT. dice carries the ZTS HW-timestamp
+    //   pipeline, so it needs the hardware per-packet stamp that isochHeader=1 provides.
+    const uint32_t ctlValue = Driver::ContextControl::kRun |
+                              Driver::ContextControl::kWake |
+                              Driver::ContextControl::kIsochHeader;
     hardware_->Write(registers_.ContextControlSet, ctlValue);
 
     const uint32_t contextMask = 1u << contextIndex_;
     hardware_->Write(ASFW::Driver::Register32::kIsoRecvIntMaskSet, contextMask);
     ASFW_LOG(Isoch, "Start: Enabled IR interrupt for context %u (mask=0x%08x)", contextIndex_, contextMask);
+
+    const uint32_t readMatch = hardware_->Read(registers_.ContextMatch);
+    const uint32_t readCmd = hardware_->Read(registers_.CommandPtr);
+    const uint32_t readCtl = hardware_->Read(registers_.ContextControlSet);
+    ASFW_LOG(Isoch, "Start: Wrote Match=0x%08x Cmd=0x%08x Ctl=0x%08x", contextMatch, cmdPtr, ctlValue);
+    ASFW_LOG(Isoch, "Start: Readback Match=0x%08x Cmd=0x%08x Ctl=0x%08x", readMatch, readCmd, readCtl);
+
+    if ((readCtl & Driver::ContextControl::kDead) != 0) {
+        ASFW_LOG(Isoch, "❌ Start: Context is DEAD! Check descriptor program.");
+        return kIOReturnNotPermitted;
+    }
 
     while (rxLock_.test_and_set(std::memory_order_acquire)) {
     }
@@ -495,6 +525,16 @@ uint32_t IsochReceiveContext::Poll() {
                             rxCadenceEstablishedLogged_ = true;
                         }
                     }
+                }
+
+                // Some devices (e.g. MOTU V3) always send SYT=0xFFFF and never
+                // establish SYT cadence. Fall back to the IR receive timestamp as
+                // the ZTS clock source when cadence hasn't been established but we
+                // have a valid hardware timestamp. Accuracy is reduced (no
+                // SYT-based phase correction) but the HAL ZTS anchor is functional.
+                if (!rxClockEstablished && hasHardwareTimestamp &&
+                    packetReceiveHostTicks != 0) {
+                    rxClockEstablished = true;
                 }
 
                 const uint32_t hostNanosPerSampleQ8 =

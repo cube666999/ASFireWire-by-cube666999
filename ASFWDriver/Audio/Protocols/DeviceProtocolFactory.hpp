@@ -54,6 +54,7 @@ public:
     static constexpr uint32_t kApogeeDuetModelId = DeviceProfiles::Audio::kApogeeDuetModelId;
     static constexpr uint32_t kAlesisVendorId = DeviceProfiles::Audio::kAlesisVendorId;
     static constexpr uint32_t kAlesisMultiMixModelId = DeviceProfiles::Audio::kAlesisMultiMixModelId;
+    static constexpr uint32_t kMotuVendorId = DeviceProfiles::Audio::kMotuVendorId;
     static constexpr uint32_t kFocusriteGuidModelSPro40Tcd3070 =
         DeviceProfiles::Audio::kFocusriteGuidModelSPro40Tcd3070;
     static constexpr const char* kFocusriteVendorName = DeviceProfiles::Audio::kFocusriteVendorName;

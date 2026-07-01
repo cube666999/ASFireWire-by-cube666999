@@ -201,6 +201,20 @@ EOF
   echo "   Commit:  ${GIT_COMMIT_SHORT} (${GIT_BRANCH})"
   echo "   Dirty:   ${GIT_DIRTY}"
   echo "   Time:    ${BUILD_TIMESTAMP}"
+
+  # Sync CURRENT_PROJECT_VERSION in project.pbxproj to the patch component of
+  # SEMANTIC_VERSION.  This ensures CFBundleVersion in the built dext and app
+  # always matches the patch number so systemextensionsctl can detect upgrades.
+  local PBXPROJ="${PROJECT_ROOT}/ASFW.xcodeproj/project.pbxproj"
+  if [[ -f "$PBXPROJ" ]]; then
+    local base_ver="${SEMANTIC_VERSION%%-*}"   # strip any -alpha/-audio suffix
+    local build_number
+    build_number=$(echo "$base_ver" | cut -d. -f3)
+    if [[ "$build_number" =~ ^[0-9]+$ ]]; then
+      sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9]*/CURRENT_PROJECT_VERSION = ${build_number}/g" "$PBXPROJ"
+      ok "Synced CURRENT_PROJECT_VERSION = ${build_number} in project.pbxproj"
+    fi
+  fi
 }
 
 # Main logic
@@ -226,7 +240,56 @@ main() {
   
   # Always regenerate version header
   generate_version_header
-  
+
+  # After a real bump (not refresh), immediately commit the version files.
+  # This is critical on iCloud Drive: uncommitted changes get overwritten by
+  # sync from another machine before xcodebuild starts, silently reverting
+  # VERSION.txt and project.pbxproj back to the old version.  The built dext
+  # then gets the old CFBundleVersion and macOS refuses to upgrade.
+  #
+  # Skip auto-commit when called from Xcode (SRCROOT is set) — Xcode runs
+  # bump.sh as a build phase script, not a manual invocation.
+  if [[ "$action" != "refresh" && -z "${SRCROOT:-}" ]]; then
+    local PBXPROJ="${PROJECT_ROOT}/ASFW.xcodeproj/project.pbxproj"
+    local current_version
+    current_version=$(head -n 1 "$VERSION_FILE" | tr -d '[:space:]')
+
+    # Collect files that actually changed vs HEAD
+    local changed=()
+    git -C "$PROJECT_ROOT" diff --quiet HEAD -- "$VERSION_FILE"  2>/dev/null || changed+=("$VERSION_FILE")
+    git -C "$PROJECT_ROOT" diff --quiet HEAD -- "$OUTPUT_FILE"   2>/dev/null || changed+=("$OUTPUT_FILE")
+    [[ -f "$PBXPROJ" ]] && { git -C "$PROJECT_ROOT" diff --quiet HEAD -- "$PBXPROJ" 2>/dev/null || changed+=("$PBXPROJ"); }
+
+    if [[ ${#changed[@]} -gt 0 ]]; then
+      git -C "$PROJECT_ROOT" add "${changed[@]}"
+
+      # Amend-into-previous-bump: if HEAD is already a bump commit, amend it
+      # instead of piling on another. Keeps history readable across many
+      # hardware iterations while still committing (iCloud protection).
+      # Skipped if the previous bump is already pushed to any remote (safe:
+      # never rewrites shared history).
+      local prev_msg
+      prev_msg=$(git -C "$PROJECT_ROOT" log -1 --pretty=%s 2>/dev/null || echo "")
+      local prev_sha
+      prev_sha=$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo "")
+      local prev_pushed=0
+      if [[ -n "$prev_sha" ]]; then
+        git -C "$PROJECT_ROOT" branch -r --contains "$prev_sha" 2>/dev/null | grep -q . && prev_pushed=1
+      fi
+
+      if [[ "$prev_msg" =~ ^chore:\ bump\ version\ to && $prev_pushed -eq 0 ]]; then
+        git -C "$PROJECT_ROOT" commit --amend --no-edit \
+          -m "chore: bump version to ${current_version}" \
+          && ok "Version bump amended into previous commit (kept history clean)"
+      else
+        git -C "$PROJECT_ROOT" commit -m "chore: bump version to ${current_version}" \
+          && ok "Version files committed to git (prevents iCloud revert)"
+      fi
+    else
+      warn "Version files unchanged — was this a duplicate bump?"
+    fi
+  fi
+
   # Show current version
   local current_version
   current_version=$(head -n 1 "$VERSION_FILE" | tr -d '[:space:]')

@@ -1495,6 +1495,12 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
         session.runtimeCaps.deviceToHostAm824Slots == 9) {
         rxWireFormat = Encoding::AudioWireFormat::kRawPcm24In32;
     }
+    // MOTU V3 device->host (IR) uses a fixed non-standard header (0d040400
+    // 22ffffff, EOH1=0) and 3-byte-packed PCM — not standard CIP/AM824. Decode
+    // via the dedicated MOTU path. See MOTU_V3_WIRE_GROUNDTRUTH.md (main repo).
+    if (record.vendorId == DeviceProtocolFactory::kMotuVendorId) {
+        rxWireFormat = Encoding::AudioWireFormat::kMotuV3Packed;
+    }
     const uint32_t rxAm824Slots = session.runtimeCaps.deviceToHostAm824Slots;
     const Encoding::AudioWireFormat wireFormat =
         ResolveDicePlaybackWireFormat(record, session.runtimeCaps);
@@ -1570,6 +1576,39 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
                                       DiceRestartFailureCause::kGlobalClockLock);
     }
 
+    // Host IR DMA start, factored out so MOTU-class devices can run it BEFORE
+    // device ProgramRx/ProgramTx (quirk startHostReceiveBeforeDeviceProgram).
+    // MOTU begins IR transmission the instant it sees FETCH_PCM_FRAMES and needs
+    // the host RX context already running; pure DICE keeps the post-program order.
+    auto startHostReceive = [&]() -> IOReturn {
+        if (abortIfTeardown("StartingHostReceive")) {
+            return kIOReturnAborted;
+        }
+        const kern_return_t startReceiveStatus =
+            hostTransport_.StartPreparedReceive();
+        if (startReceiveStatus != kIOReturnSuccess) {
+            return rollbackToFailure(startReceiveStatus,
+                                     DiceRestartPhase::kStartingHostReceive,
+                                     DiceRestartFailureCause::kStartReceive);
+        }
+        if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
+            return rollbackToInvalidation(kIOReturnAborted,
+                                          DiceRestartPhase::kStartingHostReceive,
+                                          DiceRestartFailureCause::kStartReceive);
+        }
+        SetSessionPhase(session, DiceRestartPhase::kStartingHostReceive);
+        session.hostReceiveStarted = true;
+        StoreSession(session);
+        return kIOReturnSuccess;
+    };
+
+    if (startReceiveBeforeProgram_) {
+        const IOReturn earlyRx = startHostReceive();
+        if (earlyRx != kIOReturnSuccess) {
+            return earlyRx;
+        }
+    }
+
     if (abortIfTeardown("ProgrammingDeviceRx")) {
         return kIOReturnAborted;
     }
@@ -1637,27 +1676,15 @@ IOReturn DiceDuplexRestartCoordinator::RunDuplexStart(
         return kIOReturnAborted;
     }
 
-    // RX first: the device needs to be receiving before it can lock its TX
-    // clock. Starting IT before IR causes the DICE PLL to see TX without
-    // a valid RX reference, leading to timing instability.
-    if (abortIfTeardown("StartingHostReceive")) {
-        return kIOReturnAborted;
+    // RX first: pure DICE needs the host RX context running before host TX so
+    // the device PLL has a valid RX reference. MOTU-class devices already
+    // started RX before device program (startReceiveBeforeProgram_); skip here.
+    if (!startReceiveBeforeProgram_) {
+        const IOReturn lateRx = startHostReceive();
+        if (lateRx != kIOReturnSuccess) {
+            return lateRx;
+        }
     }
-    const kern_return_t startReceiveStatus =
-        hostTransport_.StartPreparedReceive();
-    if (startReceiveStatus != kIOReturnSuccess) {
-        return rollbackToFailure(startReceiveStatus,
-                                 DiceRestartPhase::kStartingHostReceive,
-                                 DiceRestartFailureCause::kStartReceive);
-    }
-    if (!IsRestartEpochCurrent(guid, restartId, topologyGeneration)) {
-        return rollbackToInvalidation(kIOReturnAborted,
-                                      DiceRestartPhase::kStartingHostReceive,
-                                      DiceRestartFailureCause::kStartReceive);
-    }
-    SetSessionPhase(session, DiceRestartPhase::kStartingHostReceive);
-    session.hostReceiveStarted = true;
-    StoreSession(session);
 
     if (abortIfTeardown("StartingHostTransmit")) {
         return kIOReturnAborted;

@@ -16,6 +16,7 @@ AMDTP::AmdtpStreamConfig DiceStreamConfigMapper::ToAmdtpConfig(
     config.fmt = diceConfig.fmt;
     config.fdf = diceConfig.fdf;
     config.framesPerDataPacket = diceConfig.framesPerDataPacket;
+    config.sph = diceConfig.sph;
     // maxPacketBytes keeps the AmdtpStreamConfig default (512), matching the
     // lab slot capacity and the ASFW IT ring payload budget.
     return config;
@@ -126,9 +127,19 @@ DiceTxStreamEngine::PayloadWriterCounters() const noexcept {
 AMDTP::AmdtpTxPolicy DiceTxStreamEngine::BuildTxPolicy(
     const ASFW::Isoch::Audio::DICE::DiceDeviceQuirks& quirks) const noexcept {
     AMDTP::AmdtpTxPolicy policy{};
-    policy.hostToDevicePcmEncoding = (quirks.tx.hostToDevicePcmEncoding == ASFW::Encoding::AudioWireFormat::kRawPcm24In32)
-                                     ? AMDTP::PcmSlotEncoding::RawSigned24In32BE
-                                     : AMDTP::PcmSlotEncoding::Am824MBLA;
+    switch (quirks.tx.hostToDevicePcmEncoding) {
+        case ASFW::Encoding::AudioWireFormat::kRawPcm24In32:
+            policy.hostToDevicePcmEncoding =
+                AMDTP::PcmSlotEncoding::RawSigned24In32BE;
+            break;
+        case ASFW::Encoding::AudioWireFormat::kMotuV3Packed:
+            policy.hostToDevicePcmEncoding =
+                AMDTP::PcmSlotEncoding::MotuV3Packed;
+            break;
+        case ASFW::Encoding::AudioWireFormat::kAM824:
+            policy.hostToDevicePcmEncoding = AMDTP::PcmSlotEncoding::Am824MBLA;
+            break;
+    }
     policy.dbsPolicy = (quirks.tx.dbsPolicy == ASFW::Isoch::Audio::DICE::DbsPolicy::VariablePerPacket)
                        ? AMDTP::DbsPolicy::VariablePerPacket
                        : AMDTP::DbsPolicy::Constant;

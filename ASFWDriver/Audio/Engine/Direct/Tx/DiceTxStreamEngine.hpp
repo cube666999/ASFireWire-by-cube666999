@@ -63,6 +63,14 @@ public:
     [[nodiscard]] const AMDTP::AmdtpPayloadWriterCounters&
     PayloadWriterCounters() const noexcept;
 
+    // Diagnostics: live free-running MOTU V3 SPH cursor (for the drift-watch).
+    [[nodiscard]] int64_t MotuSphCursorTicks() const noexcept {
+        return packetizer_.MotuSphCursorTicks();
+    }
+    [[nodiscard]] bool MotuSphSeeded() const noexcept {
+        return packetizer_.MotuSphSeeded();
+    }
+
 private:
     AMDTP::AmdtpTxPolicy BuildTxPolicy(const ASFW::Isoch::Audio::DICE::DiceDeviceQuirks& quirks) const noexcept;
 

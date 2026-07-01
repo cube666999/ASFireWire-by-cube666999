@@ -49,4 +49,24 @@ inline void DecodeDirectRxFrame(const uint32_t* inWireQuadlets,
     }
 }
 
+// MOTU 828 MK3 V3 device->host PCM decode. Unlike AM824/RawPcm24In32 (one
+// 32-bit slot per channel), MOTU packs each channel as 3 big-endian bytes with
+// no per-channel label. `pcmBase` points at the first PCM byte inside a data
+// block (after SPH(4B) + 2 MSG chunks => block byte offset 10). Output is
+// Float32, matching the AM824/RawPcm24In32 RX path (Detail::Signed24ToFloat32).
+inline void DecodeMotuV3Frame(const uint8_t* pcmBase,
+                              uint32_t pcmChannels,
+                              float* outPcmFrame) noexcept {
+    for (uint32_t ch = 0; ch < pcmChannels; ++ch) {
+        const uint8_t* b = pcmBase + static_cast<size_t>(ch) * 3u;
+        int32_t sample = (static_cast<int32_t>(b[0]) << 16) |
+                         (static_cast<int32_t>(b[1]) << 8) |
+                         static_cast<int32_t>(b[2]);
+        if (sample & 0x00800000) {
+            sample |= static_cast<int32_t>(0xFF000000u);
+        }
+        outPcmFrame[ch] = Detail::Signed24ToFloat32(sample);
+    }
+}
+
 } // namespace ASFW::AudioEngine::Direct::Rx

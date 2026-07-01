@@ -7,7 +7,9 @@
 #include "DICE/Focusrite/SPro24DspProtocol.hpp"
 #include "DICE/TCAT/DICETcatProtocol.hpp"
 #include "Oxford/Apogee/ApogeeDuetProtocol.hpp"
+#include "Vendor/MOTU/MOTUVendorProtocol.hpp"
 #include "../../Logging/Logging.hpp"
+#include "../../DeviceProfiles/Audio/AudioDeviceIds.hpp"
 
 namespace ASFW::Audio {
 
@@ -57,6 +59,14 @@ std::unique_ptr<IDeviceProtocol> DeviceProtocolFactory::Create(
         return std::make_unique<Oxford::Apogee::ApogeeDuetProtocol>(busOps, busInfo, nodeId, nullptr);
     }
     
+    // MOTU V3 family (vendor-specific, no AV/C, no DICE chip)
+    if (vendorId == DeviceProfiles::Audio::kMotuVendorId) {
+        ASFW_LOG(Audio,
+                 "Creating MOTUVendorProtocol for vendor=0x%06x model=0x%06x node=0x%04x",
+                 vendorId, modelId, nodeId);
+        return std::make_unique<Vendor::MOTUVendorProtocol>(busOps, busInfo, nodeId, irmClient);
+    }
+
     // Unknown device
     return nullptr;
 }

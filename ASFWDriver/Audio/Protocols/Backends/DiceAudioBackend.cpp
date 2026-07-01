@@ -457,6 +457,27 @@ IOReturn DiceAudioBackend::StartStreaming(uint64_t guid) noexcept {
         return kIOReturnNotReady;
     }
 
+    // Apply the device profile's startTxBeforeRxReplay quirk before the restart
+    // FSM starts the host isoch contexts. MOTU V3 only emits IR once it is
+    // receiving IT, so its IT must not wait for IR replay (see DiceTxQuirks).
+    bool startTxBeforeReplay = false;
+    bool startReceiveBeforeProgram = false;
+    if (const auto* record = registry_.FindByGuid(guid)) {
+        const ASFW::Isoch::Audio::DICE::DiceDeviceIdentity identity{
+            .guid = record->guid,
+            .vendorId = record->vendorId,
+            .modelId = record->modelId
+        };
+        static ASFW::Isoch::Audio::DICE::DiceProfileRegistry diceRegistry{};
+        if (const auto* profile = diceRegistry.FindProfile(identity)) {
+            startTxBeforeReplay = profile->Quirks().tx.startTxBeforeRxReplay;
+            startReceiveBeforeProgram =
+                profile->Quirks().tx.startHostReceiveBeforeDeviceProgram;
+        }
+    }
+    hostTransport_.SetStartTxBeforeReplay(startTxBeforeReplay);
+    restartCoordinator_.SetStartReceiveBeforeProgram(startReceiveBeforeProgram);
+
     const IOReturn status = restartCoordinator_.StartStreaming(guid);
     if (status == kIOReturnSuccess) {
         EnsureNubForGuid(guid);

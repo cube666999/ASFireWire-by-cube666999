@@ -7,16 +7,19 @@
 #include "DiceProfileRegistry.hpp"
 #include "Isoch/Profiles/FocusriteSaffireProfile.hpp"
 #include "Isoch/Profiles/GenericDiceProfile.hpp"
+#include "Isoch/Profiles/MOTU828Mk3Profile.hpp"
 
 namespace ASFW::Isoch::Audio::DICE {
 
 namespace {
 Profiles::GenericDiceProfile gGenericProfile{};
 Profiles::FocusriteSaffireProfile gFocusriteProfile{};
+Profiles::MOTU828Mk3Profile gMotu828Mk3Profile{};
 } // namespace
 
 DiceProfileRegistry::DiceProfileRegistry() noexcept {
     (void)RegisterProfile(&gFocusriteProfile);
+    (void)RegisterProfile(&gMotu828Mk3Profile);
 }
 
 bool DiceProfileRegistry::RegisterProfile(const IDiceDeviceProfile* profile) noexcept {

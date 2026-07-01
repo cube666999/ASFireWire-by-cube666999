@@ -190,6 +190,11 @@ private:
     // Wire-truth gauge state (refill is single-threaded)
     bool wireLastPacketHadInfo_{false};
     bool wireFirstInfoLogged_{false};
+    // DBC continuity watch: consecutive DATA packets must advance DBC by the
+    // frame count (8). A break means MOTU loses block sequence → block-phase
+    // rotation (wandering output channels + squeal). 0xFFFF = no prior packet.
+    uint16_t wireLastDbc_{0xFFFF};
+    uint64_t wireDbcDiscontinuities_{0};
 
     Counters counters_{};
 };

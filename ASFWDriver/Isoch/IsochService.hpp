@@ -82,6 +82,14 @@ public:
                                           uint32_t bandwidthUnits);
 
     void StopAll();
+
+    // When true, StartPreparedTransmit starts IT immediately instead of
+    // deferring it until the IR replay/cadence is established. Required by
+    // devices (MOTU V3) that only begin IR transmission once they receive IT
+    // packets — deferring would deadlock. Sourced from the device profile's
+    // DiceTxQuirks::startTxBeforeRxReplay. See StartPreparedTransmit().
+    void SetStartTxBeforeReplay(bool enabled) noexcept { startTxBeforeReplay_ = enabled; }
+
     void SetTimingLossCallback(TimingLossCallback callback) noexcept;
     void SetTxPreparationCallback(TxPreparationCallback callback) noexcept;
     void SetZtsAnchorReadyCallback(ZtsAnchorReadyCallback callback) noexcept;
@@ -119,11 +127,21 @@ public:
     ASFW::Isoch::IsochReceiveContext* ReceiveContext() const { return isochReceiveContext_.get(); }
     ASFW::Isoch::IsochTransmitContext* TransmitContext() const { return isochTransmitContext_.get(); }
 
+    // IRM-reserved host->device (playback / IT) isoch channel, or 0xFF if not yet
+    // reserved. This is the channel the device was told to receive on (e.g. MOTU
+    // ISOC_COMM_CONTROL via the vendor protocol); the TX wire MUST be transmitted
+    // on it. The ADK transmit path reads this through the nub so its isoch packet
+    // header carries the right channel instead of defaulting to the source id.
+    [[nodiscard]] uint8_t PlaybackChannel() const noexcept { return reserved_.playbackChannel; }
+
 private:
     kern_return_t ClaimDuplexGuid(uint64_t guid);
     void RefreshReceiveTimingLossCallback() noexcept;
     void OnReceiveTimingLossDetected() noexcept;
     void StartDeferredTransmitIfReady() noexcept;
+    // Releases any IRM channel/bandwidth reserved by ReservePlayback/CaptureResources.
+    // Called from StopAll so a restart doesn't fail with NoResources on a self-held channel.
+    void ReleaseReservedIRM() noexcept;
 
     OSSharedPtr<ASFW::Isoch::IsochReceiveContext> isochReceiveContext_;
     std::unique_ptr<ASFW::Isoch::IsochTransmitContext> isochTransmitContext_;
@@ -154,10 +172,13 @@ private:
     OSSharedPtr<IOBufferMemoryDescriptor> txControlBlock_{nullptr};
 
     uint64_t activeGuid_{0};
+    // Non-owning; set when IRM resources are reserved, used by ReleaseReservedIRM on teardown.
+    IRM::IRMClient* reservedIrmClient_{nullptr};
     TimingLossCallback timingLossCallback_{};
     TxPreparationCallback txPreparationCallback_{};
     ZtsAnchorReadyCallback ztsAnchorReadyCallback_{};
     bool txStartPending_{false};
+    bool startTxBeforeReplay_{false};
     uint32_t interruptInterval_{8};
 
     struct ReservedDuplexResources {

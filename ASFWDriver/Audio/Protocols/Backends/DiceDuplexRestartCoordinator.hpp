@@ -56,6 +56,13 @@ public:
     void ClearSession(uint64_t guid) noexcept;
     [[nodiscard]] std::optional<DICE::DiceRestartSession> GetSession(uint64_t guid) const noexcept;
 
+    // MOTU-class quirk: start the host IR DMA before device ProgramRx/ProgramTx
+    // so MOTU's IR transmission (triggered by FETCH_PCM_FRAMES) lands in an
+    // already-running context. Default false keeps pure-DICE ordering.
+    void SetStartReceiveBeforeProgram(bool enabled) noexcept {
+        startReceiveBeforeProgram_ = enabled;
+    }
+
     [[nodiscard]] uint64_t TeardownAbortCount() const noexcept {
         return teardownAbortCount_.load(std::memory_order_acquire);
     }
@@ -154,6 +161,7 @@ private:
     std::unordered_map<uint64_t, ClockCompletionStore> completedClockRequests_{};
     uint64_t nextClockToken_{1};
     uint64_t nextRestartId_{1};
+    bool startReceiveBeforeProgram_{false};
     std::atomic<uint64_t> teardownAbortCount_{0};
 
     static constexpr uint32_t kSyncBridgeTimeoutMs = 12000;

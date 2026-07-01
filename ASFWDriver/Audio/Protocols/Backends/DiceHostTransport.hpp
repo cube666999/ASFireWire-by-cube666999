@@ -56,6 +56,12 @@ public:
 
     void SetTimingLossCallback(Driver::IsochService::TimingLossCallback callback) noexcept;
 
+    // Forwards the device profile's startTxBeforeRxReplay quirk to the isoch
+    // service so MOTU-class devices start IT without waiting for IR replay.
+    void SetStartTxBeforeReplay(bool enabled) noexcept {
+        isoch_.SetStartTxBeforeReplay(enabled);
+    }
+
     [[nodiscard]] kern_return_t BeginSplitDuplex(uint64_t guid) noexcept override;
     [[nodiscard]] kern_return_t ReservePlaybackResources(uint64_t guid,
                                                          ::ASFW::IRM::IRMClient& irmClient,

@@ -13,6 +13,12 @@ enum class PcmSlotEncoding : uint8_t {
     Am824MBLA = 0,
     RawSigned24In32BE = 1,
     RawSigned24In32LE = 2,
+    // MOTU 828 MK3 V3 host->device (IT): each DBS=13 data block is
+    // SPH(4B) + 2 MSG chunks + 14 PCM chunks (3-byte big-endian, NOT 4-byte
+    // AM824 slots). PCM starts at block byte offset 10; stereo lands on
+    // slots 0/1 (Main Out). The payload writer packs PCM directly (3-byte);
+    // the packetizer owns SPH + MSG. See main repo MOTU_V3_WIRE_GROUNDTRUTH.md.
+    MotuV3Packed = 3,
 };
 
 enum class DbsPolicy : uint8_t {
@@ -34,6 +40,10 @@ struct AmdtpStreamConfig final {
 
     uint8_t framesPerDataPacket{8};
     uint32_t maxPacketBytes{512};
+
+    // IEC 61883-6 §6.2 Source Packet Header: when true, each data block starts
+    // with a 4-byte SPH quadlet (included in DBS count). Required by MOTU V3.
+    bool sph{false};
 };
 
 struct AmdtpTxPolicy final {
@@ -90,6 +100,16 @@ struct AmdtpTimingState final {
     uint16_t replayDataBlocks{0};
     bool replayValid{false};
     uint64_t nextAudioFrame{0};
+
+    // MOTU V3 source-packet-header (SPH) presentation timestamp for this
+    // packet's first data block, in the 24.576 MHz tick domain (cycle*3072 +
+    // offset). The packetizer writes SPH per data block, advancing 512 ticks
+    // per frame (48 kHz). Valid only when motuSphValid: the pre-replay /
+    // prefill phase has no presentation anchor (SPH falls back to 0 — MOTU
+    // still starts IR from DATA packets regardless). See main DevLog Fix 62:
+    // a stale/past SPH makes MOTU reject every audio frame.
+    int64_t motuSphBaseTicks{0};
+    bool motuSphValid{false};
 };
 
 } // namespace ASFW::Protocols::Audio::AMDTP
@@ -104,6 +124,12 @@ enum class StreamMode : uint8_t {
 enum class AudioWireFormat : uint8_t {
     kAM824 = 0,
     kRawPcm24In32 = 1,
+    // MOTU 828 MK3 V3 device->host (IR): fixed NON-standard 8-byte header
+    // (0d040400 22ffffff, EOH1=0 — not a valid IEC 61883 CIP), then 8 data
+    // blocks of DBS=16 quadlets, each = SPH(4B) + 2 MSG chunks + 18 PCM chunks
+    // (3-byte big-endian, NOT 4-byte AM824 slots). PCM starts at block byte
+    // offset 10. See main repo MOTU_V3_WIRE_GROUNDTRUTH.md §"IR ground truth".
+    kMotuV3Packed = 2,
 };
 
 } // namespace ASFW::Encoding

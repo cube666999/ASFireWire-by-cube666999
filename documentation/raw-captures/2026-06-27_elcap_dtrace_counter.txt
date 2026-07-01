@@ -1,0 +1,72 @@
+START 14:21:04
+tick 2026 Jun 27 14:21:06
+tick 2026 Jun 27 14:21:07
+tick 2026 Jun 27 14:21:08
+tick 2026 Jun 27 14:21:09
+tick 2026 Jun 27 14:21:10
+tick 2026 Jun 27 14:21:11
+tick 2026 Jun 27 14:21:12
+tick 2026 Jun 27 14:21:13
+tick 2026 Jun 27 14:21:14
+tick 2026 Jun 27 14:21:15
+tick 2026 Jun 27 14:21:16
+tick 2026 Jun 27 14:21:17
+tick 2026 Jun 27 14:21:18
+[ISOCH 2026 Jun 27 14:21:18] createDCLProgram talking=1
+[ISOCH 2026 Jun 27 14:21:18] createDCLProgram talking=0
+tick 2026 Jun 27 14:21:19
+tick 2026 Jun 27 14:21:20
+tick 2026 Jun 27 14:21:21
+tick 2026 Jun 27 14:21:22
+tick 2026 Jun 27 14:21:23
+tick 2026 Jun 27 14:21:24
+tick 2026 Jun 27 14:21:25
+tick 2026 Jun 27 14:21:26
+tick 2026 Jun 27 14:21:27
+tick 2026 Jun 27 14:21:28
+tick 2026 Jun 27 14:21:29
+tick 2026 Jun 27 14:21:30
+tick 2026 Jun 27 14:21:31
+tick 2026 Jun 27 14:21:32
+tick 2026 Jun 27 14:21:33
+tick 2026 Jun 27 14:21:34
+tick 2026 Jun 27 14:21:35
+tick 2026 Jun 27 14:21:36
+tick 2026 Jun 27 14:21:37
+tick 2026 Jun 27 14:21:38
+tick 2026 Jun 27 14:21:39
+tick 2026 Jun 27 14:21:40
+tick 2026 Jun 27 14:21:41
+tick 2026 Jun 27 14:21:42
+tick 2026 Jun 27 14:21:43
+tick 2026 Jun 27 14:21:44
+tick 2026 Jun 27 14:21:45
+tick 2026 Jun 27 14:21:46
+tick 2026 Jun 27 14:21:47
+tick 2026 Jun 27 14:21:48
+tick 2026 Jun 27 14:21:49
+tick 2026 Jun 27 14:21:50
+tick 2026 Jun 27 14:21:51
+tick 2026 Jun 27 14:21:52
+tick 2026 Jun 27 14:21:53
+tick 2026 Jun 27 14:21:54
+tick 2026 Jun 27 14:21:55
+tick 2026 Jun 27 14:21:56
+tick 2026 Jun 27 14:21:57
+tick 2026 Jun 27 14:21:58
+tick 2026 Jun 27 14:21:59
+tick 2026 Jun 27 14:22:00
+tick 2026 Jun 27 14:22:01
+tick 2026 Jun 27 14:22:02
+tick 2026 Jun 27 14:22:03
+tick 2026 Jun 27 14:22:04
+tick 2026 Jun 27 14:22:05
+TOTAL asyncWrite = 5
+TOTAL createDCL  = 2
+--- offsety zapisow ---
+off=0x0b00 cnt=1
+off=0x0b10 cnt=1
+off=0x0b1c cnt=1
+off=0x0b14 cnt=2
+
+KONIEC 14:22:05

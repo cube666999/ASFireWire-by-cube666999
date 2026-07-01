@@ -169,6 +169,7 @@ add_audio_test(DiceProfileTests
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/DiceProfileRegistry.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/GenericDiceProfile.cpp"
     "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/FocusriteSaffireProfile.cpp"
+    "${ASFW_DRIVER_DIR}/Audio/DriverKit/Config/DICE/Isoch/Profiles/MOTU828Mk3Profile.cpp"
 )
 
 # IT Descriptor Layout Tests

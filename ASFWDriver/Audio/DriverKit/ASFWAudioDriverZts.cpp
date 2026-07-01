@@ -203,12 +203,141 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
         }
 
         ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
-        timing.replayValid = true;
+        // Before IR replay is established: send DATA with zero PCM so MOTU V3
+        // starts IR. Without DATA packets MOTU ignores CIP-header-only IT and
+        // never begins streaming → replay never arrives → deadlock.
+        timing.replayValid = false; // use blocking cadence until replay active
+        timing.txClockValid = false; // SYT=0xFFFF until replay provides timing
         timing.disposition =
             ASFW::Protocols::Audio::AMDTP::
-                AmdtpPacketDisposition::NoData;
+                AmdtpPacketDisposition::Data;
+
+        // MOTU V3 SPH seed: unlike SYT-driven devices, MOTU times playback from
+        // the per-data-block source-packet-header (SPH), NOT the CIP SYT (which
+        // MOTU leaves 0xFFFF). MOTU's IR carries no valid SYT either, so the
+        // replay/SYT machinery never establishes for it — the SPH must come from
+        // the live OHCI cycle timer, independent of replay.
+        //
+        // The core publishes a fresh CYCLE_TIMER snapshot every refill in
+        // TxStreamControl::clockPair (IsochTxDmaRing::Refill) — the dice analog of
+        // main's currentCycleTime_. Reconstruct THIS packet's transmit cycle:
+        //   transmit ≈ clock cycle + (packetIndex - completionCursor) cycles ahead
+        // (completionCursor is the live retirement point), + a small presentation
+        // lead. The packetizer seeds its free-running SPH cursor from this ONCE
+        // then advances 512 ticks/frame (= the data-packet cadence, so the lead
+        // holds). NOTE: AnchorForPacket's completion-stamp ring proved stale on
+        // hardware (frozen packetIndex → garbage projection), so clockPair +
+        // completionCursor are used directly instead.
+        if (auto* motuTxCtl = ivars.runtime.txSlotProvider.controlBlock) {
+            ASFW::IsochTransport::ClockPairSample motuClk{};
+            if (motuTxCtl->clockPair.TryRead(motuClk) &&
+                motuClk.cycleTimer32 != 0) {
+                constexpr int64_t kTicksPerCycle = 3072;
+                constexpr int64_t kCyclesPerSecond = 8000;
+                // Match main's working MOTU V3 SPH seed
+                // (PacketAssembler::writeMotuV3SphAndAdvance): seed = live
+                // cycle-timer ticks + a small presentation lead, then free-run
+                // +512/frame. NO packetsAhead projection: clockPair ct is
+                // refreshed each IsochTxDmaRing::Refill (≈ transmit time, like
+                // main's currentCycleTime_), so projecting ~300 cycles forward put
+                // SPH ~37 ms into MOTU's future → it over-buffered then resynced
+                // (squeal + wandering block phase). The lead was guessed at +2
+                // (mirroring main); a wire measurement of the official driver
+                // (SEQUOIA_SNOOP_RESULT.md) pinned it at +3 exactly — see below.
+                // Official driver: SPH is +3 cycles ahead of TRANSMIT (wire-measured).
+                // BUT we seed from `clockTicks` (= ct at PREPARE time), and a packet
+                // transmits ~261 cycles AFTER it is prepared (we prepare ~330 packets
+                // ahead). So a bare +3 lead lands the on-wire SPH at -258 cycles (32 ms
+                // in the PAST) → MOTU can't present past-stamped frames → misframe.
+                // PROVEN by snooping our OWN stream: median on-wire lead = -258 (n=192,
+                // zero spread) vs official +3 (2026-06-28_our_v141_it_lead.txt). Fix:
+                // add the prepare-ahead (~261 cycles) so the on-wire lead lands at +3.
+                // (261 is empirical/stable for this TX exposure config; TODO make it
+                // dynamic from packetsAhead once confirmed on the wire.)
+                // Empirically tuned against the on-wire lead (snoop, zero spread/run):
+                //   lead=  3 → -258 ;  lead=264 → -63 ;  lead=352 → +79
+                // Wire structure is byte-identical to the official driver (PCM on slot
+                // 12/13, same packing) — the ONLY remaining difference is the on-wire
+                // lead VALUE. Official = +3 (stable). Testing the exact +3 window:
+                // interpolating (264,-63)&(352,+79) → lead=305 ≈ +3. (v144)
+                constexpr int64_t kMotuSphPresentationLeadTicks =
+                    305 * kTicksPerCycle;
+                const uint32_t ct = motuClk.cycleTimer32;
+                const int64_t clockTicks =
+                    static_cast<int64_t>(((ct >> 12) & 0x1FFF) %
+                                         kCyclesPerSecond) *
+                        kTicksPerCycle +
+                    static_cast<int64_t>(ct & 0x0FFF);
+                const uint64_t completion =
+                    motuTxCtl->completionCursor.load(std::memory_order_acquire);
+                const int64_t packetsAhead =
+                    static_cast<int64_t>(nextPacketToPrepare) -
+                    static_cast<int64_t>(completion);
+                timing.motuSphBaseTicks =
+                    clockTicks + kMotuSphPresentationLeadTicks;
+                timing.motuSphValid = true;
+
+                // Diagnostic (~throttled): confirms SPH derives from a live,
+                // rising cycle timer — answers "does our SPH match El Cap?" on
+                // hardware without guessing. Tune kMotuSphPresentationLeadTicks
+                // if MOTU still rejects (SPH ahead/behind live ct).
+                static uint32_t sphDbgCount = 0;
+                if ((sphDbgCount++ % 2000u) == 0u) {
+                    const uint64_t domain = static_cast<uint64_t>(kTicksPerCycle) *
+                                            kCyclesPerSecond;
+                    const uint64_t t =
+                        static_cast<uint64_t>(timing.motuSphBaseTicks) % domain;
+                    const uint32_t seedCyc = static_cast<uint32_t>(
+                        (t / kTicksPerCycle) % kCyclesPerSecond);
+                    const uint32_t seedOff =
+                        static_cast<uint32_t>(t % kTicksPerCycle);
+
+                    // Drift-watch: the LIVE free-running packetizer SPH cursor vs
+                    // the live cycle timer. After seeding, cursor advances +512/frame
+                    // (frame-production clock) while ct advances with the bus clock.
+                    // driftCyc should stay ≈ the seed lead (+2). If it walks away
+                    // second-by-second, the frame clock has drifted from the bus
+                    // clock → MOTU PLL chases → squeal + wandering block phase.
+                    const int64_t cursor =
+                        ivars.runtime.txStreamEngine.MotuSphCursorTicks();
+                    const bool seeded =
+                        ivars.runtime.txStreamEngine.MotuSphSeeded();
+                    const int64_t cursorMod = static_cast<int64_t>(
+                        static_cast<uint64_t>(cursor) % domain);
+                    int64_t driftTicks = cursorMod - clockTicks;
+                    const int64_t half = static_cast<int64_t>(domain / 2);
+                    if (driftTicks > half) {
+                        driftTicks -= static_cast<int64_t>(domain);
+                    } else if (driftTicks < -half) {
+                        driftTicks += static_cast<int64_t>(domain);
+                    }
+
+                    ASFW_LOG(DirectAudio,
+                             "[MotuSph] pkt=%llu compl=%llu ahead=%lld "
+                             "ct=0x%08x(cyc=%u off=%u) seedSph=0x%07x(cyc=%u off=%u) "
+                             "seeded=%d curCyc=%lld driftCyc=%lld driftTicks=%lld",
+                             nextPacketToPrepare, completion,
+                             static_cast<long long>(packetsAhead), ct,
+                             (ct >> 12) & 0x1FFF, ct & 0x0FFF,
+                             (seedCyc << 12) | seedOff, seedCyc, seedOff,
+                             seeded ? 1 : 0,
+                             static_cast<long long>(
+                                 (cursorMod / kTicksPerCycle) % kCyclesPerSecond),
+                             static_cast<long long>(driftTicks / kTicksPerCycle),
+                             static_cast<long long>(driftTicks));
+                }
+            }
+        }
 
         if (allowRecoveredClock) {
+            // Replay path overrides the pre-replay defaults set above:
+            // replayValid=true so replayDataBlocks drives frame count, and
+            // NoData is the default until replay confirms dataBlocks != 0.
+            timing.replayValid = true;
+            timing.disposition =
+                ASFW::Protocols::Audio::AMDTP::
+                    AmdtpPacketDisposition::NoData;
+
             int64_t packetAnchorTicks = 0;
             if (!ivars.runtime.txExecutionTimeline.AnchorForPacket(
                     nextPacketToPrepare, packetAnchorTicks)) {
@@ -441,6 +570,38 @@ uint32_t PrepareTransmitSlots(ASFWAudioDriver_IVars& ivars,
         ++preparedCount;
     }
 
+    // [TxPump] diagnostic (~1/s, throttled on cumulative txPackets). Resolves TX
+    // under-exposure (exposedFrameEnd lagging CoreAudio → frames land without a
+    // packet, written frozen) by separating the two possible causes:
+    //   • cadence side: data/(data+noData) should be ~0.75 (blocking N,D,D,D).
+    //     A low fraction means the cadence/disposition is emitting mostly NoData.
+    //   • pump side: prepared==max → budget-bound (can't expose fast enough);
+    //     prepared<max → broke on frameTargetSatisfied, so targetFrameEnd is the
+    //     limiter (not tracking CoreAudio's real write frontier).
+    {
+        static uint64_t lastLoggedTxPackets = 0;
+        const uint64_t txPackets =
+            directControl->counters.txPackets.load(std::memory_order_relaxed);
+        if (txPackets - lastLoggedTxPackets >= 8000) {
+            lastLoggedTxPackets = txPackets;
+            const uint64_t dataPkts = directControl->counters.txDataPackets.load(
+                std::memory_order_relaxed);
+            const uint64_t noDataPkts =
+                directControl->counters.txNoDataPackets.load(
+                    std::memory_order_relaxed);
+            const uint64_t exposedEnd =
+                ivars.runtime.txStreamEngine.Timeline().ExposedFrameEnd();
+            ASFW_LOG(DirectAudio,
+                     "[TxPump] prepared=%u max=%u recovered=%d "
+                     "range=[%llu,%llu) required=%llu targetFrame=%llu "
+                     "exposedEnd=%llu txPkts=%llu data=%llu noData=%llu",
+                     preparedCount, maxToPrepare,
+                     allowRecoveredClock ? 1 : 0, startPacketIndex,
+                     limitPacketIndex, requiredPacketIndex, targetFrameEnd,
+                     exposedEnd, txPackets, dataPkts, noDataPkts);
+        }
+    }
+
     return preparedCount;
 }
 
@@ -456,12 +617,16 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
     // still be delayed. A lead-only prefill can therefore be consumed before
     // the producer gets its first turn. Steady state still targets completion
     // + kTxPreparationLeadPackets.
+    //
+    // MOTU V3 requires DATA IT packets (not CIP-header-only) to start its IR
+    // stream. Use cadence-driven DATA with zero PCM (txClockValid=false →
+    // SYT=0xFFFF) so MOTU starts IR before replay is established.
     ASFW::Protocols::Audio::AMDTP::AmdtpTimingState timing{};
-    timing.replayValid = true;
-    timing.txClockValid = false;
+    timing.replayValid = false; // use blocking cadence, not replay count
+    timing.txClockValid = false; // SYT=0xFFFF (no-info) until clock locked
     timing.disposition =
         ASFW::Protocols::Audio::AMDTP::
-            AmdtpPacketDisposition::NoData;
+            AmdtpPacketDisposition::Data;
 
     uint32_t prepared = 0;
     for (uint64_t packetIndex = 0;
@@ -477,7 +642,7 @@ void PrefillTxRingBeforeStart(ASFWAudioDriver_IVars& ivars) noexcept {
     }
 
     ASFW_LOG(DirectAudio,
-             "ADK DBG TX prefill seeded %u/%u committed NO-DATA packets before isoch start (steadyLead=%u)",
+             "ADK DBG TX prefill seeded %u/%u committed DATA/silence packets before isoch start (steadyLead=%u)",
              prepared,
              numSlots,
              ASFW::IsochTransport::AudioTimingGeometry::

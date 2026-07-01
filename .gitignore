@@ -44,8 +44,11 @@ push-to-public.sh
 # Version metadata (auto-generated)
 ASFWDriver/Version/DriverVersion.hpp
 
-# Exclude docs/ from public repository
-docs/
+# Exclude docs/ from public repository (design notes / TODOs), except
+# docs/ai/ (Claude Code workflow docs — no secrets, safe to publish)
+docs/*
+!docs/ai/
+!docs/ai/**
 
 # Exclude Plugins/VersionGeneratorPlugin from public repository
 Plugins/VersionGeneratorPlugin
@@ -88,6 +91,12 @@ __pycache__/
 
 # mimo
 .mimocode
+
+# CodeGraph local index (rebuild with `codegraph index .`)
+.codegraph/
+
+# Machine-specific MCP config (absolute paths; keep local, not for upstream)
+.mcp.json
 
 # references - libffado, apple, linux firewire ohci driver, linux sound/firewire stack, alsa snd-firewire-ctl-services
 /references/

@@ -36,6 +36,13 @@ public:
     [[nodiscard]] const AmdtpTxPolicy& TxPolicy() const noexcept;
     [[nodiscard]] bool NextPacketWouldCarryData() const noexcept;
 
+    // Diagnostics: live free-running MOTU V3 SPH cursor (absolute tick count) and
+    // whether it has been seeded. The drift-watch compares this against the live
+    // cycle timer over time — if (cursor - ct) walks away from the seed lead, the
+    // frame-production clock has drifted from the FireWire bus clock.
+    [[nodiscard]] int64_t MotuSphCursorTicks() const noexcept { return motuSphTickCursor_; }
+    [[nodiscard]] bool MotuSphSeeded() const noexcept { return motuSphSeeded_; }
+
 private:
     void WriteDataPacketDefaults(uint8_t* packetBytes,
                                  uint32_t packetCapacityBytes,
@@ -43,6 +50,12 @@ private:
 
     void WriteCipHeader(uint8_t* packetBytes,
                         const IEC61883::CipHeaderWords& header) noexcept;
+
+    // MOTU V3 only: write the per-data-block source-packet-header timestamp
+    // (block bytes 0-3) for `frames` blocks, advancing one sample period each.
+    void WriteMotuSph(uint8_t* packetBytes,
+                      uint8_t frames,
+                      const AmdtpTimingState& timing) noexcept;
 
     [[nodiscard]] uint32_t DataPacketBytes() const noexcept;
     [[nodiscard]] uint32_t PayloadBytes() const noexcept;
@@ -61,6 +74,10 @@ private:
 
     uint64_t nextAudioFrame_{0};
     bool frameCursorAligned_{false};
+
+    // MOTU V3 SPH cursor (free-running, seeded once). See WriteMotuSph.
+    int64_t motuSphTickCursor_{0};
+    bool motuSphSeeded_{false};
 };
 
 } // namespace ASFW::Protocols::Audio::AMDTP
