@@ -44,8 +44,11 @@ push-to-public.sh
 # Version metadata (auto-generated)
 ASFWDriver/Version/DriverVersion.hpp
 
-# Exclude docs/ from public repository
-docs/
+# Exclude docs/ from public repository (design notes / TODOs), except
+# docs/ai/ (Claude Code workflow docs — no secrets, safe to publish)
+docs/*
+!docs/ai/
+!docs/ai/**
 
 # Exclude Plugins/VersionGeneratorPlugin from public repository
 Plugins/VersionGeneratorPlugin
