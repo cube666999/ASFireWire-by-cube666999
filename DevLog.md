@@ -701,3 +701,34 @@ enkodera, który i tak wymieniamy (Bug 2). **Wrócić gdy:** (a) wielokrotnie gr
 samych licznikach w iteracji hardware → tani RX (żywe liczniki z `IsochReceiveContext` już istnieją,
 trzeba tylko akcesory + mapowanie na `IsochRxSnapshot`); (b) TX dopiero PO ustabilizowaniu MOTU V3
 enkodera.
+
+---
+
+## Sesja 2026-07-01 — kontakt z mrmidi (Discord) z dowodem po pomiarze Sequoia, docs cleanup, motu-v3-showcase
+
+**Kontakt z mrmidi wysłany 2026-07-01 (#coding), plan pkt 1 z handoffu 2026-06-28 → ZROBIONE.**
+Odróżnić od wcześniejszego draftu wspomnianego w sesji 2026-06-25 (wyżej w tym pliku, „Discord do
+mrmidi (draft w czacie)") — tamten dotyczył **starego objawu** (pisk + wędrujące diody, sprzed
+pomiaru Sequoia). Dzisiejsza wiadomość niesie **nowszy, mocniejszy dowód**: drut byte-perfect +
+rejestry init identyczne (pomiar Sequoia 26-06-26/27, `SEQUOIA_SNOOP_RESULT.md` +
+`SEQUOIA_REGREAD_RESULT.md`), obecny objaw to misframe (Main cisza, Analog 3/4/7 świecą), nie pisk.
+Treść: enumeracja/ZTS/StartIO/duplex OK, tx-exposure fix zintegrowany, wire+rejestry = oficjalny,
+robocza teoria = kolejność/timing w `DICEDuplexBringupController` lub alokacji IRM. Link do
+`motu-v3-showcase` dołączony. **Status: czekamy na odpowiedź mrmidi** (osoba trzecia na kanale
+skomentowała styl wiadomości — nie merytorykę, mrmidi się jeszcze nie odezwał).
+
+**Utworzono branch `motu-v3-showcase`** (fork `cube666999`) — squash-commit od `origin/DICE`,
+kurowany opis (STATE/KEY FINDING/HIGHLIGHTS/MEASUREMENT CORPUS/WHAT WE ARE STUCK ON), zero historii
+bumpów. `Focus.md`+`CLAUDE.md` na tym branchu są tłumaczone na angielski (Strategia B — szczegóły
+`docs/ai/WORKFLOW.md`), `DevLog.md`/`docs/ai/*` zostają po polsku. Procedura odświeżania i pełny
+kontekst → pamięć `motu-v3-showcase-branch`.
+
+**Docs cleanup:** `CLAUDE.md` 32→4,5 KB, `Focus.md` 36,6→19,2 KB (archiwum przeniesione tutaj, sesja
+2026-06-22 do 2026-06-24 wyżej w tym pliku), nowy `docs/ai/` (BEHAVIOR_GUIDELINES, MOTU_HARDWARE_CANON,
+ARCHITECTURE, CODEGRAPH, BUILD_DEPLOY, WORKFLOW, DOCS_INDEX) — publikowany (`.gitignore` wyjątek),
+audytowany pod kątem sekretów. **Bezpieczeństwo:** wykryto i usunięto wyciekłe hasło sudo MBP2009
+z `Focus.md` (siedziało w publicznej historii kilku commitów) — przeniesione do lokalnej pamięci
+poza repo, hasło wymaga rotacji na samym MBP2009 (nie zrobione jeszcze w kodzie/historii Git).
+
+**`bump.sh`:** dodano amend-into-previous-bump (redukuje spam commitów `chore: bump version` na
+roboczym branchu — jeśli poprzedni commit to niepushnięty bump, kolejny go amenduje zamiast tworzyć nowy).

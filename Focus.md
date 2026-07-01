@@ -19,6 +19,12 @@ Archiwum ukończonych sesji → `DevLog.md`
 > **➡️ PLAN (wybór po powrocie):**
 > 1. **mrmidi** (lead dev) — jego działka (zegar/IRM/coordinator). Mamy żelazny, zawężony dowód: „drut+rejestry identyczne,
 >    MOTU misframuje → to operacyjne, nie drut". Najszybsza droga.
+>    **✅ ZROBIONE 2026-07-01 (Discord, #coding):** wysłano zaktualizowaną wiadomość z tym dowodem (byte-perfect +
+>    rejestry identyczne, pomiar Sequoia 26-06-26/27) + link do [`motu-v3-showcase`](https://github.com/cube666999/ASFireWire-by-cube666999/tree/motu-v3-showcase)
+>    (czysty snapshot stanu, bez historii bumpów). To NOWSZY dowód niż wcześniejszy draft z `DevLog.md` sesja 2026-06-25
+>    (tamten dotyczył jeszcze starego objawu „pisk + wędrujące diody" sprzed pomiaru Sequoia — obalony/nieaktualny).
+>    Osoba trzecia na kanale skomentowała styl wiadomości („AI slop") — nie mrmidi, temat merytoryczny bez reakcji na razie.
+>    **Czekamy na odpowiedź mrmidi.** Jeśli brak reakcji do następnej sesji → przejdź do pkt 2 (deep-dive samodzielnie).
 > 2. **Deep-dive warstwy szyny** — porównać nasz DiceDuplexBringup/coordinator start-sequence + IRM + cycle-master vs oficjalny
 >    (DTrace lifecycle na Sequoia/El Cap: createDCLProgram / isoch-start order / IRM AllocateResources) vs nasze logi.
 > 3. **Zegar z Linuksa (SPH-echo) = NARZĘDZIE 2. RZUTU, nie teraz.** Decyzja 2026-06-28: drut już bajt-w-bajt = El Cap
@@ -98,7 +104,7 @@ Archiwum ukończonych sesji → `DevLog.md`
 >
 > ### ✅ POMIAR GOTOWY (2026-06-26, sesja Sequoia) → **[`documentation/SEQUOIA_SNOOP_RESULT.md`](documentation/SEQUOIA_SNOOP_RESULT.md)**
 > Zmierzono oficjalny sterownik MOTU na Sequoia (snoop MBP2009/Linux, oba strumienie + sweep + multi-rate).
-> **Pełne liczby + dowody w RESULT.md — TU tylko akcje. Przeczytaj RESULT.md przed kodowaniem.**
+> **Pełne liczby + dowody w [`SEQUOIA_SNOOP_RESULT.md`](documentation/SEQUOIA_SNOOP_RESULT.md) — TU tylko akcje. Przeczytaj przed kodowaniem.**
 >
 > **DWA TWARDE FIXY (oba pomierzone, nie zgadywane) — ✅ WDROŻONE W KODZIE 2026-06-27, czekają na test hardware:**
 > 1. **LEAD:** `kMotuSphPresentationLeadTicks` = `2*3072` (6144) → **`3*3072` (9216)**. Oficjalny lead =
